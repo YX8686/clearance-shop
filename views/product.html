@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>{{OG_TITLE}}</title>
+<meta property="og:title" content="{{OG_TITLE}}">
+<meta property="og:description" content="{{OG_DESC}}">
+<meta property="og:image" content="{{OG_IMAGE}}">
+<meta property="og:url" content="{{OG_URL}}">
+<link rel="icon" href="/assets/logo.ico">
+<meta property="og:type" content="product">
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f6f3ee;color:#3a322b;padding-bottom:80px}
+  .nav{position:sticky;top:0;z-index:10;background:#fff;padding:12px 14px;font-size:14px;color:#7a6f62;border-bottom:1px solid #f0ece4}
+  .nav a{color:#b8743f;text-decoration:none}
+  .hero{width:100%;max-width:480px;aspect-ratio:1/1;object-fit:cover;background:#eee;display:block;margin:0 auto}
+  .panel{background:#fff;padding:16px;border-bottom:1px solid #f0ece4;max-width:480px;margin:0 auto}
+  .panel .name{font-size:20px;font-weight:700}
+  .panel .price{color:#c0392b;font-weight:700;font-size:24px;margin-top:8px}
+  .panel .price small{font-size:13px;font-weight:400}
+  .panel .orig{color:#bbb;font-size:14px;text-decoration:line-through;margin-left:8px}
+  .panel .stock{font-size:12px;color:#9a8f82;margin-top:6px}
+  .desc{background:#fff;padding:16px;font-size:14px;line-height:1.8;color:#5b5147;max-width:480px;margin:0 auto}
+  .desc h4{margin:0 0 8px;font-size:14px;color:#7a5230}
+  .desc .body{white-space:pre-line}
+  .detail-images{background:#fff;padding:16px;max-width:480px;margin:0 auto;border-bottom:1px solid #f0ece4}
+  .detail-images h4{margin:0 0 12px;font-size:14px;color:#7a5230}
+  .detail-images img{width:100%;border-radius:10px;margin-bottom:12px;display:block;background:#eee}
+  .bundle{background:#fff;padding:16px;max-width:480px;margin:0 auto;border-bottom:1px solid #f0ece4}
+  .bundle h4{margin:0 0 12px;font-size:14px;color:#7a5230}
+  .bundle .item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f5f1ea;font-size:14px;color:#5b5147}
+  .bundle .item:last-child{border-bottom:none}
+  .bundle .dot{width:6px;height:6px;border-radius:50%;background:#c0392b}
+  .bundle .name{flex:1}
+  .bundle .qty{font-weight:700;color:#3a322b}
+  .bar{position:fixed;left:0;right:0;bottom:0;z-index:20;background:#fff;display:flex;gap:10px;padding:12px 14px;box-shadow:0 -2px 10px rgba(0,0,0,.06)}
+  .bar .home{background:#f3ece2;color:#7a5230;border:none;border-radius:24px;padding:0 16px;font-size:13px;cursor:pointer}
+  .bar .buy{flex:1;background:#b8743f;color:#fff;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer}
+  /* 购物车右侧抽屉 */
+  .fab{position:fixed;right:16px;bottom:90px;z-index:30;background:#b8743f;color:#fff;width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:24px;box-shadow:0 4px 14px rgba(184,116,63,.5);cursor:pointer}
+  .badge{position:absolute;top:-2px;right:-2px;background:#c0392b;color:#fff;font-size:11px;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 4px}
+  .mask{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40;display:none}
+  .mask.show{display:block}
+  .drawer{position:fixed;top:0;right:0;bottom:0;left:auto;width:100%;max-width:420px;z-index:50;background:#fff;border-radius:18px 0 0 18px;box-shadow:-4px 0 20px rgba(0,0,0,.1);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .25s}
+  .drawer.show{transform:translateX(0)}
+  .drawer h3{margin:0;padding:16px;font-size:15px;border-bottom:1px solid #f0ece4;display:flex;justify-content:space-between;align-items:center}
+  .drawer h3 .cls{font-size:22px;color:#bbb;cursor:pointer}
+  .items{overflow:auto;padding:6px 16px;flex:1}
+  .item{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid #f5f1ea}
+  .item img{width:48px;height:48px;border-radius:8px;object-fit:cover;background:#eee}
+  .item .info{flex:1;min-width:0}
+  .item .info .n{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .item .info .p{font-size:12px;color:#c0392b;margin-top:3px}
+  .stepper{display:flex;align-items:center;gap:8px}
+  .stepper button{width:26px;height:26px;border-radius:50%;border:1px solid #d8ccba;background:#fff;font-size:16px;cursor:pointer}
+  .stepper span{min-width:18px;text-align:center;font-size:14px}
+  .empty{padding:40px 0;text-align:center;color:#bbb;font-size:13px}
+  .foot{padding:14px 16px;box-shadow:0 -2px 10px rgba(0,0,0,.05)}
+  .foot .tot{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .foot .tot b{font-size:18px;color:#c0392b}
+  .foot .chk{width:100%;background:#b8743f;color:#fff;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer}
+  .foot .chk:disabled{background:#d8ccba}
+  /* 结算表单（中间竖版弹窗） */
+  .modal{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:16px}
+  .modal.show{display:flex}
+  .sheet{background:#fff;width:100%;max-width:420px;border-radius:18px;padding:18px 16px 22px;max-height:86vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.2)}
+  .sheet h3{margin:0 0 14px;font-size:16px}
+  .field{margin-bottom:12px}
+  .field label{font-size:12px;color:#7a6f62;display:block;margin-bottom:5px}
+  .field input,.field textarea{width:100%;border:1px solid #e0d6c8;border-radius:9px;padding:11px;font-size:14px;font-family:inherit}
+  .field textarea{resize:vertical;min-height:54px}
+  .sheet .submit{width:100%;background:#b8743f;color:#fff;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;margin-top:6px;cursor:pointer}
+  .sheet .hint{font-size:12px;color:#9a8f82;line-height:1.6;background:#fbf7f1;padding:10px;border-radius:9px;margin-top:10px}
+</style>
+</head>
+<body>
+  <div class="nav"><a href="/">← 返回商城</a></div>
+  <img class="hero" id="hero" src="">
+  <div class="panel">
+    <div class="name" id="pName"></div>
+    <div class="price" id="pPrice"></div>
+    <div class="stock" id="pStock"></div>
+  </div>
+  <div class="desc"><h4>商品说明</h4><div class="body" id="pDesc"></div></div>
+  <div class="bundle" id="bundleBox" style="display:none">
+    <h4>该活动链接实际包含：</h4>
+    <div id="bundleList"></div>
+  </div>
+  <div class="detail-images" id="detailBox" style="display:none">
+    <h4>详情展示</h4>
+    <div id="detailList"></div>
+  </div>
+
+  <div class="bar">
+    <button class="home" onclick="location.href='/'">🏠 商城</button>
+    <button class="buy" id="buyBtn" onclick="buy()">加入购物车</button>
+  </div>
+
+  <!-- 购物车 -->
+  <div class="fab" onclick="openCart()">🛒<span class="badge" id="badge" style="display:none">0</span></div>
+  <div class="mask" id="mask" onclick="closeCart()"></div>
+  <div class="drawer" id="drawer">
+    <h3>购物车 <span class="cls" onclick="closeCart()">×</span></h3>
+    <div class="items" id="cartItems"></div>
+    <div class="foot">
+      <div class="tot"><span>合计</span><b id="cartTotal">¥0</b></div>
+      <button class="chk" id="chkBtn" disabled onclick="openCheckout()">去结算</button>
+    </div>
+  </div>
+
+  <!-- 结算 -->
+  <div class="modal" id="checkout" onclick="if(event.target===this)closeCheckout()">
+    <div class="sheet">
+      <h3>填写收货信息</h3>
+      <div class="field"><label>姓名</label><input id="cName" placeholder="收货人姓名"></div>
+      <div class="field"><label>电话</label><input id="cPhone" placeholder="手机号" inputmode="numeric"></div>
+      <div class="field"><label>地址</label><textarea id="cAddr" placeholder="详细收货地址"></textarea></div>
+      <div class="field">
+        <label>微信号</label>
+        <input id="cWechat" placeholder="微信号">
+        <div style="font-size:12px;color:#9a8f82;margin-top:6px;line-height:1.5">💡 <span style="color:#7a5230;font-weight:600">微信号在哪里看到？</span><br>打开你的微信，点右下角的“我”，页面上方的头像右边就会显示“微信号：XXX”。</div>
+      </div>
+      <button class="submit" onclick="submitOrder()">提交订单</button>
+      <div class="hint">提交后跳转订单页，按页面提示扫码支付，<b>支付后，请将付款成功的微信或支付宝页面截图私信给夏天老师本人，以做核实和登记</b>。本店免登录，请收藏订单页以便查看物流。</div>
+    </div>
+  </div>
+
+<script>
+const P = {{PRODUCT_JSON}};
+const PRODUCTS = {{PRODUCTS_JSON}};
+const CONFIG = {{CONFIG_JSON}};
+let cart = {};
+try { cart = JSON.parse(localStorage.getItem('cart')||'{}'); } catch(e){ cart={}; }
+
+const $ = s=>document.querySelector(s);
+function money(n){ return '¥'+Number(n).toLocaleString('zh-CN'); }
+
+function set(){
+  document.title = P.name;
+  document.querySelector('meta[property="og:title"]').setAttribute('content', P.name);
+  document.getElementById('hero').src = P.image||'/assets/product-placeholder.svg';
+  document.getElementById('pName').textContent = P.name;
+  document.getElementById('pPrice').innerHTML = money(P.price)+' <small>/件</small>' + ((P.originalPrice&&P.originalPrice>P.price)?'<span class="orig">'+money(P.originalPrice)+'</span>':'');
+  document.getElementById('pStock').textContent = (P.stock!=null)?('库存：'+P.stock+' 件'):'';
+  document.getElementById('pDesc').textContent = P.desc||'';
+
+  // 产品明细（bundleItems）
+  const bundles = Array.isArray(P.bundleItems) ? P.bundleItems.filter(b=>b.name && b.qty>0) : [];
+  if(bundles.length){
+    const box=document.getElementById('bundleBox'); box.style.display='block';
+    document.getElementById('bundleList').innerHTML = bundles.map(b=>`
+      <div class="item"><span class="dot"></span><span class="name">${b.name}</span><span class="qty">${b.qty} ${b.unit||'件'}</span></div>
+    `).join('');
+  }
+
+  // 详情页图
+  const details = Array.isArray(P.detailImages) ? P.detailImages.filter(u=>String(u).startsWith('/')) : [];
+  if(details.length){
+    const box=document.getElementById('detailBox'); box.style.display='block';
+    document.getElementById('detailList').innerHTML = details.map(u=>`<img src="${u}" alt="详情图">`).join('');
+  }
+}
+
+function cartCount(){ return Object.values(cart).reduce((a,b)=>a+b,0); }
+function cartTotal(){ return Object.entries(cart).reduce((s,[id,q])=>{ const p=PRODUCTS.find(x=>x.id===id); return s+(p?p.price*q:0); },0); }
+function saveCart(){ localStorage.setItem('cart',JSON.stringify(cart)); updateBadge(); }
+function updateBadge(){ const n=cartCount(); const b=$('#badge'); if(n>0){b.style.display='flex';b.textContent=n;} else b.style.display='none'; }
+
+function buy(){ cart[P.id]=(cart[P.id]||0)+1; saveCart(); openCart(); }
+function changeQty(id,d){ cart[id]=(cart[id]||0)+d; if(cart[id]<=0) delete cart[id]; saveCart(); renderCart(); }
+
+function openCart(){ $('#mask').classList.add('show'); $('#drawer').classList.add('show'); renderCart(); }
+function closeCart(){ $('#mask').classList.remove('show'); $('#drawer').classList.remove('show'); }
+
+function renderCart(){
+  const box=$('#cartItems'); box.innerHTML='';
+  const ids=Object.keys(cart);
+  if(!ids.length){ box.innerHTML='<div class="empty">购物车还是空的</div>'; $('#chkBtn').disabled=true; }
+  else {
+    ids.forEach(id=>{
+      const p=PRODUCTS.find(x=>x.id===id); if(!p) return;
+      const row=document.createElement('div'); row.className='item';
+      row.innerHTML=`
+        <img src="${p.image||'/assets/product-placeholder.svg'}">
+        <div class="info"><div class="n">${p.name}</div><div class="p">${money(p.price)}</div></div>
+        <div class="stepper"><button onclick="changeQty('${id}',-1)">−</button><span>${cart[id]}</span><button onclick="changeQty('${id}',1)">+</button></div>`;
+      box.appendChild(row);
+    });
+    $('#chkBtn').disabled=false;
+  }
+  $('#cartTotal').textContent=money(cartTotal());
+}
+
+function openCheckout(){ if(!cartCount()) return; closeCart(); $('#checkout').classList.add('show'); }
+function closeCheckout(){ $('#checkout').classList.remove('show'); }
+
+function submitOrder(){
+  const name=$('#cName').value.trim(), phone=$('#cPhone').value.trim(), addr=$('#cAddr').value.trim(), wechat=$('#cWechat').value.trim();
+  if(!name||!phone||!addr){ alert('请填写完整收货信息'); return; }
+  const items=Object.entries(cart).map(([id,q])=>({id,qty:q}));
+  if(!items.length){ alert('购物车为空'); return; }
+  fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,phone,address:addr,wechat,items})})
+    .then(r=>r.json()).then(d=>{
+      if(d.id){ cart={}; saveCart(); closeCheckout(); location.href='/order/'+d.id; }
+      else {
+        const msg = d.message || d.error || '未知错误';
+        alert('下单失败：'+msg+'\n\n如提示"数据目录不可写"或"operation not permitted"，请关闭当前黑窗口，双击桌面图标「不初限时狂欢商城」重新启动服务。');
+      }
+    }).catch(e=>alert('网络错误：'+e.message+'\n\n请检查是否已双击桌面图标启动商城服务。'));
+}
+
+set(); updateBadge();
+</script>
+</body>
+</html>

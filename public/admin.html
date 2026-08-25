@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>商家后台</title>
+<link rel="icon" href="/assets/logo.ico">
+<script src="/business_rules.js"></script>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f4f1ec;color:#3a322b}
+  .top{background:linear-gradient(135deg,#3a322b,#5b4a3a);color:#fff;padding:16px;display:flex;justify-content:space-between;align-items:center}
+  .top h1{margin:0;font-size:17px}
+  .top .stat{font-size:12px;opacity:.9}
+  .wrap{max-width:960px;margin:0 auto;padding:14px}
+  .tabs{display:flex;gap:8px;margin-bottom:14px}
+  .tabs button{flex:1;border:none;background:#fff;border-radius:10px;padding:11px;font-size:14px;color:#7a6f62;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.04)}
+  .tabs button.on{background:#b8743f;color:#fff;font-weight:700}
+  .card{background:#fff;border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 6px rgba(0,0,0,.05)}
+  .card .h{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .card .oid{font-size:13px;color:#b8743f;font-weight:700;letter-spacing:1px}
+  .card .st{font-size:12px;padding:3px 10px;border-radius:12px}
+  .st-wait{background:#fff3e0;color:#e08a00}.st-ship{background:#e8f1ff;color:#2f6fd0}.st-done{background:#e6f7ec;color:#1f9d55}
+  .line{font-size:13px;line-height:1.7;padding:2px 0;border-bottom:1px dashed #f0ece4}
+  .line .k{color:#9a8f82;display:inline-block;width:54px}
+  .items{font-size:13px;color:#5b5147;margin:6px 0;padding:8px;background:#faf7f2;border-radius:8px}
+  .items div{display:flex;justify-content:space-between}
+  .acts{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .acts button{border:none;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer}
+  .btn-confirm{background:#1f9d55;color:#fff}
+  .btn-copy{background:#3a322b;color:#fff}
+  .btn-ship{background:#2f6fd0;color:#fff}
+  .btn-danger{background:#e74c3c;color:#fff}
+  .shiprow{display:flex;gap:8px;margin-top:8px}
+  .shiprow input{flex:1;border:1px solid #e0d6c8;border-radius:8px;padding:9px;font-size:13px}
+  .empty{text-align:center;color:#bbb;padding:50px 0}
+  .toast{position:fixed;left:50%;top:20%;transform:translateX(-50%);background:rgba(0,0,0,.8);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;display:none;z-index:99}
+  details{background:#fff;border-radius:12px;padding:12px 14px;margin-bottom:14px;box-shadow:0 1px 6px rgba(0,0,0,.05)}
+  summary{cursor:pointer;font-size:14px;font-weight:600;color:#7a5230;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  .setrow{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+  .setrow input[type=text], .setrow input[type=number]{flex:1;border:1px solid #e0d6c8;border-radius:8px;padding:9px;font-size:13px;min-width:160px}
+  .setrow button{border:none;background:#b8743f;color:#fff;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer}
+  .setrow img{max-width:120px;max-height:120px;border:1px solid #eee;border-radius:8px}
+
+  /* 产品管理 */
+  .pm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
+  .pm-card{background:#fff;border-radius:10px;padding:10px;box-shadow:0 1px 4px rgba(0,0,0,.05);cursor:move;position:relative}
+  .pm-card .img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;background:#f0ece4}
+  .pm-card .name{font-size:14px;font-weight:700;margin-top:8px;color:#3a322b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pm-card .price{font-size:13px;color:#c0392b;margin-top:2px}
+  .pm-card .sub{font-size:12px;color:#9a8f82;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pm-card .pm-acts{display:flex;gap:6px;margin-top:8px}
+  .pm-card .pm-acts button{flex:1;border:none;border-radius:6px;padding:6px 0;font-size:12px;cursor:pointer}
+  .pm-card .pm-acts .edit{background:#b8743f;color:#fff}
+  .pm-card .pm-acts .del{background:#f4f1ec;color:#7a6f62}
+  .btn-primary{border:none;background:#b8743f;color:#fff;border-radius:8px;padding:10px 16px;font-size:14px;cursor:pointer;font-weight:600}
+
+  /* 图库 */
+  .gal-wrap{display:flex;gap:12px;min-height:260px}
+  .gal-folders{width:150px;background:#fff;border-radius:10px;padding:10px;box-shadow:0 1px 4px rgba(0,0,0,.05)}
+  .gal-folders .f{display:flex;justify-content:space-between;align-items:center;padding:8px;border-radius:6px;cursor:pointer;font-size:13px;margin-bottom:4px}
+  .gal-folders .f.on{background:#f4efe8;color:#b8743f;font-weight:700}
+  .gal-folders .f:hover{background:#f9f6f2}
+  .gal-files{flex:1;background:#fff;border-radius:10px;padding:12px;box-shadow:0 1px 4px rgba(0,0,0,.05)}
+  .gal-files .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:10px}
+  .gal-files .pic{position:relative;aspect-ratio:1/1;border-radius:8px;overflow:hidden;background:#f0ece4;cursor:pointer}
+  .gal-files .pic img{width:100%;height:100%;object-fit:cover}
+  .gal-files .pic .tick{position:absolute;top:4px;right:4px;width:18px;height:18px;background:#b8743f;color:#fff;border-radius:50%;font-size:12px;display:none;align-items:center;justify-content:center}
+  .gal-files .pic.selected .tick{display:flex}
+  .gal-files .pic.selected{box-shadow:0 0 0 2px #b8743f}
+  .gal-files .empty{color:#bbb;font-size:13px;text-align:center;padding:40px 0}
+
+  /* 弹窗 */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:80;display:none;align-items:center;justify-content:center;padding:16px}
+  .modal.show{display:flex}
+  .modal .box{background:#fff;border-radius:14px;width:100%;max-width:520px;max-height:86vh;overflow:auto;padding:18px}
+  .modal .head{font-size:16px;font-weight:700;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center}
+  .modal .close{width:28px;height:28px;border:none;background:#f4f1ec;border-radius:50%;cursor:pointer;font-size:18px;color:#7a6f62}
+  .form-row{margin-bottom:12px}
+  .form-row label{display:block;font-size:12px;color:#9a8f82;margin-bottom:5px}
+  .form-row input, .form-row textarea, .form-row select{width:100%;border:1px solid #e0d6c8;border-radius:8px;padding:9px;font-size:14px;font-family:inherit}
+  .form-row textarea{min-height:60px;resize:vertical}
+  .img-picker{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .img-picker img{width:80px;height:80px;object-fit:cover;border-radius:8px;background:#f0ece4;border:1px solid #e0d6c8}
+  .img-picker button{border:1px solid #b8743f;background:#fff;color:#b8743f;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer}
+  .detail-imgs{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .detail-imgs .dimg{position:relative;width:70px;height:70px}
+  .detail-imgs .dimg img{width:100%;height:100%;object-fit:cover;border-radius:6px}
+  .detail-imgs .dimg .rm{position:absolute;top:-6px;right:-6px;width:18px;height:18px;background:#e74c3c;color:#fff;border-radius:50%;border:none;font-size:12px;cursor:pointer}
+  .modal .foot{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+  .modal .foot button{border:none;border-radius:8px;padding:10px 18px;font-size:14px;cursor:pointer}
+  .modal .foot .cancel{background:#f4f1ec;color:#7a6f62}
+  .modal .foot .ok{background:#b8743f;color:#fff}
+
+  /* 图库选择弹窗 */
+  .gal-modal .box{max-width:640px}
+  .gal-toolbar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+  .gal-toolbar input[type=file]{display:none}
+  .gal-toolbar label, .gal-toolbar button{border:none;background:#f4f1ec;color:#3a322b;border-radius:6px;padding:8px 12px;font-size:13px;cursor:pointer}
+  .gal-toolbar label.primary, .gal-toolbar button.primary{background:#b8743f;color:#fff}
+
+  /* 合并订单 */
+  .merge-card{border:2px solid #f0d9c4}
+  .suborder{background:#faf7f2;border-radius:8px;padding:8px 10px;margin:8px 0}
+  .so-h{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#b8743f;font-weight:700;margin-bottom:4px}
+  .so-time{color:#9a8f82;font-weight:400}
+  .so-item{display:flex;justify-content:space-between;font-size:13px;color:#5b5147;padding:2px 0}
+  .so-total{text-align:right;font-size:12px;color:#7a6f62;margin-top:4px;font-weight:600}
+</style>
+</head>
+<body>
+  <div class="top"><h1>商家后台</h1><div class="stat" id="stat"></div></div>
+  <div class="wrap">
+    <details>
+      <summary>⚙️ 店铺设置（店铺名 / 联系人 / 公告 / 收款码）</summary>
+      <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">店铺名</span><input type="text" id="sName"></div>
+      <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">联系人</span><input type="text" id="sContact"></div>
+      <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">公告</span><input type="text" id="sAnn"></div>
+      <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">默认收款码</span><input type="file" id="sQr" accept="image/*"><button onclick="uploadQr()">上传</button><img id="sQrPrev" style="display:none"></div>
+      <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">微信收款码</span><input type="file" id="sWc" accept="image/*"><button onclick="uploadWechat()">上传</button><img id="sWcPrev" style="display:none"></div>
+      <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">支付宝收款码</span><input type="file" id="sAli" accept="image/*"><button onclick="uploadAlipay()">上传</button><img id="sAliPrev" style="display:none"></div>
+      <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">银行名称</span><input type="text" id="sBankName" placeholder="如：中国工商银行"></div>
+      <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">银行卡号</span><input type="text" id="sBankAccount" placeholder="卡号"></div>
+      <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">户名</span><input type="text" id="sBankHolder" placeholder="持卡人姓名"></div>
+      <div class="setrow"><button onclick="saveSettings()">保存设置</button></div>
+    </details>
+
+    <details open>
+      <summary>🛍️ 产品管理（图库 / 新增 / 编辑 / 删除）</summary>
+      <div id="pmWrap"></div>
+    </details>
+
+    <div class="tabs">
+      <button class="on" data-s="待确认" onclick="switchTab(this)">待处理 <span id="cWait">0</span></button>
+      <button data-s="待发货" onclick="switchTab(this)">待发货 <span id="cShip">0</span></button>
+      <button data-s="已发货" onclick="switchTab(this)">已发货 <span id="cDone">0</span></button>
+    </div>
+    <div id="list"></div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <!-- 产品编辑弹窗 -->
+  <div class="modal" id="prodModal">
+    <div class="box">
+      <div class="head"><span id="prodModalTitle">编辑产品</span><button class="close" onclick="closeProdModal()">×</button></div>
+      <div class="form-row">
+        <label>主标题</label>
+        <input type="text" id="pName" placeholder="如：美白盲盒 299">
+      </div>
+      <div class="form-row">
+        <label>副标题（针对用户痛点的两三行文案）</label>
+        <textarea id="pSubtitle" placeholder="如：淡斑提亮 · 28天见效\n关仓回馈，限量发售"></textarea>
+      </div>
+      <div class="form-row" style="display:flex;gap:10px">
+        <div style="flex:1"><label>售价</label><input type="number" id="pPrice" placeholder="299"></div>
+        <div style="flex:1"><label>原价</label><input type="number" id="pOriginal" placeholder="1000"></div>
+        <div style="flex:1"><label>库存</label><input type="number" id="pStock" placeholder="100"></div>
+      </div>
+      <div class="form-row" style="display:flex;gap:10px">
+        <div style="flex:1"><label>分类</label><input type="text" id="pCategory" placeholder="如：盲盒"></div>
+        <div style="flex:1"><label>所属文件夹</label>
+          <select id="pFolder"><option value="">不指定</option></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>产品描述</label>
+        <textarea id="pDesc" placeholder="简短描述，会显示在产品卡片下方"></textarea>
+      </div>
+      <div class="form-row">
+        <label>该价格链接包含的产品明细（用于发货清单）</label>
+        <textarea id="pBundle" rows="4" placeholder="每行填写一个产品，格式：产品名 数量 单位&#10;例如：&#10;线雕面膜 5 盒&#10;液 10 瓶&#10;&#10;如果该链接就是单件直发，此处留空即可。"></textarea>
+      </div>
+      <div class="form-row">
+        <label>产品主图</label>
+        <div class="img-picker">
+          <img id="pMainImgPreview" src="/assets/products/default.svg">
+          <input type="hidden" id="pMainImg">
+          <button onclick="openGalPicker('main')">从图库选择</button>
+          <button onclick="uploadDirect('main')">本地上传</button>
+          <input type="file" id="pMainImgFile" accept="image/*" style="display:none" onchange="handleDirectUpload(this,'main')">
+        </div>
+      </div>
+      <div class="form-row">
+        <label>详情页图（可多选）</label>
+        <div class="img-picker">
+          <button onclick="openGalPicker('detail')">从图库选择</button>
+          <button onclick="uploadDirect('detail')">本地上传</button>
+          <input type="file" id="pDetailImgFile" accept="image/*" multiple style="display:none" onchange="handleDirectUpload(this,'detail')">
+        </div>
+        <div class="detail-imgs" id="pDetailImgs"></div>
+      </div>
+      <div class="foot">
+        <button class="cancel" onclick="closeProdModal()">取消</button>
+        <button class="ok" onclick="saveProduct()">保存产品</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 图库选择弹窗 -->
+  <div class="modal gal-modal" id="galModal">
+    <div class="box">
+      <div class="head"><span id="galModalTitle">选择图片</span><button class="close" onclick="closeGalModal()">×</button></div>
+      <div class="gal-toolbar">
+        <button onclick="newFolder()">+ 新建文件夹</button>
+        <label class="primary">上传图片<input type="file" id="galUpload" accept="image/*" multiple onchange="uploadToGal(this)"></label>
+        <button class="primary" onclick="confirmGalPicker()">确定选择</button>
+      </div>
+      <div class="gal-wrap">
+        <div class="gal-folders" id="galFolders"></div>
+        <div class="gal-files" id="galFiles"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+let ORDERS=[];
+let CONFIG={};
+let PRODUCTS=[];
+let GALLERY=[];
+let curTab='待确认';
+let editingProdId=null;
+let pickerMode='main'; // 'main' | 'detail'
+let selectedGalUrls=[];
+let currentGalFolder='';
+
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',1800); }
+function money(n){ return '¥'+Number(n).toLocaleString('zh-CN'); }
+
+async function load(){
+  const [o,c,p,g]=await Promise.all([
+    fetch('/api/orders').then(r=>r.json()),
+    fetch('/api/config').then(r=>r.json()),
+    fetch('/api/products').then(r=>r.json()),
+    fetch('/api/gallery').then(r=>r.json())
+  ]);
+  ORDERS=o; CONFIG=c; PRODUCTS=p; GALLERY=g;
+  document.getElementById('sName').value=CONFIG.shopName||'';
+  document.getElementById('sContact').value=CONFIG.contactName||'';
+  document.getElementById('sAnn').value=CONFIG.announcement||'';
+  document.getElementById('sBankName').value=CONFIG.bankName||'';
+  document.getElementById('sBankAccount').value=CONFIG.bankAccount||'';
+  document.getElementById('sBankHolder').value=CONFIG.bankHolder||'';
+  render();
+  renderPM();
+}
+
+// ---------- 订单管理 ----------
+function fmtTime(ts){
+  if(!ts) return '—';
+  const d=new Date(ts);
+  const p=n=>String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());
+}
+function render(){
+  const waits=ORDERS.filter(o=>o.status==='待确认').length;
+  const ships=ORDERS.filter(o=>o.status==='待发货').length;
+  const dones=ORDERS.filter(o=>o.status==='已发货').length;
+  document.getElementById('cWait').textContent=waits;
+  document.getElementById('cShip').textContent=ships;
+  document.getElementById('cDone').textContent=dones;
+  document.getElementById('stat').textContent='共 '+ORDERS.length+' 单 · 待处理'+waits+' / 待发'+ships+' / 已发'+dones;
+  const list=document.getElementById('list'); list.innerHTML='';
+  if(curTab==='待发货'){ renderMergedShip(); return; }
+  const rows=ORDERS.filter(o=>curTab==='待确认'?o.status==='待确认':o.status===curTab).sort((a,b)=>b.createdAt-a.createdAt);
+  if(!rows.length){ list.innerHTML='<div class="empty">暂无订单</div>'; return; }
+  rows.forEach(o=>{
+    const stMap={'待付款':['st-wait','待付款'],'待确认':['st-wait','待确认'],'待发货':['st-ship','待发货'],'已发货':['st-done','已发货']};
+    const [cls,lab]=stMap[o.status]||['st-wait',o.status];
+    const items=o.items.map(i=>`<div><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`).join('');
+    let acts='';
+    if(o.status==='待确认') acts=`<button class="btn-confirm" onclick="confirmPaid('${o.id}')">客户已发截图，确认收款</button>`;
+    if(o.status==='已发货') acts=`<button class="btn-copy" onclick="copyShip('${o.id}')">复制发货信息</button>`;
+    const div=document.createElement('div'); div.className='card';
+    const payLine=o.status==='已发货'?`<div class="line"><span class="k">付款时间</span>${fmtTime(o.paidAt)}</div>`:'';
+    div.innerHTML=`
+      <div class="h"><span class="oid">${o.id}</span><span class="st ${cls}">${lab}</span></div>
+      <div class="line"><span class="k">姓名</span>${o.name}</div>
+      ${o.wechat ? `<div class="line"><span class="k">微信</span>${o.wechat}</div>` : ''}
+      <div class="line"><span class="k">电话</span>${o.phone}</div>
+      <div class="line"><span class="k">地址</span>${o.address}</div>
+      ${payLine}
+      <div class="items">${items}<div style="border-top:1px dashed #e0d6c8;margin-top:6px;padding-top:6px;font-weight:700">合计 ${money(o.total)}</div></div>
+      ${o.status==='已发货'?('<div class="line"><span class="k">单号</span><b style="color:#1f9d55">'+o.tracking+'</b></div>'):''}
+      <div class="acts">${acts}</div>`;
+    list.appendChild(div);
+  });
+}
+// 待发货：按 姓名+电话+地址+微信 4项完全一致合并为同一个客户
+// 详见 business_rules.md §1 自动合并规则
+function renderMergedShip(){
+  const list=document.getElementById('list');
+  const pending=ORDERS.filter(o=>o.status==='待发货');
+  if(!pending.length){ list.innerHTML='<div class="empty">暂无待发货订单</div>'; return; }
+  const     groups={};
+    pending.forEach(o=>{
+      const key=BUSINESS_RULES.merge.makeKey(o);
+      (groups[key]=groups[key]||[]).push(o);
+    });
+  Object.values(groups).forEach(group=>{
+    group.sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
+    const ids=group.map(o=>o.id);
+    const first=group[0];
+    const total=group.reduce((s,o)=>s+o.total,0);
+    const orderBlocks=group.map(o=>`
+      <div class="suborder">
+        <div class="so-h"><span>${o.id}</span><span class="so-time">付款 ${fmtTime(o.paidAt)}</span></div>
+        ${o.items.map(i=>`<div class="so-item"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`).join('')}
+        <div class="so-total">本单合计 ${money(o.total)}</div>
+      </div>`).join('');
+    const div=document.createElement('div'); div.className='card merge-card';
+    div.innerHTML=`
+      <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-ship">待发货</span></div>
+      <div class="line"><span class="k">姓名</span>${first.name}</div>
+      ${first.wechat ? `<div class="line"><span class="k">微信</span>${first.wechat}</div>` : ''}
+      <div class="line"><span class="k">电话</span>${first.phone}</div>
+      <div class="line"><span class="k">地址</span>${first.address}</div>
+      ${orderBlocks}
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-ship" onclick="shipGroup(['${ids.join("','")}'])">填写单号发货</button></div>`;
+    list.appendChild(div);
+  });
+}
+// 合并发货文本格式：仅姓名+电话+地址+所有商品数量，详见 business_rules.md §3
+function copyShipGroup(ids){
+  const group=ORDERS.filter(o=>ids.includes(o.id)).sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
+  const first=group[0];
+  let text=`${first.name} ${first.phone}\n${first.address}\n\n`;
+  group.forEach(o=>{
+    o.items.forEach(i=>{
+      const prod=PRODUCTS.find(p=>p.id===i.id);
+      if(prod && prod.bundleItems && prod.bundleItems.length){
+        text+=`${prod.name}${i.qty>1?' *'+i.qty:''}\n`;
+        prod.bundleItems.forEach(b=>{
+          text+=`• ${b.name}   ${b.qty} ${b.unit}${i.qty>1?'   *'+i.qty:''}\n`;
+        });
+      }else{
+        text+=`${i.name} ×${i.qty}\n`;
+      }
+    });
+  });
+  navigator.clipboard.writeText(text).then(()=>toast('发货文本已复制，去微信粘贴')).catch(()=>{ window.prompt('复制下面内容：',text); });
+}
+// 金额核对：合并填写单号前必须展示每笔子订单金额及合并合计，详见 business_rules.md §2
+async function shipGroup(ids){
+  const group=ORDERS.filter(o=>ids.includes(o.id)).sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
+  const first=group[0];
+  let detail=`发货前请核对合并金额：\n\n姓名：${first.name}\n合并 ${group.length} 笔订单\n\n`;
+  group.forEach((o,idx)=>{
+    detail+=`--- 第 ${idx+1} 笔 ---\n`;
+    o.items.forEach(i=>{ detail+=`  ${i.name}  ${money(i.price)} × ${i.qty}\n`; });
+    detail+=`  本单合计：${money(o.total)}\n`;
+  });
+  detail+=`\n合并合计：${money(group.reduce((s,o)=>s+o.total,0))}\n\n是否继续填写快递单号？`;
+  if(!window.confirm(detail)) return;
+  const tracking=prompt('请输入快递单号（将应用到该客户全部 '+ids.length+' 笔订单）：');
+  if(tracking==null) return;
+  for(const id of ids){
+    await fetch('/api/orders/'+id+'/ship',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tracking:tracking.trim()})});
+  }
+  toast('已发货，转入已发货列表');
+  curTab='已发货';
+  document.querySelectorAll('.tabs button').forEach(b=>{ b.classList.toggle('on', b.dataset.s===curTab); });
+  load();
+}
+function switchTab(btn){ document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('on')); btn.classList.add('on'); curTab=btn.dataset.s; render(); }
+
+// 金额核对：确认收款前必须展示金额明细，详见 business_rules.md §2
+async function confirmPaid(id){
+  const o=ORDERS.find(x=>x.id===id);
+  if(!o) return;
+  const items=o.items.map(i=>`  ${i.name}  ${money(i.price)} × ${i.qty}`).join('\n');
+  const msg=`请核对收款金额后再确认：\n\n姓名：${o.name}\n订单号：${o.id}\n\n商品明细：\n${items}\n\n本单合计：${money(o.total)}\n\n确认已收到该笔款项？`;
+  if(!window.confirm(msg)) return;
+  await fetch('/api/orders/'+id+'/confirm',{method:'POST'});
+  toast('已确认，转入待发货'); load();
+}
+function copyShip(id){
+  const o=ORDERS.find(x=>x.id===id);
+  let text='';
+  if(o.status==='已发货'){
+    text=`收件人：${o.name}\n电话：${o.phone}\n地址：${o.address}\n\n商品：\n${o.items.map(i=>i.name+' ×'+i.qty).join('\n')}\n\n快递单号：${o.tracking||''}`;
+  } else {
+    text=`${o.name} ${o.phone}\n${o.address}\n\n${o.items.map(i=>i.name+' ×'+i.qty).join('\n')}`;
+  }
+  navigator.clipboard.writeText(text).then(()=>toast('发货文本已复制，去微信粘贴')).catch(()=>{ window.prompt('复制下面内容：',text); });
+}
+// 金额核对：填写单号前必须展示金额明细，详见 business_rules.md §2
+async function ship(id){
+  const o=ORDERS.find(x=>x.id===id);
+  if(!o) return;
+  const items=o.items.map(i=>`  ${i.name}  ${money(i.price)} × ${i.qty}`).join('\n');
+  const check=`发货前请核对金额：\n\n姓名：${o.name}\n商品明细：\n${items}\n\n合计：${money(o.total)}\n\n是否继续填写快递单号？`;
+  if(!window.confirm(check)) return;
+  const tracking=prompt('请输入快递单号：');
+  if(tracking==null) return;
+  await fetch('/api/orders/'+id+'/ship',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tracking:tracking.trim()})});
+  toast('已发货，转入已发货列表');
+  curTab='已发货';
+  document.querySelectorAll('.tabs button').forEach(b=>{ b.classList.toggle('on', b.dataset.s===curTab); });
+  load();
+}
+
+function readFileToPrev(inputId, imgId){
+  const f=document.getElementById(inputId).files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{ const img=document.getElementById(imgId); img.src=r.result; img.style.display='block'; img.dataset.b64=r.result; toast('已选择，点保存设置生效'); };
+  r.readAsDataURL(f);
+}
+function uploadQr(){ readFileToPrev('sQr','sQrPrev'); }
+function uploadWechat(){ readFileToPrev('sWc','sWcPrev'); }
+function uploadAlipay(){ readFileToPrev('sAli','sAliPrev'); }
+async function saveSettings(){
+  const body={
+    shopName:document.getElementById('sName').value,
+    contactName:document.getElementById('sContact').value,
+    announcement:document.getElementById('sAnn').value,
+    bankName:document.getElementById('sBankName').value,
+    bankAccount:document.getElementById('sBankAccount').value,
+    bankHolder:document.getElementById('sBankHolder').value
+  };
+  const b64Qr=document.getElementById('sQrPrev').dataset.b64; if(b64Qr) body.paymentQrBase64=b64Qr;
+  const b64Wc=document.getElementById('sWcPrev').dataset.b64; if(b64Wc) body.paymentWechatQrBase64=b64Wc;
+  const b64Ali=document.getElementById('sAliPrev').dataset.b64; if(b64Ali) body.paymentAlipayQrBase64=b64Ali;
+  await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  toast('设置已保存'); load();
+}
+
+// ---------- 产品管理 ----------
+function renderPM(){
+  const wrap=document.getElementById('pmWrap');
+  const itemsHtml=PRODUCTS.map((p,idx)=>`
+    <div class="pm-card" draggable="true" data-id="${p.id}" data-idx="${idx}">
+      <img class="img" src="${p.image||'/assets/products/default.svg'}" onerror="this.src='/assets/products/default.svg'">
+      <div class="name">${p.name||'未命名'}</div>
+      <div class="price">${money(p.price||0)} <span style="color:#bbb;text-decoration:line-through;font-size:12px">${p.originalPrice?money(p.originalPrice):''}</span></div>
+      <div class="sub">${p.subtitle||p.desc||'无副标题'}</div>
+      <div class="pm-acts">
+        <button class="edit" onclick="editProduct('${p.id}')">编辑</button>
+        <button class="del" onclick="deleteProduct('${p.id}')">删除</button>
+      </div>
+    </div>
+  `).join('');
+  wrap.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:10px 0">
+      <div style="font-size:13px;color:#9a8f82">共 ${PRODUCTS.length} 个产品 · 拖拽卡片可调整前台展示顺序</div>
+      <button class="btn-primary" onclick="newProduct()">+ 新增产品</button>
+    </div>
+    <div class="pm-grid" id="pmGrid">${itemsHtml}</div>
+  `;
+  bindPMDrag();
+}
+function bindPMDrag(){
+  const grid=document.getElementById('pmGrid'); if(!grid) return;
+  let dragId=null;
+  grid.querySelectorAll('.pm-card').forEach(card=>{
+    card.addEventListener('dragstart',e=>{ dragId=card.dataset.id; card.style.opacity='.5'; });
+    card.addEventListener('dragend',e=>{ card.style.opacity='1'; });
+    card.addEventListener('dragover',e=>{ e.preventDefault(); });
+    card.addEventListener('drop',async e=>{
+      e.preventDefault();
+      if(!dragId || dragId===card.dataset.id) return;
+      const fromIdx=PRODUCTS.findIndex(p=>p.id===dragId);
+      const toIdx=Number(card.dataset.idx);
+      const [moved]=PRODUCTS.splice(fromIdx,1);
+      PRODUCTS.splice(toIdx,0,moved);
+      const ids=PRODUCTS.map(p=>p.id);
+      await fetch('/api/products/reorder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+      renderPM(); toast('顺序已保存');
+    });
+  });
+}
+
+function newProduct(){ editingProdId=null; openProdModal({}); }
+function editProduct(id){ editingProdId=id; openProdModal(PRODUCTS.find(p=>p.id===id)||{}); }
+function openProdModal(p){
+  document.getElementById('prodModalTitle').textContent=editingProdId?'编辑产品':'新增产品';
+  document.getElementById('pName').value=p.name||'';
+  document.getElementById('pSubtitle').value=p.subtitle||'';
+  document.getElementById('pPrice').value=p.price||'';
+  document.getElementById('pOriginal').value=p.originalPrice||'';
+  document.getElementById('pStock').value=p.stock||'';
+  document.getElementById('pCategory').value=p.category||'';
+  document.getElementById('pDesc').value=p.desc||'';
+  document.getElementById('pBundle').value=(p.bundleItems||[]).map(b=>`${b.name} ${b.qty} ${b.unit}`).join('\n');
+  document.getElementById('pMainImg').value=p.image||'';
+  document.getElementById('pMainImgPreview').src=p.image||'/assets/products/default.svg';
+  renderDetailImgs(p.detailImages||[]);
+  const sel=document.getElementById('pFolder'); sel.innerHTML='<option value="">不指定</option>';
+  GALLERY.forEach(f=>sel.innerHTML+=`<option value="${f.name}" ${f.name===p.folder?'selected':''}>${f.name}</option>`);
+  document.getElementById('prodModal').classList.add('show');
+}
+function closeProdModal(){ document.getElementById('prodModal').classList.remove('show'); }
+
+function renderDetailImgs(urls){
+  selectedGalUrls=urls.slice();
+  const box=document.getElementById('pDetailImgs');
+  box.innerHTML=urls.map((u,i)=>`
+    <div class="dimg">
+      <img src="${u}" onerror="this.style.display='none'">
+      <button class="rm" onclick="removeDetailImg(${i})">×</button>
+    </div>
+  `).join('');
+}
+function removeDetailImg(i){ selectedGalUrls.splice(i,1); renderDetailImgs(selectedGalUrls); }
+
+// 解析“包含的产品明细”文本为结构化数组：每行 "产品名 数量 单位"
+function parseBundleText(text){
+  return text.split('\n').map(line=>{
+    line=line.trim();
+    if(!line) return null;
+    const m=line.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*(.*)$/);
+    if(!m) return null;
+    return { name:m[1].trim(), qty:Number(m[2]), unit:(m[3]||'件').trim() || '件' };
+  }).filter(Boolean);
+}
+
+async function saveProduct(){
+  const body={
+    id: editingProdId,
+    name: document.getElementById('pName').value,
+    subtitle: document.getElementById('pSubtitle').value,
+    price: document.getElementById('pPrice').value,
+    originalPrice: document.getElementById('pOriginal').value,
+    stock: document.getElementById('pStock').value,
+    category: document.getElementById('pCategory').value,
+    desc: document.getElementById('pDesc').value,
+    bundleItems: parseBundleText(document.getElementById('pBundle').value),
+    image: document.getElementById('pMainImg').value,
+    detailImages: selectedGalUrls,
+    folder: document.getElementById('pFolder').value
+  };
+  const res=await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const data=await res.json();
+  if(data.ok){ toast('产品已保存'); closeProdModal(); load(); }
+  else toast('保存失败');
+}
+async function deleteProduct(id){
+  if(!window.confirm('确定删除这个产品？删除后前台不再显示。')) return;
+  await fetch('/api/products/'+id,{method:'DELETE'});
+  toast('已删除'); load();
+}
+
+// ---------- 图库 ----------
+function openGalPicker(mode){
+  pickerMode=mode;
+  document.getElementById('galModalTitle').textContent=mode==='main'?'选择主图':'选择详情页图（可多选）';
+  document.getElementById('galModal').classList.add('show');
+  if(!currentGalFolder && GALLERY.length) currentGalFolder=GALLERY[0].name;
+  renderGal();
+}
+function closeGalModal(){ document.getElementById('galModal').classList.remove('show'); }
+function renderGal(){
+  const folders=document.getElementById('galFolders');
+  folders.innerHTML=GALLERY.map(f=>`<div class="f ${f.name===currentGalFolder?'on':''}" onclick="switchGalFolder('${f.name}')" title="${f.name}"><span>${f.name}</span><span>${f.files.length}</span></div>`).join('');
+  const filesBox=document.getElementById('galFiles');
+  const folder=GALLERY.find(f=>f.name===currentGalFolder);
+  if(!folder || !folder.files.length){ filesBox.innerHTML='<div class="empty">该文件夹暂无图片，点击上方“上传图片”添加</div>'; return; }
+  filesBox.innerHTML=`<div class="grid">${folder.files.map(file=>`
+    <div class="pic ${selectedGalUrls.includes(file.url)?'selected':''}" onclick="toggleGalPic('${file.url}')">
+      <img src="${file.url}" loading="lazy">
+      <div class="tick">✓</div>
+    </div>
+  `).join('')}</div>`;
+}
+function switchGalFolder(name){ currentGalFolder=name; renderGal(); }
+function toggleGalPic(url){
+  if(pickerMode==='main'){ selectedGalUrls=[url]; renderGal(); }
+  else {
+    const idx=selectedGalUrls.indexOf(url);
+    if(idx===-1) selectedGalUrls.push(url); else selectedGalUrls.splice(idx,1);
+    renderGal();
+  }
+}
+function confirmGalPicker(){
+  if(pickerMode==='main'){
+    const url=selectedGalUrls[0]||'';
+    document.getElementById('pMainImg').value=url;
+    document.getElementById('pMainImgPreview').src=url||'/assets/products/default.svg';
+  } else {
+    renderDetailImgs(selectedGalUrls);
+  }
+  closeGalModal();
+}
+async function newFolder(){
+  const name=prompt('新建文件夹名称：');
+  if(!name) return;
+  const res=await fetch('/api/gallery/folder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+  const data=await res.json();
+  if(data.ok || data.existed){ toast('文件夹已创建'); await refreshGallery(); currentGalFolder=name; renderGal(); }
+}
+async function uploadToGal(input){
+  const files=Array.from(input.files); if(!files.length) return;
+  if(!currentGalFolder && GALLERY.length) currentGalFolder=GALLERY[0].name;
+  if(!currentGalFolder){ toast('先创建一个文件夹'); return; }
+  for(const f of files){
+    const b64=await fileToBase64(f);
+    await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name})});
+  }
+  toast('上传完成'); input.value=''; await refreshGallery(); renderGal();
+}
+function uploadDirect(target){
+  document.getElementById(target==='main'?'pMainImgFile':'pDetailImgFile').click();
+}
+async function handleDirectUpload(input,target){
+  const files=Array.from(input.files); if(!files.length) return;
+  if(!currentGalFolder && GALLERY.length) currentGalFolder=GALLERY[0].name;
+  if(!currentGalFolder){
+    // 自动上传到“默认图库”
+    currentGalFolder='默认图库';
+  }
+  const urls=[];
+  for(const f of files){
+    const b64=await fileToBase64(f);
+    const res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name})});
+    const data=await res.json(); if(data.url) urls.push(data.url);
+  }
+  if(target==='main' && urls[0]){
+    document.getElementById('pMainImg').value=urls[0];
+    document.getElementById('pMainImgPreview').src=urls[0];
+  } else if(target==='detail'){
+    selectedGalUrls=selectedGalUrls.concat(urls);
+    renderDetailImgs(selectedGalUrls);
+  }
+  await refreshGallery();
+  input.value='';
+}
+async function refreshGallery(){ GALLERY=await fetch('/api/gallery').then(r=>r.json()); }
+function fileToBase64(file){ return new Promise((resolve)=>{ const r=new FileReader(); r.onload=()=>resolve(r.result); r.readAsDataURL(file); }); }
+
+load();
+setInterval(load, 15000);
+</script>
+</body>
+</html>

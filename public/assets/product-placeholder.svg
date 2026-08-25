@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600">
+  <rect width="600" height="600" fill="#efe8df"/>
+  <rect x="40" y="40" width="520" height="520" rx="24" fill="#e3d8c8"/>
+  <text x="300" y="290" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="46" fill="#a8947a" text-anchor="middle">产品图</text>
+  <text x="300" y="340" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="24" fill="#bcaa90" text-anchor="middle">替换 assets/products/ 下图片</text>
+</svg>

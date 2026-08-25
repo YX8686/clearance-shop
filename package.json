@@ -1,0 +1,16 @@
+{
+  "name": "buchu-clearance-shop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "不初限时狂欢商城 (Clearance Shop)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

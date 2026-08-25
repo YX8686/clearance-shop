@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>支付方式预览 - 不初限时狂欢商城</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f6f3ee;color:#3a322b;padding:20px}
+  .wrap{max-width:520px;margin:0 auto}
+  .box{background:#fff;border-radius:14px;padding:16px;box-shadow:0 2px 10px rgba(0,0,0,.05)}
+  h2{text-align:center;font-size:16px;margin:0 0 14px}
+  .pay-tabs{display:flex;gap:8px;justify-content:center;margin-bottom:14px;flex-wrap:wrap}
+  .pay-tabs button{border:1px solid #d8ccba;background:#fff;border-radius:18px;padding:7px 14px;font-size:13px;color:#7a6f62;cursor:pointer;min-width:90px}
+  .pay-tabs button.on{background:#b8743f;color:#fff;border-color:#b8743f;font-weight:700}
+  .tab{display:none}
+  .tab.on{display:block;text-align:center}
+  .tab img{max-width:260px;width:100%;height:auto;border-radius:10px}
+  .bank-card-img{width:100%;max-width:360px;display:block;margin:0 auto;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.08)}
+  .card-no-box{background:#faf7f2;border-radius:10px;padding:14px;margin-top:14px;text-align:left}
+  .card-no-box .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .card-no-box .top span{font-size:12px;color:#9a8f82}
+  .card-no-box .top button{border:none;background:#b8743f;color:#fff;border-radius:14px;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer}
+  .card-no-box .no{font-size:20px;font-weight:700;color:#3a322b;letter-spacing:1px;word-break:break-all}
+  .bank-info{background:#faf7f2;border-radius:10px;padding:14px;margin-top:12px;text-align:left;font-size:14px;line-height:1.8}
+  .bank-info .line{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed #e0d6c8}
+  .bank-info .line:last-child{border-bottom:none}
+  .bank-info button{margin-top:10px;width:100%;background:#b8743f;color:#fff;border:none;border-radius:18px;padding:9px;font-size:13px;cursor:pointer}
+  .tip{font-size:13px;color:#7a5230;line-height:1.7;margin-top:14px;background:#fff7ef;padding:12px;border-radius:10px}
+  .tip b{color:#c0392b}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="box">
+    <h2>请选择支付方式</h2>
+    <div class="pay-tabs">
+      <button class="on" onclick="switchTab('wechat')">微信收款码</button>
+      <button onclick="switchTab('alipay')">支付宝收款码</button>
+      <button onclick="switchTab('bank')">银行卡转账</button>
+    </div>
+
+    <div id="wechat" class="tab on">
+      <img src="public/assets/payment-wechat.jpg" alt="微信收款码">
+      <div style="font-size:12px;color:#999;margin-top:8px">请使用微信扫一扫付款</div>
+    </div>
+
+    <div id="alipay" class="tab">
+      <img src="public/assets/payment-alipay.jpg" alt="支付宝收款码">
+      <div style="font-size:12px;color:#999;margin-top:8px">请使用支付宝扫一扫付款</div>
+    </div>
+
+    <div id="bank" class="tab">
+      <img class="bank-card-img" src="public/assets/bank-card.png" alt="银行卡">
+      <div class="card-no-box">
+        <div class="top"><span>收款银行卡号</span><button onclick="copyNo()">复制</button></div>
+        <div class="no">622208 1106002836 790</div>
+      </div>
+      <div class="bank-info">
+        <div class="line"><span>收款人姓名</span><b>席娟</b></div>
+        <div class="line"><span>收款银行</span><b>工商银行（万里支行）</b></div>
+        <button onclick="copyAll()">复制全部银行卡信息</button>
+      </div>
+    </div>
+
+    <div class="tip">
+      <b>下一步：付款后截图</b><br>
+      请选择上方任一方式完成支付，并把<b>付款成功的页面截图</b>私信发给夏天老师本人。<br>
+      夏天老师核对无误后，会点击"确认已收款"，订单自动进入"待发货"。
+    </div>
+    <div style="font-size:12px;color:#9a8f82;background:#fbf7f2;border-radius:10px;padding:10px 12px;margin-top:10px;line-height:1.7">
+      💬 如有付款疑问，可联系夏天老师本人<br>
+      微信：<b style="color:#b8743f">buchu2018</b> / <b style="color:#b8743f">buchu2021</b>
+    </div>
+  </div>
+</div>
+<script>
+function switchTab(id){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));
+  document.getElementById(id).classList.add('on');
+  document.querySelectorAll('.pay-tabs button').forEach(b=>b.classList.remove('on'));
+  event.target.classList.add('on');
+}
+function copyNo(){
+  const no='6222081106002836790';
+  if(navigator.clipboard){navigator.clipboard.writeText(no).then(()=>alert('卡号已复制'))}
+  else{window.prompt('长按复制卡号',no)}
+}
+function copyAll(){
+  const text='工商银行（万里支行）\n户名：席娟\n卡号：622208 1106002836 790';
+  if(navigator.clipboard){navigator.clipboard.writeText(text).then(()=>alert('银行卡信息已复制'))}
+  else{window.prompt('长按复制以下内容：',text)}
+}
+</script>
+</body>
+</html>

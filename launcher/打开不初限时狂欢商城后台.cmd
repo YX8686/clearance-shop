@@ -1,0 +1,40 @@
+@echo off
+chcp 65001 >nul
+setlocal enabledelayedexpansion
+
+cd /d "C:\Users\华为mate14\WorkBuddy\2026-08-24-15-09-30\clearance-shop"
+
+:: 如果服务已在运行，直接打开后台
+netstat -ano | findstr ":4100" >nul 2>&1
+if %errorlevel% == 0 (
+    start "" "http://localhost:4100/admin"
+    exit
+)
+
+:: 检查 node 是否存在
+if not exist "C:\Users\华为mate14\.workbuddy\binaries\node\versions\22.22.2\node.exe" (
+    echo [错误] 找不到 node.exe，请检查安装路径。
+    pause
+    exit
+)
+
+:: 启动 Node 服务（最小化窗口）
+start /min "不初商城服务" "C:\Users\华为mate14\.workbuddy\binaries\node\versions\22.22.2\node.exe" server.js
+
+:: 等待服务启动，最多 10 秒
+set /a count=0
+:wait_loop
+timeout /t 1 /nobreak >nul
+netstat -ano | findstr ":4100" >nul 2>&1
+if %errorlevel% == 0 goto open_admin
+set /a count+=1
+if %count% lss 10 goto wait_loop
+
+echo [错误] 商城服务启动失败，可能是端口被占用或权限不足。
+echo 请右键以"管理员身份运行"此快捷方式再试一次。
+pause
+exit
+
+:open_admin
+start "" "http://localhost:4100/admin"
+exit

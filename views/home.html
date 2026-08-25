@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>{{SHOP_NAME}}</title>
+<meta property="og:title" content="{{OG_TITLE}}">
+<meta property="og:description" content="{{OG_DESC}}">
+<meta property="og:image" content="{{OG_IMAGE}}">
+<meta property="og:url" content="{{OG_URL}}">
+<link rel="icon" href="/assets/logo.ico">
+<meta property="og:type" content="website">
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f6f3ee;color:#3a322b}
+  .topbar{position:sticky;top:0;z-index:20;background:linear-gradient(135deg,#b8743f,#c98a6b);color:#fff;padding:14px 16px;box-shadow:0 2px 8px rgba(0,0,0,.08);display:flex;justify-content:space-between;align-items:center}
+  .topbar h1{margin:0;font-size:18px;font-weight:700;letter-spacing:1px}
+  .topbar .actions{display:flex;gap:8px;align-items:center}
+  .topbar .actions a{color:#fff;font-size:12px;opacity:.9;text-decoration:none;border:1px solid rgba(255,255,255,.4);border-radius:12px;padding:5px 10px;white-space:nowrap}
+
+  /* 顶部滚动通知条 */
+  .notify{background:#fff7ef;border-bottom:1px solid #f0ece4;color:#7a5230;font-size:13px;padding:10px 0;overflow:hidden;white-space:nowrap;position:relative}
+  .notify-track{display:inline-block;padding-left:100%;animation:notifyScroll 14s linear infinite}
+  .notify-text{display:inline-block;padding-right:60px}
+  @keyframes notifyScroll{0%{transform:translateX(0)}100%{transform:translateX(-100%)}}
+
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;padding:14px;max-width:960px;margin:0 auto}
+  @media(min-width:560px){.grid{grid-template-columns:repeat(3,1fr)}}
+  @media(min-width:880px){.grid{grid-template-columns:repeat(4,1fr)}}
+  .card{background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.05);display:flex;flex-direction:column}
+  .card .img{width:100%;aspect-ratio:1/1;object-fit:cover;background:#eee;cursor:pointer}
+  .card .body{padding:10px 11px 12px;display:flex;flex-direction:column;flex:1}
+  .card .name{font-size:14px;font-weight:600;line-height:1.35;cursor:pointer}
+  .card .desc{font-size:11px;color:#9a8f82;margin:5px 0 8px;line-height:1.5;flex:1}
+  .card .price{color:#c0392b;font-weight:700;font-size:16px}
+  .card .price small{font-size:11px}
+  .card .orig{color:#bbb;font-size:11px;text-decoration:line-through;margin-left:6px;font-weight:400}
+  .card .add{margin-top:9px;background:#b8743f;color:#fff;border:none;border-radius:20px;padding:8px 0;font-size:13px;font-weight:600;cursor:pointer}
+  .card .add:active{opacity:.8}
+  /* 购物车右侧抽屉 */
+  .fab{position:fixed;right:16px;bottom:18px;z-index:30;background:#b8743f;color:#fff;width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:24px;box-shadow:0 4px 14px rgba(184,116,63,.5);cursor:pointer}
+  .badge{position:absolute;top:-2px;right:-2px;background:#c0392b;color:#fff;font-size:11px;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 4px}
+  .mask{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40;display:none}
+  .mask.show{display:block}
+  .drawer{position:fixed;top:0;right:0;bottom:0;left:auto;width:100%;max-width:420px;z-index:50;background:#fff;border-radius:18px 0 0 18px;box-shadow:-4px 0 20px rgba(0,0,0,.1);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .25s}
+  .drawer.show{transform:translateX(0)}
+  .drawer h3{margin:0;padding:16px;font-size:15px;border-bottom:1px solid #f0ece4;display:flex;justify-content:space-between;align-items:center}
+  .drawer h3 .cls{font-size:22px;color:#bbb;cursor:pointer}
+  .items{overflow:auto;padding:6px 16px;flex:1}
+  .item{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid #f5f1ea}
+  .item img{width:48px;height:48px;border-radius:8px;object-fit:cover;background:#eee}
+  .item .info{flex:1;min-width:0}
+  .item .info .n{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .item .info .p{font-size:12px;color:#c0392b;margin-top:3px}
+  .stepper{display:flex;align-items:center;gap:8px}
+  .stepper button{width:26px;height:26px;border-radius:50%;border:1px solid #d8ccba;background:#fff;font-size:16px;cursor:pointer}
+  .stepper span{min-width:18px;text-align:center;font-size:14px}
+  .empty{padding:40px 0;text-align:center;color:#bbb;font-size:13px}
+  .foot{padding:14px 16px;box-shadow:0 -2px 10px rgba(0,0,0,.05)}
+  .foot .tot{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .foot .tot b{font-size:18px;color:#c0392b}
+  .foot .chk{width:100%;background:#b8743f;color:#fff;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer}
+  .foot .chk:disabled{background:#d8ccba}
+  /* 结算表单（中间竖版弹窗） */
+  .modal{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:16px}
+  .modal.show{display:flex}
+  .sheet{background:#fff;width:100%;max-width:420px;border-radius:18px;padding:18px 16px 22px;max-height:86vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.2)}
+  .sheet h3{margin:0 0 14px;font-size:16px}
+  .field{margin-bottom:12px}
+  .field label{font-size:12px;color:#7a6f62;display:block;margin-bottom:5px}
+  .field input,.field textarea{width:100%;border:1px solid #e0d6c8;border-radius:9px;padding:11px;font-size:14px;font-family:inherit}
+  .field textarea{resize:vertical;min-height:54px}
+  .sheet .submit{width:100%;background:#b8743f;color:#fff;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;margin-top:6px;cursor:pointer}
+  .sheet .hint{font-size:12px;color:#9a8f82;line-height:1.6;background:#fbf7f1;padding:10px;border-radius:9px;margin-top:10px}
+  /* 查询结果弹层 */
+  .resultModal{position:fixed;inset:0;z-index:70;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:16px}
+  .resultModal.show{display:flex}
+  .resultBox{background:#fff;width:100%;max-width:480px;border-radius:16px;max-height:80vh;overflow:auto;padding:16px}
+  .resultBox h4{margin:0 0 12px;font-size:15px;display:flex;justify-content:space-between;align-items:center}
+  .resultBox .close{font-size:22px;color:#bbb;cursor:pointer}
+  .oCard{background:#fff;border-radius:12px;padding:14px;margin-bottom:12px;cursor:pointer;box-shadow:0 1px 6px rgba(0,0,0,.05);border:1px solid #f0ece4}
+  .oCard .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .oCard .id{font-weight:700;color:#b8743f;font-size:15px;letter-spacing:.5px}
+  .oCard .status{display:inline-block;font-size:12px;padding:4px 10px;border-radius:12px;font-weight:600}
+  .oCard .st-wait{background:#fff3e0;color:#e08a00}
+  .oCard .st-confirm{background:#f3e8ff;color:#7c3aed}
+  .oCard .st-ship{background:#e8f1ff;color:#2f6fd0}
+  .oCard .st-done{background:#e6f7ec;color:#1f9d55}
+  .oCard .sect{margin-bottom:10px}
+  .oCard .sect:last-child{margin-bottom:0}
+  .oCard .sect-title{font-size:12px;color:#9a8f82;margin-bottom:6px;font-weight:600}
+  .oCard .info-line{font-size:13px;color:#3a322b;line-height:1.8;padding:3px 0;border-bottom:1px dashed #f0ece4}
+  .oCard .info-line:last-child{border-bottom:none}
+  .oCard .info-line .lbl{color:#9a8f82;display:inline-block;width:52px}
+  .oCard .item-line{display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:8px 0;border-bottom:1px dashed #f0ece4}
+  .oCard .item-line:last-child{border-bottom:none}
+  .oCard .item-name{color:#3a322b;flex:1;padding-right:10px}
+  .oCard .item-price{color:#9a8f82;white-space:nowrap}
+  .oCard .total{text-align:right;font-size:15px;font-weight:700;color:#c0392b;margin-top:8px;padding-top:8px;border-top:1px solid #f0ece4}
+  .oCard .tracking{margin-top:10px;background:#f6f3ee;border-radius:8px;padding:10px}
+  .oCard .tracking .tt{font-size:12px;color:#9a8f82;margin-bottom:2px}
+  .oCard .tracking .no{font-size:15px;font-weight:700;color:#1f9d55;letter-spacing:.5px}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>{{SHOP_NAME}}</h1>
+    <div class="actions">
+      <a href="#" onclick="openLookupModal();return false;">查询我的订单</a>
+      <a href="#" onclick="savePage();return false;">收藏此商城</a>
+    </div>
+  </div>
+
+  <!-- 顶部滚动通知条（文字先占位，回头替换） -->
+  <div class="notify" id="notify">
+    <div class="notify-track">
+      <span class="notify-text" id="notifyText">最新活动通知，敬请关注 &nbsp;&nbsp;&nbsp; 清仓特惠，卖完即止 &nbsp;&nbsp;&nbsp; 欢迎老客户回购</span>
+    </div>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <!-- 购物车 -->
+  <div class="fab" onclick="openCart()">🛒<span class="badge" id="badge" style="display:none">0</span></div>
+  <div class="mask" id="mask" onclick="closeCart()"></div>
+  <div class="drawer" id="drawer">
+    <h3>购物车 <span class="cls" onclick="closeCart()">×</span></h3>
+    <div class="items" id="cartItems"></div>
+    <div class="foot">
+      <div class="tot"><span>合计</span><b id="cartTotal">¥0</b></div>
+      <button class="chk" id="chkBtn" disabled onclick="openCheckout()">去结算</button>
+    </div>
+  </div>
+
+  <!-- 结算 -->
+  <div class="modal" id="checkout" onclick="if(event.target===this)closeCheckout()">
+    <div class="sheet">
+      <h3>填写收货信息</h3>
+      <div class="field"><label>姓名</label><input id="cName" placeholder="收货人姓名"></div>
+      <div class="field"><label>电话</label><input id="cPhone" placeholder="手机号" inputmode="numeric"></div>
+      <div class="field"><label>地址</label><textarea id="cAddr" placeholder="详细收货地址"></textarea></div>
+      <div class="field">
+        <label>微信号</label>
+        <input id="cWechat" placeholder="微信号">
+        <div style="font-size:12px;color:#9a8f82;margin-top:6px;line-height:1.5">💡 <span style="color:#7a5230;font-weight:600">微信号在哪里看到？</span><br>打开你的微信，点右下角的“我”，页面上方的头像右边就会显示“微信号：XXX”。</div>
+      </div>
+      <button class="submit" onclick="submitOrder()">提交订单</button>
+      <div class="hint">提交后跳转订单页，按页面提示扫码支付，<b>支付后，请将付款成功的微信或支付宝页面截图私信给夏天老师本人，以做核实和登记</b>。本店免登录，请收藏订单页以便查看物流。</div>
+    </div>
+  </div>
+
+  <!-- 查询入口弹层 -->
+  <div class="modal" id="lookupModal" onclick="if(event.target===this)closeLookupModal()">
+    <div class="sheet">
+      <h3>查询我的订单</h3>
+      <div class="field"><label>收件人姓名或手机号</label><input id="lookupKey" placeholder="输入收货人姓名或手机号"></div>
+      <button class="submit" onclick="lookupOrder()">查询</button>
+      <div class="hint">输入下单时填写的姓名或手机号，即可查询该手机号下的所有订单及物流信息。</div>
+    </div>
+  </div>
+
+  <!-- 查询结果 -->
+  <div class="resultModal" id="resultModal" onclick="if(event.target===this)closeResult()">
+    <div class="resultBox">
+      <h4>查询结果 <span class="close" onclick="closeResult()">×</span></h4>
+      <div id="resultList"></div>
+    </div>
+  </div>
+
+<script>
+const PRODUCTS = {{PRODUCTS_JSON}};
+const CONFIG = {{CONFIG_JSON}};
+let cart = {};
+try { cart = JSON.parse(localStorage.getItem('cart')||'{}'); } catch(e){ cart={}; }
+
+const $ = s=>document.querySelector(s);
+function money(n){ return '¥'+Number(n).toLocaleString('zh-CN'); }
+
+function copyText(text, msg){
+  if(navigator.clipboard){
+    navigator.clipboard.writeText(text).then(()=>{ if(msg) alert(msg); }).catch(()=>fallbackCopy(text,msg));
+  } else { fallbackCopy(text,msg); }
+}
+function fallbackCopy(text, msg){
+  const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+  if(msg) alert(msg);
+}
+function detectCourier(no){
+  const s=String(no).toUpperCase().replace(/\s/g,'');
+  if(/^SF/.test(s)) return {name:'顺丰速运', url:'https://www.sf-express.com/chn/sc/dynamic_function/waybill/#search/bill-number/'+no};
+  if(/^YT/.test(s)) return {name:'圆通速递', url:'https://www.yto.net.cn/waybillQuery?waybillNo='+no};
+  if(/^ZTO/.test(s) || /^(75|77|78)\d{12}$/.test(s)) return {name:'中通快递', url:'https://www.zto.com/cn/search?billNo='+no};
+  if(/^STO/.test(s) || /^77\d{12}$/.test(s)) return {name:'申通快递', url:'https://www.sto.cn/Home/BillSelect?billcode='+no};
+  if(/^YD/.test(s)) return {name:'韵达速递', url:'https://www.yundaex.com/cn/personal/waybill.php?wen='+no};
+  if(/^EMS/.test(s) || /^E[A-Z]\d{9}CN$/.test(s)) return {name:'EMS', url:'https://www.ems.com.cn/queryList?mailNum='+no};
+  if(/^JD/.test(s)) return {name:'京东物流', url:'https://www.jdl.com/oder/search?waybillCodes='+no};
+  return {name:'快递查询', url:'https://m.kuaidi100.com/result.jsp?nu='+encodeURIComponent(no)};
+}
+function queryTracking(no){
+  copyText(no, '快递单号已复制：'+no);
+  const c=detectCourier(no);
+  setTimeout(()=>{ window.open(c.url, '_blank'); }, 200);
+}
+
+function renderGrid(){
+  const g = $('#grid'); g.innerHTML='';
+  PRODUCTS.forEach(p=>{
+    const div=document.createElement('div'); div.className='card';
+    const orig = (p.originalPrice && p.originalPrice>p.price) ? '<span class="orig">'+money(p.originalPrice)+'</span>' : '';
+    div.innerHTML = `
+      <img class="img" src="${p.image||'/assets/product-placeholder.svg'}" onclick="goProduct('${p.id}')">
+      <div class="body">
+        <div class="name" onclick="goProduct('${p.id}')">${p.name}</div>
+        <div class="desc">${p.desc||''}</div>
+        <div class="price">${money(p.price)}<small> /件</small>${orig}</div>
+        <button class="add" onclick="addToCart('${p.id}')">加入购物车</button>
+      </div>`;
+    g.appendChild(div);
+  });
+  if(!PRODUCTS.length) g.innerHTML='<p style="grid-column:1/3;text-align:center;color:#bbb">暂未上架商品</p>';
+}
+function goProduct(id){ location.href='/product/'+id; }
+
+function cartCount(){ return Object.values(cart).reduce((a,b)=>a+b,0); }
+function cartTotal(){ return Object.entries(cart).reduce((s,[id,q])=>{ const p=PRODUCTS.find(x=>x.id===id); return s+(p?p.price*q:0); },0); }
+function saveCart(){ localStorage.setItem('cart',JSON.stringify(cart)); updateBadge(); }
+function updateBadge(){ const n=cartCount(); const b=$('#badge'); if(n>0){b.style.display='flex';b.textContent=n;} else b.style.display='none'; }
+
+function addToCart(id){ cart[id]=(cart[id]||0)+1; saveCart(); openCart(); }
+function changeQty(id,d){ cart[id]=(cart[id]||0)+d; if(cart[id]<=0) delete cart[id]; saveCart(); renderCart(); }
+
+function openCart(){ $('#mask').classList.add('show'); $('#drawer').classList.add('show'); renderCart(); }
+function closeCart(){ $('#mask').classList.remove('show'); $('#drawer').classList.remove('show'); }
+
+function renderCart(){
+  const box=$('#cartItems'); box.innerHTML='';
+  const ids=Object.keys(cart);
+  if(!ids.length){ box.innerHTML='<div class="empty">购物车还是空的</div>'; $('#chkBtn').disabled=true; }
+  else {
+    ids.forEach(id=>{
+      const p=PRODUCTS.find(x=>x.id===id); if(!p) return;
+      const row=document.createElement('div'); row.className='item';
+      row.innerHTML=`
+        <img src="${p.image||'/assets/product-placeholder.svg'}">
+        <div class="info"><div class="n">${p.name}</div><div class="p">${money(p.price)}</div></div>
+        <div class="stepper"><button onclick="changeQty('${id}',-1)">−</button><span>${cart[id]}</span><button onclick="changeQty('${id}',1)">+</button></div>`;
+      box.appendChild(row);
+    });
+    $('#chkBtn').disabled=false;
+  }
+  $('#cartTotal').textContent=money(cartTotal());
+}
+
+function openCheckout(){ if(!cartCount()) return; closeCart(); $('#checkout').classList.add('show'); }
+function closeCheckout(){ $('#checkout').classList.remove('show'); }
+
+function submitOrder(){
+  const name=$('#cName').value.trim(), phone=$('#cPhone').value.trim(), addr=$('#cAddr').value.trim(), wechat=$('#cWechat').value.trim();
+  if(!name||!phone||!addr){ alert('请填写完整收货信息'); return; }
+  const items=Object.entries(cart).map(([id,q])=>({id,qty:q}));
+  if(!items.length){ alert('购物车为空'); return; }
+  fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,phone,address:addr,wechat,items})})
+    .then(r=>r.json()).then(d=>{
+      if(d.id){ cart={}; saveCart(); closeCheckout(); location.href='/order/'+d.id; }
+      else {
+        const msg = d.message || d.error || '未知错误';
+        alert('下单失败：'+msg+'\n\n如提示"数据目录不可写"或"operation not permitted"，请关闭当前黑窗口，双击桌面图标「不初限时狂欢商城」重新启动服务。');
+      }
+    }).catch(e=>alert('网络错误：'+e.message+'\n\n请检查是否已双击桌面图标启动商城服务。'));
+}
+
+function openLookupModal(){ $('#lookupModal').classList.add('show'); }
+function closeLookupModal(){ $('#lookupModal').classList.remove('show'); }
+function savePage(){
+  if(typeof navigator!=='undefined' && navigator.share){
+    navigator.share({title:document.title, url:location.href}).catch(()=>{});
+  } else {
+    alert('请按以下方式收藏本商城：\n• 微信内：点击右上角「⋮」→「收藏」\n• 浏览器：按 Ctrl+D（或 Cmd+D）加入书签\n收藏后下次可从微信收藏夹直接打开，方便查订单。');
+  }
+}
+function lookupOrder(){
+  const key=$('#lookupKey').value.trim();
+  if(!key){ alert('请输入收货人姓名或手机号'); return; }
+  closeLookupModal();
+  fetch('/api/orders/lookup?key='+encodeURIComponent(key))
+    .then(r=>r.json()).then(list=>{
+      const box=$('#resultList'); box.innerHTML='';
+      if(!list.length){ box.innerHTML='<p style="color:#999;font-size:13px">未找到相关订单，请检查姓名或手机号是否准确。</p>'; }
+      else {
+        list.forEach(o=>{
+          const div=document.createElement('div'); div.className='oCard';
+          div.onclick=()=>location.href='/order/'+o.id;
+          const stClass = {'待付款':'st-wait','待确认':'st-confirm','待发货':'st-ship','已发货':'st-done'}[o.status] || 'st-wait';
+          const stLabel = o.status==='已发货' ? '发货中' : o.status;
+          const itemsHtml = o.items.map(i=>`<div class="item-line"><span class="item-name">${i.name}</span><span class="item-price">${money(i.price)} × ${i.qty}</span></div>`).join('');
+          let trackingHtml = '';
+          if(o.status==='已发货' && o.tracking){
+            const c=detectCourier(o.tracking);
+            trackingHtml = `<div class="tracking">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><div class="tt">${c.name}</div><div style="display:flex;gap:6px"><button onclick="event.stopPropagation();copyText('${o.tracking}','单号已复制')" style="border:none;background:#fff;color:#1f9d55;border-radius:12px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer">复制</button><button onclick="event.stopPropagation();queryTracking('${o.tracking}')" style="border:none;background:#1f9d55;color:#fff;border-radius:12px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer">查物流</button></div></div>
+              <div class="no">${o.tracking}</div>
+            </div>`;
+          }
+          div.innerHTML=`<div class="head"><span class="id">订单号：${o.id}</span><span class="status ${stClass}">${stLabel}</span></div>
+            <div class="sect">
+              <div class="sect-title">收货信息</div>
+              <div class="info-line"><span class="lbl">姓名</span>${o.name}</div>
+              <div class="info-line"><span class="lbl">电话</span>${o.phone}</div>
+              <div class="info-line"><span class="lbl">地址</span>${o.address}</div>
+              ${o.wechat ? `<div class="info-line"><span class="lbl">微信</span>${o.wechat}</div>` : ''}
+            </div>
+            <div class="sect">
+              <div class="sect-title">商品明细</div>
+              ${itemsHtml}
+              <div class="total">合计 ${money(o.total)}</div>
+            </div>
+            ${trackingHtml}`;
+          box.appendChild(div);
+        });
+      }
+      $('#resultModal').classList.add('show');
+    }).catch(e=>alert('查询失败：'+e.message));
+}
+function closeResult(){ $('#resultModal').classList.remove('show'); }
+
+renderGrid(); updateBadge();
+</script>
+</body>
+</html>

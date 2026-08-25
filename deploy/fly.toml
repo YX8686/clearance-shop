@@ -1,0 +1,20 @@
+app = "laozhai-mall"
+primary_region = "sin"   # 改成离你近的节点，如 hkg / nrt
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  OPEN = "0"
+
+[[services]]
+  internal_port = 4100
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443

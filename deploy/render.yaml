@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: laozhai-mall
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: OPEN
+        value: "0"

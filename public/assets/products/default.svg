@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <rect width="200" height="200" fill="#f0ece4"/>
+  <rect x="60" y="50" width="80" height="90" rx="6" fill="#e0d6c8"/>
+  <circle cx="100" cy="85" r="18" fill="#d0c4b4"/>
+  <rect x="75" y="110" width="50" height="6" rx="3" fill="#d0c4b4"/>
+  <text x="100" y="165" text-anchor="middle" font-size="12" fill="#9a8f82" font-family="Microsoft YaHei, sans-serif">暂无图片</text>
+</svg>
