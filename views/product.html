@@ -311,8 +311,8 @@ function selectSku(p, skuId){
   const stock = sku.stock!=null?sku.stock:(p.stock!=null?p.stock:'—');
   document.getElementById('skuStock').textContent = '库存：' + stock + ' 件';
   document.getElementById('skuStockHint').textContent = '库存 ' + stock + ' 件';
-  // 显示该 SKU 发货内容，优先 SKU 自身，否则 fallback 到产品级
-  const bundles = (sku.bundleItems && sku.bundleItems.length) ? sku.bundleItems : (p.bundleItems||[]);
+  // 显示该 SKU 发货内容；没有配置则隐藏，避免回退到产品级导致错配
+  const bundles = sku.bundleItems || [];
   const bb = document.getElementById('skuBundleBox');
   if(bundles.length){
     bb.style.display='block';

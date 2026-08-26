@@ -371,7 +371,7 @@ function selectSku(skuId){
   const stock = sku.stock!=null?sku.stock:(p.stock!=null?p.stock:'—');
   document.getElementById('skuStock').textContent = '库存：' + stock + ' 件';
   document.getElementById('skuStockHint').textContent = '库存 ' + stock + ' 件';
-  const bundles = (sku.bundleItems && sku.bundleItems.length) ? sku.bundleItems : (p.bundleItems||[]);
+  const bundles = sku.bundleItems || [];
   const bb = document.getElementById('skuBundleBox');
   if(bundles.length){ bb.style.display='block'; document.getElementById('skuBundleList').innerHTML = bundles.map(b=>`<div class="li"><span>• ${b.name}</span><span>${b.qty} ${b.unit||'件'}</span></div>`).join(''); }
   else { bb.style.display='none'; }

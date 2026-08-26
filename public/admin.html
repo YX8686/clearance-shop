@@ -643,7 +643,7 @@ function renderSkuList(){
         <input type="number" placeholder="库存" value="${s.stock!==''?s.stock:''}" onchange="updateSku(${idx},'stock',this.value)" style="width:80px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px">
         <button type="button" onclick="removeSkuRow(${idx})" style="border:none;background:#e74c3c;color:#fff;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer">删除</button>
       </div>
-      <textarea rows="2" placeholder="该SKU对应的发货明细（每行：产品名 数量 单位）。不填则继承上方“产品明细”。" onchange="updateSku(${idx},'bundle',this.value)" style="width:100%;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px;resize:vertical">${(s.bundleItems||[]).map(b=>`${b.name} ${b.qty} ${b.unit}`).join('\n')}</textarea>
+      <textarea rows="2" placeholder="该SKU对应的发货明细（每行：产品名 数量 单位）。必须填写，否则商城不会显示该SKU的发货内容。" onchange="updateSku(${idx},'bundle',this.value)" style="width:100%;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px;resize:vertical">${(s.bundleItems||[]).map(b=>`${b.name} ${b.qty} ${b.unit}`).join('\n')}</textarea>
     </div>
   `).join('');
 }
