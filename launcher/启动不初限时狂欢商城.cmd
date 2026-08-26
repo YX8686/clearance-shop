@@ -4,10 +4,8 @@ setlocal enabledelayedexpansion
 
 cd /d "C:\Users\华为mate14\WorkBuddy\2026-08-24-15-09-30\clearance-shop"
 
-:: 连接云端 Supabase，让本地后台也能看到手机端订单
-set "SUPABASE_URL=https://pzhblcoszvkbnmolkkxf.supabase.co"
-set "SUPABASE_ANON_KEY=sb_publishable_AT0jjmkKEHk3PJThm9aG1w_q2hSfV4y"
-set "NODE_PATH=C:\Users\华为mate14\.workbuddy\binaries\node\workspace\node_modules"
+:: 本地 .env.local 已保存云端 Supabase 凭据，server.js 会自动读取，
+:: 让电脑后台也能看到手机端在云端产生的订单。
 
 :: 如果服务已在运行，直接打开浏览器
 netstat -ano | findstr ":4100" >nul 2>&1
