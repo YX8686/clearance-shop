@@ -110,7 +110,11 @@ function closeQrLightbox(){ document.getElementById('qrLightbox').classList.remo
 function saveQrImage(){
   const img=document.getElementById('qrLightboxImg');
   if(!img||!img.src) return;
-  if(isWechat()){ alert('微信内请长按上方图片保存到相册'); return; }
+  if(isWechat()){
+    alert('操作步骤：\n1. 长按上方二维码图片\n2. 选择「保存到手机」\n3. 在微信里把这张图片发给你的任意好友（或文件传输助手）\n4. 在微信聊天中长按该图片，即可识别二维码向我付款');
+    return;
+  }
+  // 普通浏览器尝试下载，失败时给出提示
   const a=document.createElement('a'); a.href=img.src; a.download=(img.alt||'收款码')+'.jpg'; a.target='_blank';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
