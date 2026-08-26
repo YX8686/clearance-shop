@@ -593,10 +593,10 @@ async function uploadToGal(input){
   if(!currentGalFolder && GALLERY.length) currentGalFolder=GALLERY[0].name;
   if(!currentGalFolder){ toast('先创建一个文件夹'); return; }
   for(const f of files){
-    const b64=await fileToBase64(f);
+    const b64=await fileToBase64(f, true);
     await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name})});
   }
-  toast('上传完成'); input.value=''; await refreshGallery(); renderGal();
+  toast('上传完成（图片已自动压缩）'); input.value=''; await refreshGallery(); renderGal();
 }
 function uploadDirect(target){
   document.getElementById(target==='main'?'pMainImgFile':'pDetailImgFile').click();
@@ -610,7 +610,7 @@ async function handleDirectUpload(input,target){
   }
   const urls=[];
   for(const f of files){
-    const b64=await fileToBase64(f);
+    const b64=await fileToBase64(f, true);
     const res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name})});
     const data=await res.json(); if(data.url) urls.push(data.url);
   }
@@ -625,7 +625,36 @@ async function handleDirectUpload(input,target){
   input.value='';
 }
 async function refreshGallery(){ GALLERY=await fetch('/api/gallery').then(r=>r.json()); }
-function fileToBase64(file){ return new Promise((resolve)=>{ const r=new FileReader(); r.onload=()=>resolve(r.result); r.readAsDataURL(file); }); }
+function fileToBase64(file, compress=false){
+  if(!compress || file.size < 150*1024) return new Promise((resolve)=>{ const r=new FileReader(); r.onload=()=>resolve(r.result); r.readAsDataURL(file); });
+  return compressImage(file);
+}
+async function compressImage(file, opts={}){
+  const maxWidth=opts.maxWidth||1200, quality=opts.quality||0.85;
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=e=>{
+      const img=new Image();
+      img.onload=()=>{
+        const scale=Math.min(1, maxWidth/img.width);
+        const canvas=document.createElement('canvas');
+        canvas.width=Math.round(img.width*scale);
+        canvas.height=Math.round(img.height*scale);
+        const ctx=canvas.getContext('2d');
+        ctx.fillStyle='#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.drawImage(img,0,0,canvas.width,canvas.height);
+        canvas.toBlob(blob=>{
+          const r2=new FileReader();
+          r2.onload=()=>resolve(r2.result);
+          r2.readAsDataURL(blob);
+        }, 'image/jpeg', quality);
+      };
+      img.onerror=reject;
+      img.src=e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 load();
 setInterval(load, 15000);
