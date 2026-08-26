@@ -107,6 +107,8 @@
   .so-time{color:#9a8f82;font-weight:400}
   .so-item{display:flex;justify-content:space-between;font-size:13px;color:#5b5147;padding:2px 0}
   .so-total{text-align:right;font-size:12px;color:#7a6f62;margin-top:4px;font-weight:600}
+  .bundle-inline{font-size:11px;color:#9a6b3f;padding:2px 0 2px 2px;line-height:1.5}
+  .it-line{display:flex;justify-content:space-between;font-size:13px;color:#5b5147;padding:2px 0}
 </style>
 </head>
 <body>
@@ -325,7 +327,13 @@ function render(){
   rows.forEach(o=>{
     const stMap={'待付款':['st-wait','待付款'],'待确认':['st-wait','待确认'],'待发货':['st-ship','待发货'],'已发货':['st-done','已发货']};
     const [cls,lab]=stMap[o.status]||['st-wait',o.status];
-    const items=o.items.map(i=>`<div><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`).join('');
+    const items=o.items.map(i=>{
+      let h=`<div class="it-line"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
+      if(i.bundleItems && i.bundleItems.length){
+        h+=`<div class="bundle-inline">${i.bundleItems.map(b=>`• ${b.name} ${b.qty*i.qty}${b.unit||'件'}`).join('　')}</div>`;
+      }
+      return h;
+    }).join('');
     let acts='';
     if(o.status==='待确认') acts=`<button class="btn-confirm" onclick="confirmPaid('${o.id}')">客户已发截图，确认收款</button>`;
     if(o.status==='已发货') acts=`<button class="btn-copy" onclick="copyShip('${o.id}')">复制发货信息</button>`;
@@ -365,7 +373,13 @@ function renderMergedShip(){
     const orderBlocks=group.map(o=>`
       <div class="suborder">
         <div class="so-h"><span>${o.id}</span><span class="so-time">付款 ${fmtTime(o.paidAt)}</span></div>
-        ${o.items.map(i=>`<div class="so-item"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`).join('')}
+        ${o.items.map(i=>{
+          let h=`<div class="so-item"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
+          if(i.bundleItems && i.bundleItems.length){
+            h+=`<div class="bundle-inline">${i.bundleItems.map(b=>`• ${b.name} ${b.qty*i.qty}${b.unit||'件'}`).join('　')}</div>`;
+          }
+          return h;
+        }).join('')}
         <div class="so-total">本单合计 ${money(o.total)}</div>
       </div>`).join('');
     const div=document.createElement('div'); div.className='card merge-card';
