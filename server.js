@@ -127,6 +127,22 @@ async function saveKV(key, value){
 
 // ---------- 图片写入（云端=Supabase Storage；本地=PUBLIC/assets） ----------
 // storageSub：云端 bucket 内的子路径；本地模式始终写 PUBLIC/assets 根
+
+// Supabase Storage isValidKey 仅允许 S3 安全字符，中文/非 ASCII 会报 Invalid key
+function toSafeStorageKey(str, keepExt=false){
+  if(!str) return str;
+  let ext='', base=str;
+  if(keepExt){
+    const m=str.match(/(\.[^.]+)$/);
+    if(m){ ext=m[1]; base=str.slice(0,-ext.length); }
+  }
+  if(/^([A-Za-z0-9_]|\/|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)+$/.test(base)) return str;
+  return Buffer.from(base,'utf8').toString('base64url') + ext;
+}
+function toSafeStoragePath(storageSub){
+  return String(storageSub||'').split('/').map(s=>toSafeStorageKey(s,true)).join('/');
+}
+
 async function saveImage(base64, fileName, storageSub){
   const m = String(base64).match(/^data:(image\/\w+);base64,(.+)$/);
   if(!m) return '';
@@ -135,9 +151,11 @@ async function saveImage(base64, fileName, storageSub){
   const file = String(fileName||'img').replace(/[\\/:*?"<>|]/g,'_').replace(/\.[^.]+$/,'') + '.' + ext;
   if(USE_SUPABASE){
     try{
-      const objectPath = (storageSub ? storageSub + '/' : 'uploads/') + file;
+      const safeSub = toSafeStoragePath(storageSub);
+      const safeFile = toSafeStorageKey(file, true);
+      const objectPath = (safeSub ? safeSub + '/' : 'uploads/') + safeFile;
       const { error } = await sb.storage.from('shop').upload(objectPath, buf, { contentType: m[1], upsert: true });
-      if(error){ console.error('[saveImage] storage', error.message); return ''; }
+      if(error){ console.error('[saveImage] storage', error.message, 'path=', objectPath); return ''; }
       const { data:{ publicUrl } } = sb.storage.from('shop').getPublicUrl(objectPath);
       return publicUrl;
     }catch(e){ console.error('[saveImage]', e.message); return ''; }
