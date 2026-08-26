@@ -13,31 +13,31 @@
 <style>
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   body{margin:0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f6f3ee;color:#3a322b}
-  .topbar{position:sticky;top:0;z-index:20;background:linear-gradient(135deg,#b8743f,#c98a6b);color:#fff;padding:14px 16px;box-shadow:0 2px 8px rgba(0,0,0,.08);display:flex;justify-content:space-between;align-items:center}
-  .topbar h1{margin:0;font-size:18px;font-weight:700;letter-spacing:1px}
+  .topbar{position:sticky;top:0;z-index:20;background:linear-gradient(135deg,#b8743f,#c98a6b);color:#fff;padding:10px 16px;box-shadow:0 2px 8px rgba(0,0,0,.08);display:flex;justify-content:space-between;align-items:center}
+  .topbar h1{margin:0;font-size:17px;font-weight:700;letter-spacing:1px}
   .topbar .actions{display:flex;gap:8px;align-items:center}
-  .topbar .actions a{color:#fff;font-size:12px;opacity:.9;text-decoration:none;border:1px solid rgba(255,255,255,.4);border-radius:12px;padding:5px 10px;white-space:nowrap}
+  .topbar .actions a{color:#fff;font-size:12px;opacity:.9;text-decoration:none;border:1px solid rgba(255,255,255,.4);border-radius:12px;padding:4px 10px;white-space:nowrap}
 
   /* 顶部滚动通知条 */
-  .notify{background:#fff7ef;border-bottom:1px solid #f0ece4;color:#7a5230;font-size:13px;padding:10px 0;overflow:hidden;white-space:nowrap;position:relative}
+  .notify{background:#fff7ef;border-bottom:1px solid #f0ece4;color:#7a5230;font-size:12px;padding:7px 0;overflow:hidden;white-space:nowrap;position:relative}
   .notify-track{display:inline-block;padding-left:100%;animation:notifyScroll 14s linear infinite}
   .notify-text{display:inline-block;padding-right:60px}
   @keyframes notifyScroll{0%{transform:translateX(0)}100%{transform:translateX(-100%)}}
 
   /* 分类导航 */
-  .catbar{position:sticky;top:54px;z-index:18;background:#f6f3ee;padding:8px 10px 4px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .catbar{position:sticky;top:46px;z-index:18;background:#f6f3ee;padding:6px 10px 3px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
   .catbar::-webkit-scrollbar{display:none}
   .catinner{display:flex;gap:8px;min-width:max-content;padding:0 4px}
-  .cattab{flex-shrink:0;border:1px solid #d8ccba;background:#fff;color:#7a5230;border-radius:16px;padding:6px 13px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:all .15s}
+  .cattab{flex-shrink:0;border:1px solid #d8ccba;background:#fff;color:#7a5230;border-radius:16px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:all .15s}
   .cattab.on{border-color:#b8743f;background:#b8743f;color:#fff}
 
-  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:8px;max-width:960px;margin:0 auto}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:7px;padding:7px;max-width:960px;margin:0 auto}
   @media(min-width:560px){.grid{grid-template-columns:repeat(3,1fr);gap:12px;padding:12px}}
   @media(min-width:880px){.grid{grid-template-columns:repeat(4,1fr)}}
   @media(min-width:1100px){.grid{grid-template-columns:repeat(5,1fr)}}
   .card{background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.05);display:flex;flex-direction:column}
-  .card .img{width:100%;aspect-ratio:1/1;object-fit:cover;background:#eee;cursor:pointer}
-  .card .body{padding:4px 5px 5px;display:flex;flex-direction:column;flex:1}
+  .card .img{width:100%;aspect-ratio:5/4;object-fit:cover;background:#eee;cursor:pointer}
+  .card .body{padding:3px 5px 4px;display:flex;flex-direction:column;flex:1}
   .card .name{font-size:12px;font-weight:600;line-height:1.2;cursor:pointer;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
   .card .desc{font-size:10px;color:#9a8f82;margin:1px 0 0;line-height:1.2;flex:0 0 auto;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
   .card .price{color:#c0392b;font-weight:700;font-size:13px;margin-top:1px;flex:0 0 auto}
