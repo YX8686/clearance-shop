@@ -160,6 +160,9 @@ function saveOrders(){ return withLock(()=> saveKV('orders', orders)); }
 function saveConfig(){ return withLock(()=> saveKV('config', config)); }
 function saveProducts(){ return withLock(()=> saveKV('products', products)); }
 
+// 订单读取：云端模式下每次从 Supabase 取最新，防止 Render 实例内存与本地后台不同步
+async function getOrders(){ return USE_SUPABASE ? await loadKV('orders', orders) : orders; }
+
 // ---------- 工具 ----------
 function htmlEscape(s){ return String(s==null?'':s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -236,14 +239,16 @@ const server = http.createServer(async (req, res)=>{
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(config)); return;
       }
       if(method==='GET' && pathname==='/api/orders'){
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(orders)); return;
+        const list = await getOrders();
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(list)); return;
       }
       // 按姓名/手机号查询订单
       if(method==='GET' && pathname==='/api/orders/lookup'){
         const key = String(u.searchParams.get('key')||'').trim();
         if(!key){ res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify([])); return; }
         const lower = key.toLowerCase();
-        const found = orders.filter(o=>{
+        const list = await getOrders();
+        const found = list.filter(o=>{
           const nameMatch = (o.name||'').toLowerCase().includes(lower);
           const phoneMatch = (o.phone||'').includes(key);
           return nameMatch || phoneMatch;
@@ -253,7 +258,8 @@ const server = http.createServer(async (req, res)=>{
       // 单个订单（供前端恢复「待付款」订单）
       const mOrderApi = pathname.match(/^\/api\/orders\/([\w-]+)$/);
       if(method==='GET' && mOrderApi){
-        const o = orders.find(o=>o.id===mOrderApi[1]) || null;
+        const list = await getOrders();
+        const o = list.find(o=>o.id===mOrderApi[1]) || null;
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(o)); return;
       }
       // 创建订单
@@ -467,7 +473,8 @@ const server = http.createServer(async (req, res)=>{
 
     const mOrder = pathname.match(/^\/order\/([\w-]+)$/);
     if(method==='GET' && mOrder){
-      const o = orders.find(o=>o.id===mOrder[1]) || null;
+      const list = await getOrders();
+      const o = list.find(o=>o.id===mOrder[1]) || null;
       const html = renderTemplate('order.html', {
         SHOP_NAME: htmlEscape(config.shopName),
         ORDER_JSON: jsonForScript(o),

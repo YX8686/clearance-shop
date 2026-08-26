@@ -88,7 +88,7 @@
   <div id="app"></div>
   <div class="qr-lightbox" id="qrLightbox" onclick="if(event.target===this)closeQrLightbox()">
     <img id="qrLightboxImg" src="" alt="收款码">
-    <div class="tip" id="qrLightboxTip">长按二维码识别或保存到相册</div>
+    <div class="tip" id="qrLightboxTip">点击「保存图片」查看付款步骤，或长按上图保存到相册</div>
     <div class="actions">
       <button class="primary" onclick="saveQrImage()">保存图片</button>
       <button onclick="closeQrLightbox()">关闭</button>
@@ -111,7 +111,7 @@ function saveQrImage(){
   const img=document.getElementById('qrLightboxImg');
   if(!img||!img.src) return;
   if(isWechat()){
-    alert('操作步骤：\n1. 长按上方二维码图片\n2. 选择「保存到手机」\n3. 在微信里把这张图片发给你的任意好友（或文件传输助手）\n4. 在微信聊天中长按该图片，即可识别二维码向我付款');
+    alert('操作步骤：\n1. 长按上方二维码图片\n2. 选择「保存到手机」\n3. 退出该商城，回到微信，点开微信右上角「+」号，选择「扫一扫」，从相册中选到这个二维码，即可向我付款\n4. 记得截图付款成功页面，并发给夏天，然后重新点击商城链接回来继续操作');
     return;
   }
   // 普通浏览器尝试下载，失败时给出提示
@@ -401,6 +401,19 @@ if(!O){
     else { arr=arr.filter(x=>x!==O.id); localStorage.setItem(PENDING_KEY,JSON.stringify(arr)); }
   }catch(e){}
 }
+
+// 页面打开后自动拉取最新订单状态，防止商家后台已发货/已确认但客户端还是旧页面
+function refreshOrder(){
+  if(!O) return;
+  fetch('/api/orders/'+O.id).then(r=>r.json()).then(o=>{
+    if(!o || !o.id) return;
+    if(o.status!==O.status || o.tracking!==O.tracking){
+      O = o;
+      location.reload();
+    }
+  }).catch(()=>{});
+}
+setTimeout(refreshOrder, 400);
 
 function renderPayTabs(){
   // 始终展示三种支付方式选项卡，未配置时显示占位提示，让客户知道可选

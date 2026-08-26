@@ -47,12 +47,14 @@ def start_service():
 
     # 只在失败时输出；成功时保持静默，避免闪屏
     # CREATE_NO_WINDOW = 0x08000000，避免显示黑框
+    log_path = os.path.join(SHOP_DIR, 'server.log')
+    log_file = open(log_path, 'a', encoding='utf-8')
     subprocess.Popen(
         [NODE_EXE, 'server.js'],
         cwd=SHOP_DIR,
         creationflags=0x08000000,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=log_file,
         stdin=subprocess.DEVNULL
     )
 

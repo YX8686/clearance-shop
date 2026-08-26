@@ -272,9 +272,11 @@ function render(){
     if(o.status==='待确认') acts=`<button class="btn-confirm" onclick="confirmPaid('${o.id}')">客户已发截图，确认收款</button>`;
     if(o.status==='已发货') acts=`<button class="btn-copy" onclick="copyShip('${o.id}')">复制发货信息</button>`;
     const div=document.createElement('div'); div.className='card';
-    const payLine=o.status==='已发货'?`<div class="line"><span class="k">付款时间</span>${fmtTime(o.paidAt)}</div>`:'';
+    const showPayTime = o.status==='待确认' || o.status==='待发货' || o.status==='已发货';
+    const payLine=showPayTime?`<div class="line"><span class="k">付款时间</span>${fmtTime(o.paidAt)}</div>`:'';
     div.innerHTML=`
       <div class="h"><span class="oid">${o.id}</span><span class="st ${cls}">${lab}</span></div>
+      <div class="line"><span class="k">下单时间</span>${fmtTime(o.createdAt)}</div>
       <div class="line"><span class="k">姓名</span>${o.name}</div>
       ${o.wechat ? `<div class="line"><span class="k">微信</span>${o.wechat}</div>` : ''}
       <div class="line"><span class="k">电话</span>${o.phone}</div>

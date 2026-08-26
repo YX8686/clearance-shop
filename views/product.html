@@ -138,8 +138,8 @@
       <h3>💰 您有一笔订单待付款</h3>
       <div id="pendingList" style="font-size:13px;color:#7a6f62;line-height:1.8;margin-bottom:14px"></div>
       <button class="submit" id="pendingPayBtn" onclick="goPendingPay()">继续付款</button>
-      <button style="width:100%;background:#f3ece2;color:#7a5230;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;margin-top:10px;cursor:pointer" onclick="closePending()">先逛逛</button>
-      <div style="font-size:11px;color:#bbb;margin-top:12px;line-height:1.6">继续付款后可查看订单进度与物流<br>信息只保存在本机，请勿清理微信缓存</div>
+      <button style="width:100%;background:#f3ece2;color:#7a5230;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;margin-top:10px;cursor:pointer" onclick="markPaidAndGo()">已付款，且已截图付款成功页面发给夏天完毕</button>
+      <div style="font-size:11px;color:#bbb;margin-top:12px;line-height:1.6">点击上方按钮后可直接查看订单进度<br>信息只保存在本机，请勿清理微信缓存</div>
     </div>
   </div>
 
@@ -264,6 +264,17 @@ function showPendingModal(){
 }
 function closePending(){ document.getElementById('pendingModal').classList.remove('show'); }
 function goPendingPay(){ const o=pendingOrders[0]; if(o) location.href='/order/'+o.id; }
+function markPaidAndGo(){
+  const o=pendingOrders[0]; if(!o) return;
+  fetch('/api/orders/'+o.id+'/paid',{method:'POST'})
+    .then(r=>r.json()).then(d=>{
+      removePending(o.id);
+      location.href='/order/'+o.id+'?from=paid';
+    }).catch(()=>{
+      removePending(o.id);
+      location.href='/order/'+o.id+'?from=paid';
+    });
+}
 
 function submitOrder(){
   const name=$('#cName').value.trim(), phone=$('#cPhone').value.trim(), addr=$('#cAddr').value.trim(), wechat=$('#cWechat').value.trim();
