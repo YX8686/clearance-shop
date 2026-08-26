@@ -196,6 +196,7 @@
           <input type="hidden" id="pMainImg">
           <button onclick="openGalPicker('main')">从图库选择</button>
           <button onclick="uploadDirect('main')">本地上传</button>
+          <span id="pMainImgStatus" style="font-size:12px;color:#b8743f;margin-left:4px"></span>
           <input type="file" id="pMainImgFile" accept="image/*" style="display:none" onchange="handleDirectUpload(this,'main')">
         </div>
       </div>
@@ -204,6 +205,7 @@
         <div class="img-picker">
           <button onclick="openGalPicker('detail')">从图库选择</button>
           <button onclick="uploadDirect('detail')">本地上传</button>
+          <span id="pDetailImgStatus" style="font-size:12px;color:#b8743f;margin-left:4px"></span>
           <input type="file" id="pDetailImgFile" accept="image/*" multiple style="display:none" onchange="handleDirectUpload(this,'detail')">
         </div>
         <div class="detail-imgs" id="pDetailImgs"></div>
@@ -772,27 +774,43 @@ function uploadDirect(target){
   document.getElementById(target==='main'?'pMainImgFile':'pDetailImgFile').click();
 }
 async function handleDirectUpload(input,target){
-  const files=Array.from(input.files); if(!files.length) return;
-  if(!currentGalFolder && GALLERY.length) currentGalFolder=GALLERY[0].name;
-  if(!currentGalFolder){
-    // 自动上传到“默认图库”
-    currentGalFolder='默认图库';
+  const statusId=target==='main'?'pMainImgStatus':'pDetailImgStatus';
+  const statusEl=document.getElementById(statusId);
+  try{
+    const files=Array.from(input.files); if(!files.length) return;
+    if(statusEl) statusEl.textContent='正在压缩并上传...';
+    if(!currentGalFolder && GALLERY.length) currentGalFolder=GALLERY[0].name;
+    if(!currentGalFolder){
+      // 自动上传到“默认图库”
+      currentGalFolder='默认图库';
+    }
+    const urls=[];
+    for(const f of files){
+      const b64=await fileToBase64(f, true);
+      const res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name})});
+      const data=await res.json();
+      if(!res.ok) throw new Error(data.error||('服务器错误 '+res.status));
+      if(data.error) throw new Error(data.error);
+      if(data.url) urls.push(data.url);
+    }
+    if(target==='main' && urls[0]){
+      document.getElementById('pMainImg').value=urls[0];
+      document.getElementById('pMainImgPreview').src=urls[0];
+      if(statusEl) statusEl.textContent='上传成功';
+    } else if(target==='detail'){
+      selectedGalUrls=selectedGalUrls.concat(urls);
+      renderDetailImgs(selectedGalUrls);
+      if(statusEl) statusEl.textContent='上传成功';
+    }
+    await refreshGallery();
+  }catch(err){
+    console.error('direct upload error', err);
+    alert('图片上传失败：'+err.message);
+    if(statusEl) statusEl.textContent='上传失败';
+  }finally{
+    input.value='';
+    setTimeout(()=>{ if(statusEl) statusEl.textContent=''; }, 3000);
   }
-  const urls=[];
-  for(const f of files){
-    const b64=await fileToBase64(f, true);
-    const res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name})});
-    const data=await res.json(); if(data.url) urls.push(data.url);
-  }
-  if(target==='main' && urls[0]){
-    document.getElementById('pMainImg').value=urls[0];
-    document.getElementById('pMainImgPreview').src=urls[0];
-  } else if(target==='detail'){
-    selectedGalUrls=selectedGalUrls.concat(urls);
-    renderDetailImgs(selectedGalUrls);
-  }
-  await refreshGallery();
-  input.value='';
 }
 async function refreshGallery(){ GALLERY=await fetch('/api/gallery').then(r=>r.json()); }
 function fileToBase64(file, compress=false){
