@@ -132,6 +132,17 @@
     </div>
   </div>
 
+  <!-- 待付款订单恢复弹窗 -->
+  <div class="modal" id="pendingModal" onclick="if(event.target===this)closePending()">
+    <div class="sheet" style="text-align:center">
+      <h3>💰 您有一笔订单待付款</h3>
+      <div id="pendingList" style="font-size:13px;color:#7a6f62;line-height:1.8;margin-bottom:14px"></div>
+      <button class="submit" id="pendingPayBtn" onclick="goPendingPay()">继续付款</button>
+      <button style="width:100%;background:#f3ece2;color:#7a5230;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;margin-top:10px;cursor:pointer" onclick="closePending()">先逛逛</button>
+      <div style="font-size:11px;color:#bbb;margin-top:12px;line-height:1.6">继续付款后可查看订单进度与物流<br>信息只保存在本机，请勿清理微信缓存</div>
+    </div>
+  </div>
+
 <script>
 const P = {{PRODUCT_JSON}};
 const PRODUCTS = {{PRODUCTS_JSON}};
@@ -198,8 +209,61 @@ function renderCart(){
   $('#cartTotal').textContent=money(cartTotal());
 }
 
-function openCheckout(){ if(!cartCount()) return; closeCart(); $('#checkout').classList.add('show'); }
+function openCheckout(){ if(!cartCount()) return; closeCart(); fillBuyer(); $('#checkout').classList.add('show'); }
 function closeCheckout(){ $('#checkout').classList.remove('show'); }
+
+// ===== 收货信息自动记忆 =====
+const BUYER_KEY='buyerInfo';
+function saveBuyer(){
+  try{ localStorage.setItem(BUYER_KEY, JSON.stringify({
+    name:$('#cName').value.trim(), phone:$('#cPhone').value.trim(), addr:$('#cAddr').value.trim(), wechat:$('#cWechat').value.trim()
+  })); }catch(e){}
+}
+function fillBuyer(){
+  try{
+    const b=JSON.parse(localStorage.getItem(BUYER_KEY)||'null');
+    if(!b) return;
+    if(b.name) $('#cName').value=b.name;
+    if(b.phone) $('#cPhone').value=b.phone;
+    if(b.addr) $('#cAddr').value=b.addr;
+    if(b.wechat) $('#cWechat').value=b.wechat;
+  }catch(e){}
+}
+
+// ===== 待付款订单恢复 =====
+const PENDING_KEY='pendingOrders';
+function getPending(){ try{ return JSON.parse(localStorage.getItem(PENDING_KEY)||'[]'); }catch(e){ return []; } }
+function setPending(arr){ try{ localStorage.setItem(PENDING_KEY, JSON.stringify(arr)); }catch(e){} }
+function addPending(id){ const arr=getPending(); if(!arr.includes(id)){ arr.push(id); setPending(arr); } }
+function removePending(id){ setPending(getPending().filter(x=>x!==id)); }
+let pendingOrders=[];
+function checkPendingOrders(){
+  const ids=getPending();
+  if(!ids.length) return;
+  let done=0;
+  ids.forEach(id=>{
+    fetch('/api/orders/'+id).then(r=>r.json()).then(o=>{
+      if(o && o.id && o.status==='待付款') pendingOrders.push(o);
+      else removePending(id);
+    }).catch(()=>{}).finally(()=>{
+      done++;
+      if(done===ids.length && pendingOrders.length) showPendingModal();
+    });
+  });
+}
+function showPendingModal(){
+  const list=document.getElementById('pendingList');
+  list.innerHTML = pendingOrders.map((o,i)=>`
+    <div style="background:#fbf7f1;border-radius:10px;padding:10px 12px;margin-bottom:8px;text-align:left">
+      <div style="font-weight:700;color:#b8743f;letter-spacing:.5px">订单号：${o.id}</div>
+      <div style="display:flex;justify-content:space-between;margin-top:4px;color:#9a8f82;font-size:12px">
+        <span>${o.items.reduce((a,b)=>a+b.qty,0)} 件商品</span><span style="color:#c0392b;font-weight:700">${money(o.total)}</span>
+      </div>
+    </div>`).join('');
+  document.getElementById('pendingModal').classList.add('show');
+}
+function closePending(){ document.getElementById('pendingModal').classList.remove('show'); }
+function goPendingPay(){ const o=pendingOrders[0]; if(o) location.href='/order/'+o.id; }
 
 function submitOrder(){
   const name=$('#cName').value.trim(), phone=$('#cPhone').value.trim(), addr=$('#cAddr').value.trim(), wechat=$('#cWechat').value.trim();
@@ -208,7 +272,7 @@ function submitOrder(){
   if(!items.length){ alert('购物车为空'); return; }
   fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,phone,address:addr,wechat,items})})
     .then(r=>r.json()).then(d=>{
-      if(d.id){ cart={}; saveCart(); closeCheckout(); location.href='/order/'+d.id; }
+      if(d.id){ saveBuyer(); addPending(d.id); cart={}; saveCart(); closeCheckout(); location.href='/order/'+d.id; }
       else {
         const msg = d.message || d.error || '未知错误';
         alert('下单失败：'+msg+'\n\n如提示"数据目录不可写"或"operation not permitted"，请关闭当前黑窗口，双击桌面图标「不初限时狂欢商城」重新启动服务。');
@@ -216,7 +280,7 @@ function submitOrder(){
     }).catch(e=>alert('网络错误：'+e.message+'\n\n请检查是否已双击桌面图标启动商城服务。'));
 }
 
-set(); updateBadge();
+set(); updateBadge(); checkPendingOrders();
 </script>
 </body>
 </html>
