@@ -331,8 +331,9 @@ function skuStockOf(p, s){
   if(p && p.stock!=null && p.stock!=='') return Number(p.stock);
   return null;
 }
-// 产品是否整体售罄：无 SKU 看产品级；有 SKU 需全部 SKU 售罄才算
+// 产品是否整体售罄：无 SKU 看产品级；有 SKU 需全部 SKU 售罄才算；商家后台手动强制售罄优先
 function isSoldOut(p){
+  if(p.forceSoldOut) return true;
   if(Array.isArray(p.skus) && p.skus.length){
     return p.skus.every(s=>{ const st=skuStockOf(p,s); return st!=null && st<=0; });
   }
