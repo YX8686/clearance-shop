@@ -25,25 +25,25 @@
   @keyframes notifyScroll{0%{transform:translateX(0)}100%{transform:translateX(-100%)}}
 
   /* 分类导航 */
-  .catbar{position:sticky;top:54px;z-index:18;background:#f6f3ee;padding:10px 10px 6px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .catbar{position:sticky;top:54px;z-index:18;background:#f6f3ee;padding:8px 10px 4px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
   .catbar::-webkit-scrollbar{display:none}
   .catinner{display:flex;gap:8px;min-width:max-content;padding:0 4px}
-  .cattab{flex-shrink:0;border:1px solid #d8ccba;background:#fff;color:#7a5230;border-radius:16px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;transition:all .15s}
+  .cattab{flex-shrink:0;border:1px solid #d8ccba;background:#fff;color:#7a5230;border-radius:16px;padding:6px 13px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:all .15s}
   .cattab.on{border-color:#b8743f;background:#b8743f;color:#fff}
 
-  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;padding:10px;max-width:960px;margin:0 auto}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:8px;max-width:960px;margin:0 auto}
   @media(min-width:560px){.grid{grid-template-columns:repeat(3,1fr);gap:12px;padding:12px}}
   @media(min-width:880px){.grid{grid-template-columns:repeat(4,1fr)}}
   @media(min-width:1100px){.grid{grid-template-columns:repeat(5,1fr)}}
   .card{background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.05);display:flex;flex-direction:column}
-  .card .img{width:100%;aspect-ratio:4/5;object-fit:cover;background:#eee;cursor:pointer}
-  .card .body{padding:5px 6px 6px;display:flex;flex-direction:column;flex:1}
-  .card .name{font-size:13px;font-weight:600;line-height:1.2;cursor:pointer;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+  .card .img{width:100%;aspect-ratio:3/4;object-fit:cover;background:#eee;cursor:pointer}
+  .card .body{padding:4px 5px 5px;display:flex;flex-direction:column;flex:1}
+  .card .name{font-size:12px;font-weight:600;line-height:1.2;cursor:pointer;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
   .card .desc{font-size:10px;color:#9a8f82;margin:1px 0 0;line-height:1.2;flex:0 0 auto;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
-  .card .price{color:#c0392b;font-weight:700;font-size:14px;margin-top:1px;flex:0 0 auto}
+  .card .price{color:#c0392b;font-weight:700;font-size:13px;margin-top:1px;flex:0 0 auto}
   .card .price small{font-size:10px}
   .card .orig{color:#bbb;font-size:10px;text-decoration:line-through;margin-left:3px;font-weight:400}
-  .card .add{margin-top:2px;background:#b8743f;color:#fff;border:none;border-radius:18px;padding:5px 0;font-size:12px;font-weight:600;cursor:pointer;flex:0 0 auto}
+  .card .add{margin-top:1px;background:#b8743f;color:#fff;border:none;border-radius:18px;padding:4px 0;font-size:12px;font-weight:600;cursor:pointer;flex:0 0 auto}
   .card .add:active{opacity:.8}
   .card .price .from{font-size:10px;font-weight:400;margin-left:2px}
   /* SKU 选择弹窗 */
