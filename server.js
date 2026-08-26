@@ -148,6 +148,19 @@ function saveProducts(){ return withLock(()=> saveKV('products', products)); }
 function htmlEscape(s){ return String(s==null?'':s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function jsonForScript(obj){ return JSON.stringify(obj).replace(/</g,'\\u003c'); }
+function absUrl(src, base){
+  if(!src) return base + '/assets/share-square.jpg';
+  const s = String(src);
+  if(/^https?:\/\//i.test(s)) return s;
+  if(s.startsWith('//')) return 'https:' + s;
+  return base + (s.startsWith('/') ? s : '/' + s);
+}
+function inferShareImage(p){
+  if(p.shareImage) return p.shareImage;
+  const img = p.image || '';
+  if(/\.svg$/i.test(img)) return img.replace(/\.svg$/i, '-share.jpg');
+  return img;
+}
 function genId(){
   let id;
   do { id = crypto.randomBytes(4).toString('hex').toUpperCase(); }
@@ -404,7 +417,7 @@ const server = http.createServer(async (req, res)=>{
         SHOP_NAME: htmlEscape(config.shopName),
         OG_TITLE: htmlEscape(config.shopName),
         OG_DESC: htmlEscape(config.announcement || '不初限时狂欢商城 · 全场超低价回馈老客户'),
-        OG_IMAGE: htmlEscape(BASE + ogImage),
+        OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
         OG_URL: htmlEscape(BASE + '/'),
         PRODUCTS_JSON: jsonForScript(products),
         CONFIG_JSON: jsonForScript(config)
@@ -416,12 +429,12 @@ const server = http.createServer(async (req, res)=>{
     if(method==='GET' && mProd){
       const p = products.find(p=>p.id===mProd[1]);
       if(!p){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
-      const ogImage = p.shareImage || p.image || config.shareImage || '/assets/share-square.jpg';
+      const ogImage = inferShareImage(p) || config.shareImage || '/assets/share-square.jpg';
       const html = renderTemplate('product.html', {
         SHOP_NAME: htmlEscape(config.shopName),
         OG_TITLE: htmlEscape(p.name),
         OG_DESC: htmlEscape(p.desc || config.shopName),
-        OG_IMAGE: htmlEscape(BASE + ogImage),
+        OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
         OG_URL: htmlEscape(BASE + '/product/'+p.id),
         PRODUCT_JSON: jsonForScript(p),
         PRODUCTS_JSON: jsonForScript(products),
