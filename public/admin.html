@@ -375,9 +375,12 @@ async function shipGroup(ids){
   if(!window.confirm(detail)) return;
   const tracking=prompt('请输入快递单号（将应用到该客户全部 '+ids.length+' 笔订单）：');
   if(tracking==null) return;
+  let failCnt=0;
   for(const id of ids){
-    await fetch('/api/orders/'+id+'/ship',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tracking:tracking.trim()})});
+    const r=await fetch('/api/orders/'+id+'/ship',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tracking:tracking.trim()})});
+    if(!r.ok) failCnt++;
   }
+  if(failCnt){ toast('有 '+failCnt+' 笔发货失败，请重试'); return; }
   toast('已发货，转入已发货列表');
   curTab='已发货';
   document.querySelectorAll('.tabs button').forEach(b=>{ b.classList.toggle('on', b.dataset.s===curTab); });
@@ -392,7 +395,8 @@ async function confirmPaid(id){
   const items=o.items.map(i=>`  ${i.name}  ${money(i.price)} × ${i.qty}`).join('\n');
   const msg=`请核对收款金额后再确认：\n\n姓名：${o.name}\n订单号：${o.id}\n\n商品明细：\n${items}\n\n本单合计：${money(o.total)}\n\n确认已收到该笔款项？`;
   if(!window.confirm(msg)) return;
-  await fetch('/api/orders/'+id+'/confirm',{method:'POST'});
+  const r=await fetch('/api/orders/'+id+'/confirm',{method:'POST'});
+  if(!r.ok){ toast('确认失败（服务未找到该订单），请刷新页面后重试'); return; }
   toast('已确认收款，已转入待发货');
   curTab='待发货';
   await load();

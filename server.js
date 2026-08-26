@@ -189,6 +189,9 @@ function saveProducts(){ return withLock(()=> saveKV('products', products)); }
 
 // 订单读取：云端模式下每次从 Supabase 取最新，防止 Render 实例内存与本地后台不同步
 async function getOrders(){ return USE_SUPABASE ? await loadKV('orders', orders) : orders; }
+// 订单写入前必须先刷新内存副本：手机端在云端下的订单，本地服务内存里可能没有，
+// 直接 find 内存会 404 静默失败（症状：后台点"确认收款"提示成功但状态不变）
+async function syncOrders(){ if(USE_SUPABASE){ orders = await loadKV('orders', orders); } return orders; }
 
 // ---------- 工具 ----------
 function htmlEscape(s){ return String(s==null?'':s)
@@ -315,12 +318,13 @@ const server = http.createServer(async (req, res)=>{
           status:'待付款', tracking:'',
           createdAt:Date.now(), paidAt:null, confirmedAt:null, shippedAt:null
         };
-        orders.push(order); await saveOrders();
+        await syncOrders(); orders.push(order); await saveOrders();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({id})); return;
       }
       // 客户确认已发送付款截图
       const mPaid = pathname.match(/^\/api\/orders\/([\w-]+)\/paid$/);
       if(method==='POST' && mPaid){
+        await syncOrders();
         const o = orders.find(o=>o.id===mPaid[1]);
         if(!o){ res.writeHead(404); res.end('no'); return; }
         if(o.status==='待付款'){ o.status='待确认'; o.paidScreenshotAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrders(); }
@@ -329,16 +333,18 @@ const server = http.createServer(async (req, res)=>{
       // 确认收款
       const mConfirm = pathname.match(/^\/api\/orders\/([\w-]+)\/confirm$/);
       if(method==='POST' && mConfirm){
+        await syncOrders();
         const o = orders.find(o=>o.id===mConfirm[1]);
         if(!o){ res.writeHead(404); res.end('no'); return; }
         if(o.status==='待付款' || o.status==='待确认'){
           o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrders();
         }
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true})); return;
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, status:o.status})); return;
       }
       // 发货
       const mShip = pathname.match(/^\/api\/orders\/([\w-]+)\/ship$/);
       if(method==='POST' && mShip){
+        await syncOrders();
         const o = orders.find(o=>o.id===mShip[1]);
         if(!o){ res.writeHead(404); res.end('no'); return; }
         let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
