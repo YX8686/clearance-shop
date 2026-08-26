@@ -256,6 +256,16 @@ async function syncOrders(){
   return orders;
 }
 
+// 产品写入前同步：下单扣库存必须基于云端最新数据，防止 Render 内存副本过期把库存扣错
+async function syncProducts(){
+  if(!USE_SUPABASE) return products;
+  try {
+    kvCache.delete('products'); // 强制实时读取
+    products = await loadKV('products', products);
+  } catch(e){ console.error('[syncProducts] 同步云端失败，继续使用内存副本：', e.message); }
+  return products;
+}
+
 // ---------- 工具 ----------
 function htmlEscape(s){ return String(s==null?'':s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -394,6 +404,47 @@ const server = http.createServer(async (req, res)=>{
           return { id:pid, skuId, skuName, name, price, qty:Number(it.qty), image, bundleItems: skuBundle.length?skuBundle:(p&&p.bundleItems?p.bundleItems:[]) };
         });
         const total = detail.reduce((s,x)=> s + x.price*x.qty, 0);
+
+        // ===== 库存校验与扣减（stock 为数字才限量；null/未填视为不限量）=====
+        await syncProducts();
+        // 同一产品/规格的数量先合并（购物车分 key 传入，理论上不重复，双保险）
+        const needMap = {};
+        detail.forEach(x=>{
+          const k = x.skuId ? (x.id+'#'+x.skuId) : x.id;
+          needMap[k] = (needMap[k]||0) + x.qty;
+        });
+        // 校验：库存不足直接拒单
+        for(const k in needMap){
+          const [pid, skuId] = k.split('#');
+          const p = products.find(p=>p.id===pid);
+          if(!p) continue;
+          const needQty = needMap[k];
+          if(skuId){
+            const sku = (p.skus||[]).find(s=>String(s.id)===skuId);
+            if(sku && sku.stock!=null && Number(sku.stock) < needQty){
+              res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'});
+              res.end(JSON.stringify({error:'insufficient_stock', message:'「'+(p.name+' · '+(sku.name||''))+'」库存不足（仅剩'+Number(sku.stock)+'件），请返回商城重新选购或联系夏天老师补货。'})); return;
+            }
+          } else if(p.stock!=null && Number(p.stock) < needQty){
+            res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'});
+            res.end(JSON.stringify({error:'insufficient_stock', message:'「'+p.name+'」库存不足（仅剩'+Number(p.stock)+'件），请返回商城重新选购或联系夏天老师补货。'})); return;
+          }
+        }
+        // 扣减（下单即扣，防止超卖）
+        let stockDeducted = false;
+        for(const k in needMap){
+          const [pid, skuId] = k.split('#');
+          const p = products.find(p=>p.id===pid);
+          if(!p) continue;
+          const needQty = needMap[k];
+          if(skuId){
+            const sku = (p.skus||[]).find(s=>String(s.id)===skuId);
+            if(sku && sku.stock!=null){ sku.stock = Math.max(0, Math.floor(Number(sku.stock)) - needQty); stockDeducted = true; }
+          } else if(p.stock!=null){
+            p.stock = Math.max(0, Math.floor(Number(p.stock)) - needQty); stockDeducted = true;
+          }
+        }
+
         const id = genId();
         const order = {
           id, items:detail, total,
@@ -401,9 +452,11 @@ const server = http.createServer(async (req, res)=>{
           address:String(body.address).slice(0,200), wechat:String(body.wechat||'').slice(0,50),
           note:String(body.note||'').slice(0,200),
           status:'待付款', tracking:'',
+          stockDeducted, // 标记：本单已扣库存，取消时据此恢复（历史订单无此标记，不回溯）
           createdAt:Date.now(), paidAt:null, confirmedAt:null, shippedAt:null
         };
         await syncOrders(); orders.push(order); await saveOrders();
+        if(stockDeducted) await saveProducts();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({id})); return;
       }
       // 客户确认已发送付款截图
@@ -443,7 +496,24 @@ const server = http.createServer(async (req, res)=>{
         const o = orders.find(o=>o.id===mCancel[1]);
         if(!o){ res.writeHead(404); res.end(JSON.stringify({error:'no'})); return; }
         if(o.status!=='待付款'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_pending_can_cancel'})); return; }
+        // 恢复库存：仅本功能上线后下单（stockDeducted 标记）的订单才恢复，历史订单不回溯
+        let stockRestored = false;
+        if(o.stockDeducted){
+          await syncProducts();
+          (o.items||[]).forEach(it=>{
+            const p = products.find(p=>p.id===it.id);
+            if(!p) return;
+            const qty = Number(it.qty)||0;
+            if(it.skuId){
+              const sku = (p.skus||[]).find(s=>String(s.id)===it.skuId);
+              if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) + qty; stockRestored = true; }
+            } else if(p.stock!=null){
+              p.stock = Math.floor(Number(p.stock)) + qty; stockRestored = true;
+            }
+          });
+        }
         o.status='已取消'; o.cancelledAt=Date.now(); await saveOrders();
+        if(stockRestored) await saveProducts();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
       // 更新配置（店铺名/联系人/公告/收款码）
