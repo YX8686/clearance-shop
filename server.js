@@ -234,6 +234,12 @@ const server = http.createServer(async (req, res)=>{
         }).sort((a,b)=>b.createdAt-a.createdAt);
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(found)); return;
       }
+      // 单个订单（供前端恢复「待付款」订单）
+      const mOrderApi = pathname.match(/^\/api\/orders\/([\w-]+)$/);
+      if(method==='GET' && mOrderApi){
+        const o = orders.find(o=>o.id===mOrderApi[1]) || null;
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(o)); return;
+      }
       // 创建订单
       if(method==='POST' && pathname==='/api/orders'){
         let body; try { body = JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
