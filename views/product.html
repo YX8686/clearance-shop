@@ -60,7 +60,9 @@
   .foot{padding:14px 16px;box-shadow:0 -2px 10px rgba(0,0,0,.05)}
   .foot .tot{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
   .foot .tot b{font-size:18px;color:#c0392b}
-  .foot .chk{width:100%;background:#b8743f;color:#fff;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer}
+  .foot .btns{display:flex;gap:10px}
+  .foot .back{flex:1;background:#f3ece2;color:#7a5230;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer}
+  .foot .chk{flex:1;width:auto;background:#b8743f;color:#fff;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer}
   .foot .chk:disabled{background:#d8ccba}
   /* 结算表单（中间竖版弹窗） */
   .modal{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:16px}
@@ -77,7 +79,7 @@
 </head>
 <body>
   <div class="nav"><a href="/">← 返回商城</a></div>
-  <img class="hero" id="hero" src="">
+  <img class="hero" id="hero" src="" loading="eager" decoding="async">
   <div class="panel">
     <div class="name" id="pName"></div>
     <div class="price" id="pPrice"></div>
@@ -106,7 +108,10 @@
     <div class="items" id="cartItems"></div>
     <div class="foot">
       <div class="tot"><span>合计</span><b id="cartTotal">¥0</b></div>
-      <button class="chk" id="chkBtn" disabled onclick="openCheckout()">去结算</button>
+      <div class="btns">
+        <button class="back" onclick="closeCart()">返回继续加购</button>
+        <button class="chk" id="chkBtn" disabled onclick="openCheckout()">去结算</button>
+      </div>
     </div>
   </div>
 
@@ -159,7 +164,7 @@ function set(){
   const details = Array.isArray(P.detailImages) ? P.detailImages.filter(u=>String(u).startsWith('/')) : [];
   if(details.length){
     const box=document.getElementById('detailBox'); box.style.display='block';
-    document.getElementById('detailList').innerHTML = details.map(u=>`<img src="${u}" alt="详情图">`).join('');
+    document.getElementById('detailList').innerHTML = details.map(u=>`<img src="${u}" alt="详情图" loading="lazy" decoding="async">`).join('');
   }
 }
 
@@ -183,7 +188,7 @@ function renderCart(){
       const p=PRODUCTS.find(x=>x.id===id); if(!p) return;
       const row=document.createElement('div'); row.className='item';
       row.innerHTML=`
-        <img src="${p.image||'/assets/product-placeholder.svg'}">
+        <img src="${p.image||'/assets/product-placeholder.svg'}" loading="lazy" decoding="async">
         <div class="info"><div class="n">${p.name}</div><div class="p">${money(p.price)}</div></div>
         <div class="stepper"><button onclick="changeQty('${id}',-1)">−</button><span>${cart[id]}</span><button onclick="changeQty('${id}',1)">+</button></div>`;
       box.appendChild(row);
