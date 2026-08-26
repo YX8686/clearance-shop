@@ -73,15 +73,47 @@
   .remodal-box img{width:100%;border-radius:14px;background:#fbf7f1;box-shadow:0 12px 36px rgba(0,0,0,.25);display:block}
   .remodal-tip{font-size:14px;color:#fff;margin:14px 0 10px;line-height:1.5}
   .remodal-close{border:none;background:#fff;color:#3a322b;border-radius:24px;padding:11px 28px;font-size:14px;font-weight:700;cursor:pointer}
+  .qr-wrap{display:inline-block;position:relative}
+  .qr-wrap img{cursor:pointer}
+  .qr-lightbox{position:fixed;inset:0;z-index:200;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.85);padding:20px;flex-direction:column}
+  .qr-lightbox.show{display:flex}
+  .qr-lightbox img{max-width:100%;max-height:70vh;border-radius:14px;background:#fff;display:block}
+  .qr-lightbox .tip{color:#fff;font-size:14px;margin:14px 0 10px;text-align:center;line-height:1.5}
+  .qr-lightbox .actions{display:flex;gap:12px}
+  .qr-lightbox button{border:none;background:#fff;color:#3a322b;border-radius:24px;padding:10px 22px;font-size:14px;font-weight:600;cursor:pointer}
+  .qr-lightbox button.primary{background:#b8743f;color:#fff}
 </style>
 </head>
 <body>
   <div id="app"></div>
+  <div class="qr-lightbox" id="qrLightbox" onclick="if(event.target===this)closeQrLightbox()">
+    <img id="qrLightboxImg" src="" alt="收款码">
+    <div class="tip" id="qrLightboxTip">长按二维码识别或保存到相册</div>
+    <div class="actions">
+      <button class="primary" onclick="saveQrImage()">保存图片</button>
+      <button onclick="closeQrLightbox()">关闭</button>
+    </div>
+  </div>
 <script>
 const O = {{ORDER_JSON}};
 const CONFIG = {{CONFIG_JSON}};
 function money(n){ return '¥'+Number(n).toLocaleString('zh-CN'); }
 const app=document.getElementById('app');
+function isWechat(){ return typeof navigator!=='undefined' && /MicroMessenger/i.test(navigator.userAgent); }
+function openQrLightbox(src, title){
+  if(!src) return;
+  document.getElementById('qrLightboxImg').src=src;
+  document.getElementById('qrLightboxTip').textContent=(title||'收款码')+'：长按二维码识别或保存到相册';
+  document.getElementById('qrLightbox').classList.add('show');
+}
+function closeQrLightbox(){ document.getElementById('qrLightbox').classList.remove('show'); }
+function saveQrImage(){
+  const img=document.getElementById('qrLightboxImg');
+  if(!img||!img.src) return;
+  if(isWechat()){ alert('微信内请长按上方图片保存到相册'); return; }
+  const a=document.createElement('a'); a.href=img.src; a.download=(img.alt||'收款码')+'.jpg'; a.target='_blank';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
 
 function copyText(text, msg){
   if(navigator.clipboard){
@@ -249,9 +281,11 @@ function openReminderModal(){
 function saveReminderImage(){
   const img = document.getElementById('reminderImg');
   if(!img || !img.src) return;
+  if(isWechat()){ alert('微信内请长按上方图片保存到相册'); return; }
   const a = document.createElement('a');
   a.href = img.src;
   a.download = '催单_'+O.id+'.png';
+  a.target = '_blank';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 function closeReminderModal(){
@@ -366,13 +400,13 @@ function renderPayTabs(){
     let body='';
     if(cur==='wechat'){
       const src = CONFIG.paymentWechatQr || CONFIG.paymentQr;
-      body = src ? `<img src="${src}" alt="微信收款码"><div style="font-size:12px;color:#999;margin-top:8px">请使用微信扫一扫付款</div>` : '<div class="placeholder">微信收款码未上传<br>请联系夏天老师获取</div>';
+      body = src ? `<div class="qr-wrap"><img src="${src}" alt="微信收款码" onclick="openQrLightbox('${src.replace(/'/g,"\\'")}','微信收款码')"></div><div style="font-size:13px;color:#7a5230;margin-top:10px">点击二维码放大，长按即可识别付款或保存</div>` : '<div class="placeholder">微信收款码未上传<br>请联系夏天老师获取</div>';
     } else if(cur==='alipay'){
-      body = CONFIG.paymentAlipayQr ? `<img src="${CONFIG.paymentAlipayQr}" alt="支付宝收款码"><div style="font-size:12px;color:#999;margin-top:8px">请使用支付宝扫一扫付款</div>` : '<div class="placeholder">支付宝收款码未上传<br>请联系夏天老师获取</div>';
+      body = CONFIG.paymentAlipayQr ? `<div class="qr-wrap"><img src="${CONFIG.paymentAlipayQr}" alt="支付宝收款码" onclick="openQrLightbox('${CONFIG.paymentAlipayQr.replace(/'/g,"\\'")}','支付宝收款码')"></div><div style="font-size:13px;color:#7a5230;margin-top:10px">点击二维码放大，长按即可识别付款或保存</div>` : '<div class="placeholder">支付宝收款码未上传<br>请联系夏天老师获取</div>';
     } else if(cur==='bank'){
       if(CONFIG.bankAccount){
         body = `<div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">
-          <img class="bank-card-img" src="/assets/bank-card.jpg" alt="银行卡">
+          <img class="bank-card-img" src="/assets/bank-card.jpg" alt="银行卡" onclick="openQrLightbox('/assets/bank-card.jpg','银行卡')">
           <div style="flex:1.5;min-width:180px;text-align:left">
             <div style="background:#faf7f2;border-radius:10px;padding:14px;margin-bottom:10px">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
