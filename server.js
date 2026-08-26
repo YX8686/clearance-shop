@@ -12,6 +12,22 @@ const VIEWS = path.join(ROOT, 'views');
 const GALLERY = path.join(PUBLIC, 'assets', 'gallery');
 const PORT = process.env.PORT || 4100;
 
+// 读取 .env.local（本地双击图标时无需手动设置环境变量）
+function loadEnvLocal(){
+  try {
+    const envPath = path.join(ROOT, '.env.local');
+    if (!fs.existsSync(envPath)) return;
+    const text = fs.readFileSync(envPath, 'utf8');
+    text.split(/\r?\n/).forEach(line => {
+      const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/);
+      if (m && process.env[m[1]] === undefined) {
+        process.env[m[1]] = m[2];
+      }
+    });
+  } catch(e){}
+}
+loadEnvLocal();
+
 // ---------- Supabase 客户端（仅在配置了环境变量时启用；本地模式零依赖也能跑） ----------
 let sb = null;
 if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
