@@ -418,6 +418,16 @@ const server = http.createServer(async (req, res)=>{
         o.status='已发货'; o.tracking=String(body.tracking||'').slice(0,60); o.shippedAt=Date.now(); await saveOrders();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
+      // 取消订单（仅允许待付款状态）
+      const mCancel = pathname.match(/^\/api\/orders\/([\w-]+)\/cancel$/);
+      if(method==='POST' && mCancel){
+        await syncOrders();
+        const o = orders.find(o=>o.id===mCancel[1]);
+        if(!o){ res.writeHead(404); res.end(JSON.stringify({error:'no'})); return; }
+        if(o.status!=='待付款'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_pending_can_cancel'})); return; }
+        o.status='已取消'; o.cancelledAt=Date.now(); await saveOrders();
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+      }
       // 更新配置（店铺名/联系人/公告/收款码）
       const mConfig = pathname.match(/^\/api\/config$/);
       if(method==='POST' && mConfig){

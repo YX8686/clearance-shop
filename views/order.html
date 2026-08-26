@@ -185,7 +185,7 @@ function buildOrderCard(o){
     if(i.bundleItems && i.bundleItems.length){
       h+=`<div style="background:#fbf7f1;border-radius:8px;padding:8px 10px;margin:2px 0 8px;font-size:12px;color:#7a5230;line-height:1.7">
         <div style="font-weight:700;margin-bottom:2px">📦 发货内容</div>
-        ${i.bundleItems.map(b=>`<div style="display:flex;justify-content:space-between"><span>• ${b.name}</span><span style="white-space:nowrap;margin-left:8px">${b.qty} ${b.unit||'件'}</span></div>`).join('')}
+        ${i.bundleItems.map(b=>`<div style="display:flex;justify-content:space-between"><span>• ${b.name}</span><span style="white-space:nowrap;margin-left:8px">${b.qty*i.qty} ${b.unit||'件'}</span></div>`).join('')}
       </div>`;
     }
     return h;
@@ -245,6 +245,18 @@ function sentScreenshot(){
     .then(r=>r.json())
     .then(()=>{ location.reload(); })
     .catch(()=>alert('提交失败，请直接私信夏天老师本人'));
+}
+function cancelOrder(id){
+  if(!O) return;
+  if(O.status!=='待付款'){ alert('只有待付款订单可以取消'); return; }
+  if(!confirm('确定取消这笔订单？取消后不会发货，也无法恢复。')) return;
+  fetch('/api/orders/'+id+'/cancel',{method:'POST'})
+    .then(r=>r.json())
+    .then(d=>{
+      if(d.error){ alert('取消失败：'+(d.error==='only_pending_can_cancel'?'只有待付款订单可取消':d.error)); return; }
+      try{ let arr=JSON.parse(localStorage.getItem('pendingOrders')||'[]'); arr=arr.filter(x=>x!==id); localStorage.setItem('pendingOrders',JSON.stringify(arr)); }catch(e){}
+      alert('订单已取消'); location.href='/';
+    }).catch(()=>alert('取消失败，请稍后重试'));
 }
 function openReminderModal(){
   if(!O) return;
@@ -340,7 +352,10 @@ if(!O){
     <div class="wrap">
       <div class="head" style="display:flex;justify-content:space-between;align-items:center">
         <div><h1>我的订单</h1><div class="id">订单号：${O.id}</div></div>
-        <a href="/" style="color:#fff;font-size:12px;border:1px solid rgba(255,255,255,.55);border-radius:16px;padding:7px 13px;text-decoration:none;white-space:nowrap">← 返回商城继续购物</a>
+        <div style="display:flex;gap:8px;align-items:center">
+          ${O.status==='待付款'?`<button onclick="cancelOrder('${O.id}')" style="color:#c0392b;font-size:12px;border:1px solid rgba(192,57,43,.6);background:rgba(255,255,255,.15);border-radius:16px;padding:7px 13px;cursor:pointer;white-space:nowrap">取消订单</button>`:''}
+          <a href="/" style="color:#fff;font-size:12px;border:1px solid rgba(255,255,255,.55);border-radius:16px;padding:7px 13px;text-decoration:none;white-space:nowrap">← 返回商城继续购物</a>
+        </div>
       </div>
       <div class="box">
         <div class="status ${cls}">${label}</div>
@@ -357,7 +372,7 @@ if(!O){
     if(i.bundleItems && i.bundleItems.length){
       html+=`<div style="background:#fbf7f1;border-radius:8px;padding:9px 11px;margin:2px 0 10px;font-size:12px;color:#7a5230;line-height:1.75">
         <div style="font-weight:700;margin-bottom:3px">📦 发货内容</div>
-        ${i.bundleItems.map(b=>`<div style="display:flex;justify-content:space-between"><span>• ${b.name}</span><span style="white-space:nowrap;margin-left:8px">${b.qty} ${b.unit||'件'}</span></div>`).join('')}
+        ${i.bundleItems.map(b=>`<div style="display:flex;justify-content:space-between"><span>• ${b.name}</span><span style="white-space:nowrap;margin-left:8px">${b.qty*i.qty} ${b.unit||'件'}</span></div>`).join('')}
       </div>`;
     }
   });

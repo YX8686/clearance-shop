@@ -301,7 +301,7 @@ function renderGrid(){
         <div class="name" onclick="goProduct('${p.id}')">${p.name}</div>
         <div class="desc">${p.desc||''}</div>
         <div class="price">${priceLabel}<small> /件</small>${orig}</div>
-        <button class="add" onclick="openSkuModal('${p.id}')">${hasSkus?'选择规格':'加入购物车'}</button>
+        <button class="add" onclick="openSkuModal('${p.id}')">加入购物车</button>
       </div>`;
     g.appendChild(div);
   });
@@ -480,8 +480,11 @@ function showPendingModal(){
         <div style="font-size:13px;font-weight:700;color:#c0392b;white-space:nowrap">${money(it.price*it.qty)}</div>
       </div>`;
     }).join('');
-    return `<div style="background:#fbf7f1;border-radius:10px;padding:10px 12px;margin-bottom:8px;text-align:left">
-      <div style="font-weight:700;color:#b8743f;letter-spacing:.5px">订单号：${o.id}</div>
+    return `<div style="background:#fbf7f1;border-radius:10px;padding:10px 12px;margin-bottom:8px;text-align:left" id="pending-${o.id}">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:700;color:#b8743f;letter-spacing:.5px">订单号：${o.id}</div>
+        <button onclick="event.stopPropagation();cancelPending('${o.id}')" style="color:#c0392b;border:1px solid rgba(192,57,43,.35);background:#fff;border-radius:12px;padding:3px 9px;font-size:12px;cursor:pointer">取消订单</button>
+      </div>
       <div style="margin-top:6px">${itemLines}</div>
       <div style="display:flex;justify-content:space-between;margin-top:8px;padding-top:6px;border-top:1px solid #f0ece4;font-size:13px;color:#7a6f62">
         <span>共 ${o.items.reduce((a,b)=>a+b.qty,0)} 件</span><span style="color:#c0392b;font-weight:700">合计 ${money(o.total)}</span>
@@ -492,6 +495,18 @@ function showPendingModal(){
 }
 function closePending(){ document.getElementById('pendingModal').classList.remove('show'); }
 function goPendingPay(){ const o=pendingOrders[0]; if(o) location.href='/order/'+o.id; }
+async function cancelPending(id){
+  if(!confirm('确定取消这笔订单？取消后不会发货，也无法恢复。')) return;
+  try{
+    const r=await fetch('/api/orders/'+id+'/cancel',{method:'POST'});
+    const d=await r.json();
+    if(d.error){ alert('取消失败：'+(d.error==='only_pending_can_cancel'?'只有待付款订单可取消':d.error)); return; }
+  }catch(e){ alert('取消失败，请稍后重试'); return; }
+  removePending(id);
+  pendingOrders=pendingOrders.filter(o=>o.id!==id);
+  if(!pendingOrders.length){ closePending(); }
+  else { showPendingModal(); }
+}
 function markPaidAndGo(){
   const o=pendingOrders[0]; if(!o) return;
   fetch('/api/orders/'+o.id+'/paid',{method:'POST'})
