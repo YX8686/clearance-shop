@@ -185,7 +185,7 @@ function buildOrderCard(o){
     if(i.bundleItems && i.bundleItems.length){
       h+=`<div style="background:#fbf7f1;border-radius:8px;padding:8px 10px;margin:2px 0 8px;font-size:12px;color:#7a5230;line-height:1.7">
         <div style="font-weight:700;margin-bottom:2px">📦 发货内容</div>
-        ${i.bundleItems.map(b=>`<div style="display:flex;justify-content:space-between"><span>• ${b.name}</span><span style="white-space:nowrap;margin-left:8px">${b.qty*i.qty} ${b.unit||'件'}</span></div>`).join('')}
+        ${i.bundleItems.map(b=>`<div style="display:flex;justify-content:space-between"><span>• ${b.name}</span><span style="white-space:nowrap;margin-left:8px">${b.qty} ${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}</span></div>`).join('')}
       </div>`;
     }
     return h;
@@ -372,7 +372,7 @@ if(!O){
     if(i.bundleItems && i.bundleItems.length){
       html+=`<div style="background:#fbf7f1;border-radius:8px;padding:9px 11px;margin:2px 0 10px;font-size:12px;color:#7a5230;line-height:1.75">
         <div style="font-weight:700;margin-bottom:3px">📦 发货内容</div>
-        ${i.bundleItems.map(b=>`<div style="display:flex;justify-content:space-between"><span>• ${b.name}</span><span style="white-space:nowrap;margin-left:8px">${b.qty*i.qty} ${b.unit||'件'}</span></div>`).join('')}
+        ${i.bundleItems.map(b=>`<div style="display:flex;justify-content:space-between"><span>• ${b.name}</span><span style="white-space:nowrap;margin-left:8px">${b.qty} ${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}</span></div>`).join('')}
       </div>`;
     }
   });

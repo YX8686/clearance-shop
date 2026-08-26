@@ -506,7 +506,7 @@ function renderCart(){
       // 有 SKU 时直接显示发货明细，不显示产品标题
       let titleHtml = '';
       if(info.skuId && info.bundleItems && info.bundleItems.length){
-        titleHtml = info.bundleItems.map(b=>`<div>${b.name} <span style="color:#b8743f">${b.qty}${b.unit||'件'}</span></div>`).join('');
+        titleHtml = info.bundleItems.map(b=>`<div>${b.name} <span style="color:#b8743f">${b.qty}${b.unit||'件'}${Number(cart[id])>1?' ×'+cart[id]:''}</span></div>`).join('');
       } else {
         titleHtml = `<div>${info.name}</div>`;
       }

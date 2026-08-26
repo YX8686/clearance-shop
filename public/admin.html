@@ -330,7 +330,7 @@ function render(){
     const items=o.items.map(i=>{
       let h=`<div class="it-line"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
       if(i.bundleItems && i.bundleItems.length){
-        h+=`<div class="bundle-inline">${i.bundleItems.map(b=>`• ${b.name} ${b.qty*i.qty}${b.unit||'件'}`).join('　')}</div>`;
+        h+=`<div class="bundle-inline">${i.bundleItems.map(b=>`• ${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('　')}</div>`;
       }
       return h;
     }).join('');
@@ -376,7 +376,7 @@ function renderMergedShip(){
         ${o.items.map(i=>{
           let h=`<div class="so-item"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
           if(i.bundleItems && i.bundleItems.length){
-            h+=`<div class="bundle-inline">${i.bundleItems.map(b=>`• ${b.name} ${b.qty*i.qty}${b.unit||'件'}`).join('　')}</div>`;
+            h+=`<div class="bundle-inline">${i.bundleItems.map(b=>`• ${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('　')}</div>`;
           }
           return h;
         }).join('')}
@@ -405,7 +405,7 @@ function copyShipGroup(ids){
       if(prod && prod.bundleItems && prod.bundleItems.length){
         text+=`${prod.name}${i.qty>1?' *'+i.qty:''}\n`;
         prod.bundleItems.forEach(b=>{
-          text+=`• ${b.name}   ${b.qty} ${b.unit}${i.qty>1?'   *'+i.qty:''}\n`;
+          text+=`• ${b.name}   ${b.qty} ${b.unit}${i.qty>1?'   ×'+i.qty:''}\n`;
         });
       }else{
         text+=`${i.name} ×${i.qty}\n`;
