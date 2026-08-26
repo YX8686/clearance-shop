@@ -152,10 +152,13 @@
         <label>副标题（针对用户痛点的两三行文案）</label>
         <textarea id="pSubtitle" placeholder="如：淡斑提亮 · 28天见效\n关仓回馈，限量发售"></textarea>
       </div>
-      <div class="form-row" style="display:flex;gap:10px">
+      <div class="form-row" id="basePriceRow" style="display:flex;gap:10px">
         <div style="flex:1"><label>售价</label><input type="number" id="pPrice" placeholder="299"></div>
         <div style="flex:1"><label>原价</label><input type="number" id="pOriginal" placeholder="1000"></div>
         <div style="flex:1"><label>库存</label><input type="number" id="pStock" placeholder="100"></div>
+      </div>
+      <div class="form-row" id="skuPriceHint" style="display:none;background:#fff7ef;border:1px solid #f0e6d8;border-radius:10px;padding:12px;color:#7a5230;font-size:13px">
+        已启用 SKU 规格：<b>售价和库存由各 SKU 决定</b>（添加 SKU 后，上方售价/原价/库存输入框自动隐藏）。
       </div>
       <div class="form-row" style="display:flex;gap:10px">
         <div style="flex:1"><label>分类</label><input type="text" id="pCategory" placeholder="如：盲盒"></div>
@@ -626,6 +629,9 @@ function generateSkuId(){
 }
 function renderSkuList(){
   const box=document.getElementById('skuList');
+  const hasSku = editingSkus.length > 0;
+  document.getElementById('basePriceRow').style.display = hasSku ? 'none' : 'flex';
+  document.getElementById('skuPriceHint').style.display = hasSku ? 'block' : 'none';
   if(!editingSkus.length){ box.innerHTML='<div style="color:#bbb;font-size:13px;padding:10px 0">暂无 SKU，买家将按默认价格直接购买。</div>'; return; }
   box.innerHTML = editingSkus.map((s,idx)=>`
     <div class="sku-row" data-idx="${idx}" style="background:#faf7f2;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px">
@@ -660,13 +666,21 @@ function collectSkus(){
 }
 
 async function saveProduct(){
+  const hasSku = editingSkus.length > 0;
+  const validSkus = collectSkus();
+  let price = document.getElementById('pPrice').value;
+  let stock = document.getElementById('pStock').value;
+  if(hasSku && validSkus.length){
+    price = Math.min(...validSkus.map(s=>Number(s.price)||0));
+    stock = validSkus.reduce((sum,s)=>sum+(Number(s.stock)||0),0);
+  }
   const body={
     id: editingProdId,
     name: document.getElementById('pName').value,
     subtitle: document.getElementById('pSubtitle').value,
-    price: document.getElementById('pPrice').value,
+    price: price,
     originalPrice: document.getElementById('pOriginal').value,
-    stock: document.getElementById('pStock').value,
+    stock: stock,
     category: document.getElementById('pCategory').value,
     desc: document.getElementById('pDesc').value,
     bundleItems: parseBundleText(document.getElementById('pBundle').value),

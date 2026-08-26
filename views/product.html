@@ -42,28 +42,33 @@
   /* SKU 选择弹窗 */
   .sku-modal{position:fixed;inset:0;z-index:55;background:rgba(0,0,0,.45);display:none;align-items:flex-end;justify-content:center}
   .sku-modal.show{display:flex}
-  .sku-sheet{width:100%;max-width:480px;background:#fff;border-radius:18px 18px 0 0;padding:16px 16px 22px;max-height:86vh;overflow:auto;box-shadow:0 -4px 20px rgba(0,0,0,.15)}
-  .sku-head{display:flex;gap:12px;margin-bottom:16px;align-items:flex-start}
-  .sku-head img{width:72px;height:72px;border-radius:10px;object-fit:cover;background:#eee}
-  .sku-head .info{flex:1;min-width:0}
-  .sku-head .price{color:#c0392b;font-weight:700;font-size:20px}
+  .sku-sheet{width:100%;max-width:480px;background:#fff;border-radius:18px 18px 0 0;padding:16px 16px calc(22px + env(safe-area-inset-bottom));max-height:86vh;overflow:auto;box-shadow:0 -4px 20px rgba(0,0,0,.15);position:relative}
+  .sku-sheet .close{position:absolute;top:12px;right:12px;width:30px;height:30px;border:none;background:#f4f1ec;border-radius:50%;font-size:20px;color:#7a6f62;cursor:pointer;z-index:2}
+  .sku-head{display:flex;gap:12px;margin-bottom:18px;align-items:flex-start;padding-right:36px}
+  .sku-head img{width:86px;height:86px;border-radius:10px;object-fit:cover;background:#eee;border:1px solid #f0ece4}
+  .sku-head .info{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;min-height:86px}
+  .sku-head .price{color:#c0392b;font-weight:700;font-size:22px;line-height:1}
+  .sku-head .price .from{font-size:13px;font-weight:400;margin-left:2px}
+  .sku-head .picked{font-size:13px;color:#7a6f62;margin-top:8px}
   .sku-head .stock{font-size:12px;color:#9a8f82;margin-top:4px}
-  .sku-head .close{width:28px;height:28px;border:none;background:#f4f1ec;border-radius:50%;font-size:18px;color:#7a6f62;cursor:pointer;flex-shrink:0}
-  .sku-title{font-size:13px;color:#7a6f62;margin:14px 0 8px}
+  .sku-section{margin-bottom:18px}
+  .sku-sec-title{font-size:13px;color:#3a322b;font-weight:600;margin-bottom:10px}
   .sku-opts{display:flex;flex-wrap:wrap;gap:10px}
-  .sku-opt{border:1px solid #e0d6c8;background:#fff;border-radius:10px;padding:9px 14px;font-size:13px;color:#3a322b;cursor:pointer;display:flex;align-items:center;gap:6px}
-  .sku-opt.on{border-color:#b8743f;background:#fff7ef;color:#b8743f;font-weight:700}
-  .sku-opt .op{font-size:11px;color:#9a8f82}
-  .sku-qty{display:flex;align-items:center;gap:10px;margin:16px 0}
-  .sku-qty button{width:32px;height:32px;border-radius:8px;border:1px solid #d8ccba;background:#fff;font-size:18px;cursor:pointer}
-  .sku-qty input{width:60px;text-align:center;border:1px solid #d8ccba;border-radius:8px;padding:7px;font-size:15px}
-  .sku-bundle{background:#faf7f2;border-radius:10px;padding:12px;margin:14px 0;font-size:13px;color:#5b5147;line-height:1.7}
-  .sku-bundle h5{margin:0 0 8px;font-size:13px;color:#7a5230;font-weight:700}
+  .sku-opt{border:1px solid #e0d6c8;background:#fff;border-radius:20px;padding:9px 16px;font-size:13px;color:#3a322b;cursor:pointer;transition:all .15s}
+  .sku-opt.on{border-color:#b8743f;background:#fff7ef;color:#b8743f;font-weight:600}
+  .sku-opt .sub{font-size:11px;color:#9a8f82;margin-left:4px}
+  .sku-qty-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+  .qty-box{display:flex;align-items:center;border:1px solid #e0d6c8;border-radius:8px;overflow:hidden}
+  .qty-box button{width:34px;height:34px;border:none;background:#faf7f2;font-size:18px;color:#5b5147;cursor:pointer}
+  .qty-box input{width:48px;height:34px;text-align:center;border:none;border-left:1px solid #e0d6c8;border-right:1px solid #e0d6c8;font-size:15px;color:#3a322b}
+  .stock-hint{font-size:12px;color:#9a8f82}
+  .sku-bundle{background:#faf7f2;border-radius:10px;padding:12px;margin-bottom:18px;font-size:13px;color:#5b5147;line-height:1.7}
+  .sku-bundle .sku-sec-title{margin-bottom:8px}
   .sku-bundle .li{display:flex;justify-content:space-between;padding:3px 0}
-  .sku-foot{display:flex;gap:10px;margin-top:8px}
-  .sku-foot button{flex:1;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer}
-  .sku-foot .buy-now{background:#f3ece2;color:#7a5230}
-  .sku-foot .add-cart{background:#b8743f;color:#fff}
+  .sku-foot{display:flex;gap:10px}
+  .sku-foot button{flex:1;border:none;border-radius:24px;padding:14px;font-size:15px;font-weight:700;cursor:pointer}
+  .sku-foot .buy-now{background:#f3c96a;color:#5b3d1b}
+  .sku-foot .add-cart{background:#c0392b;color:#fff}
   /* 购物车右侧抽屉 */
   .fab{position:fixed;right:16px;bottom:90px;z-index:30;background:#b8743f;color:#fff;width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:24px;box-shadow:0 4px 14px rgba(184,116,63,.5);cursor:pointer}
   .badge{position:absolute;top:-2px;right:-2px;background:#c0392b;color:#fff;font-size:11px;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 4px}
@@ -129,24 +134,32 @@
   <!-- SKU 选择弹窗 -->
   <div class="sku-modal" id="skuModal" onclick="if(event.target===this)closeSkuModal()">
     <div class="sku-sheet">
+      <button class="close" onclick="closeSkuModal()">×</button>
       <div class="sku-head">
         <img id="skuImg" src="" alt="">
         <div class="info">
           <div class="price" id="skuPrice">¥0</div>
+          <div class="picked" id="skuPicked">请选择型号</div>
           <div class="stock" id="skuStock">库存：0 件</div>
         </div>
-        <button class="close" onclick="closeSkuModal()">×</button>
       </div>
-      <div class="sku-title">选择活动选项</div>
-      <div class="sku-opts" id="skuOpts"></div>
-      <div class="sku-qty">
-        <span style="font-size:13px;color:#7a6f62">数量</span>
-        <button onclick="changeSkuQty(-1)">−</button>
-        <input type="number" id="skuQty" value="1" min="1" onchange="syncSkuQty(this.value)">
-        <button onclick="changeSkuQty(1)">+</button>
+      <div class="sku-section">
+        <div class="sku-sec-title">规格</div>
+        <div class="sku-opts" id="skuOpts"></div>
+      </div>
+      <div class="sku-qty-row">
+        <span class="sku-sec-title" style="margin:0">数量</span>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="qty-box">
+            <button onclick="changeSkuQty(-1)">−</button>
+            <input type="number" id="skuQty" value="1" min="1" onchange="syncSkuQty(this.value)">
+            <button onclick="changeSkuQty(1)">+</button>
+          </div>
+          <span class="stock-hint" id="skuStockHint">库存 0 件</span>
+        </div>
       </div>
       <div class="sku-bundle" id="skuBundleBox" style="display:none">
-        <h5>该选项实际包含：</h5>
+        <div class="sku-sec-title">该选项实际包含</div>
         <div id="skuBundleList"></div>
       </div>
       <div class="sku-foot">
@@ -271,6 +284,11 @@ function openSkuModal(p, quickBuy){
   curSkuId = skus[0].id;
   curSkuQty = 1;
   document.getElementById('skuImg').src = p.image||'/assets/product-placeholder.svg';
+  document.getElementById('skuPicked').textContent = '请选择型号';
+  const minPrice = Math.min(...skus.map(s=>Number(s.price||p.price||0)));
+  document.getElementById('skuPrice').innerHTML = money(minPrice)+'<span class="from">起</span>';
+  document.getElementById('skuStock').textContent = '库存：' + (p.stock!=null?p.stock:'—') + ' 件';
+  document.getElementById('skuStockHint').textContent = '库存 ' + (p.stock!=null?p.stock:'—') + ' 件';
   renderSkuOptions(p);
   selectSku(p, curSkuId);
   document.getElementById('skuModal').classList.add('show');
@@ -279,10 +297,8 @@ function closeSkuModal(){ document.getElementById('skuModal').classList.remove('
 function renderSkuOptions(p){
   const box = document.getElementById('skuOpts');
   box.innerHTML = p.skus.map(s=>{
-    const stock = s.stock!=null ? s.stock : (p.stock!=null?p.stock:'—');
     return `<div class="sku-opt ${s.id===curSkuId?'on':''}" onclick="selectSku(P,'${s.id}')">
       <span>${s.name}</span>
-      <span class="op">${money(s.price||p.price||0)} · 库存 ${stock}</span>
     </div>`;
   }).join('');
 }
@@ -291,7 +307,10 @@ function selectSku(p, skuId){
   renderSkuOptions(p);
   const sku = p.skus.find(s=>String(s.id)===skuId) || {};
   document.getElementById('skuPrice').textContent = money(sku.price||p.price||0);
-  document.getElementById('skuStock').textContent = '库存：' + (sku.stock!=null?sku.stock:(p.stock!=null?p.stock:'—')) + ' 件';
+  document.getElementById('skuPicked').textContent = sku.name ? ('已选：'+sku.name) : '请选择型号';
+  const stock = sku.stock!=null?sku.stock:(p.stock!=null?p.stock:'—');
+  document.getElementById('skuStock').textContent = '库存：' + stock + ' 件';
+  document.getElementById('skuStockHint').textContent = '库存 ' + stock + ' 件';
   // 显示该 SKU 发货内容，优先 SKU 自身，否则 fallback 到产品级
   const bundles = (sku.bundleItems && sku.bundleItems.length) ? sku.bundleItems : (p.bundleItems||[]);
   const bb = document.getElementById('skuBundleBox');
