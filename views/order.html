@@ -82,16 +82,35 @@
   .qr-lightbox .actions{display:flex;gap:12px}
   .qr-lightbox button{border:none;background:#fff;color:#3a322b;border-radius:24px;padding:10px 22px;font-size:14px;font-weight:600;cursor:pointer}
   .qr-lightbox button.primary{background:#b8743f;color:#fff}
+  /* 付款步骤面板：标题居中，步骤左对齐、整行排开、步骤间空行 */
+  .qr-steps{width:min(92vw,400px);background:#fff;border-radius:16px;padding:24px 20px 18px;text-align:center;max-height:82vh;overflow-y:auto;box-shadow:0 12px 36px rgba(0,0,0,.25)}
+  .qr-steps-title{font-size:17px;font-weight:700;color:#3a322b;text-align:center;margin-bottom:18px}
+  .qr-step{display:flex;align-items:flex-start;text-align:left;gap:10px;margin-bottom:16px;line-height:1.65}
+  .qr-step:last-of-type{margin-bottom:14px}
+  .qr-step .n{flex:none;width:22px;height:22px;line-height:22px;border-radius:50%;background:#b8743f;color:#fff;font-size:12px;font-weight:700;text-align:center;margin-top:3px}
+  .qr-step .t{font-size:14px;color:#3a322b;flex:1}
+  .qr-back{border:none;background:#f6f3ee;color:#7a5230;border-radius:20px;padding:9px 30px;font-size:13px;font-weight:600;cursor:pointer;margin-top:2px}
 </style>
 </head>
 <body>
   <div id="app"></div>
   <div class="qr-lightbox" id="qrLightbox" onclick="if(event.target===this)closeQrLightbox()">
-    <img id="qrLightboxImg" src="" alt="收款码">
-    <div class="tip" id="qrLightboxTip">点击「保存图片」查看付款步骤，或长按上图保存到相册</div>
-    <div class="actions">
-      <button class="primary" onclick="saveQrImage()">保存图片</button>
-      <button onclick="closeQrLightbox()">关闭</button>
+    <div id="qrBody" style="display:flex;flex-direction:column;align-items:center">
+      <img id="qrLightboxImg" src="" alt="收款码">
+      <div class="tip" id="qrLightboxTip">点击「保存图片」查看付款步骤，或长按上图保存到相册</div>
+      <div class="actions">
+        <button class="primary" onclick="saveQrImage()">保存图片</button>
+        <button onclick="closeQrLightbox()">关闭</button>
+      </div>
+    </div>
+    <div id="qrSteps" class="qr-steps" style="display:none">
+      <div class="qr-steps-title">操作步骤</div>
+      <div class="qr-step"><span class="n">1</span><div class="t">长按上方二维码图片</div></div>
+      <div class="qr-step"><span class="n">2</span><div class="t">在弹出的菜单里选择「保存到手机」</div></div>
+      <div class="qr-step"><span class="n">3</span><div class="t">退出本商城，回到微信主界面，点开右上角「+」号，选择「扫一扫」</div></div>
+      <div class="qr-step"><span class="n">4</span><div class="t">从相册中选中刚才保存的二维码，扫描后即可向我付款</div></div>
+      <div class="qr-step"><span class="n">5</span><div class="t">付款成功后截图，发给夏天老师本人，再重新点击商城链接回来继续操作</div></div>
+      <button class="qr-back" onclick="backFromSteps()">返回</button>
     </div>
   </div>
 <script>
@@ -111,12 +130,18 @@ function saveQrImage(){
   const img=document.getElementById('qrLightboxImg');
   if(!img||!img.src) return;
   if(isWechat()){
-    alert('操作步骤：\n1. 长按上方二维码图片\n2. 选择「保存到手机」\n3. 退出该商城，回到微信，点开微信右上角「+」号，选择「扫一扫」，从相册中选到这个二维码，即可向我付款\n4. 记得截图付款成功页面，并发给夏天，然后重新点击商城链接回来继续操作');
+    // 微信内无法直接保存，展示排版清晰的操作步骤（标题居中、步骤左对齐、每步空行）
+    document.getElementById('qrBody').style.display='none';
+    document.getElementById('qrSteps').style.display='block';
     return;
   }
   // 普通浏览器尝试下载，失败时给出提示
   const a=document.createElement('a'); a.href=img.src; a.download=(img.alt||'收款码')+'.jpg'; a.target='_blank';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+function backFromSteps(){
+  document.getElementById('qrSteps').style.display='none';
+  document.getElementById('qrBody').style.display='flex';
 }
 
 function copyText(text, msg){
@@ -155,7 +180,16 @@ function savePage(){
 function buildOrderCard(o){
   const stClass = {'待付款':'st-wait','待确认':'st-confirm','待发货':'st-ship','已发货':'st-done'}[o.status] || 'st-wait';
   const stLabel = o.status==='已发货' ? '发货中' : o.status;
-  const itemsHtml = o.items.map(i=>`<div class="item-line"><span class="item-name">${i.name}</span><span class="item-price">${money(i.price)} × ${i.qty}</span></div>`).join('');
+  const itemsHtml = o.items.map(i=>{
+    let h=`<div class="item-line"><span class="item-name">${i.name}</span><span class="item-price">${money(i.price)} × ${i.qty}</span></div>`;
+    if(i.bundleItems && i.bundleItems.length){
+      h+=`<div style="background:#fbf7f1;border-radius:8px;padding:8px 10px;margin:2px 0 8px;font-size:12px;color:#7a5230;line-height:1.7">
+        <div style="font-weight:700;margin-bottom:2px">📦 发货内容</div>
+        ${i.bundleItems.map(b=>`<div style="display:flex;justify-content:space-between"><span>• ${b.name}</span><span style="white-space:nowrap;margin-left:8px">${b.qty} ${b.unit||'件'}</span></div>`).join('')}
+      </div>`;
+    }
+    return h;
+  }).join('');
   let trackingHtml = '';
   if(o.status==='已发货' && o.tracking){
     const c=detectCourier(o.tracking);
@@ -318,7 +352,15 @@ if(!O){
       </div>
       <div class="box items">
         <div style="font-size:13px;color:#9a8f82;margin-bottom:6px">商品明细</div>`;
-  O.items.forEach(i=>{ html+=`<div class="it"><span>${i.name}</span><span class="q">${money(i.price)} × ${i.qty}</span></div>`; });
+  O.items.forEach(i=>{
+    html+=`<div class="it"><span>${i.name}</span><span class="q">${money(i.price)} × ${i.qty}</span></div>`;
+    if(i.bundleItems && i.bundleItems.length){
+      html+=`<div style="background:#fbf7f1;border-radius:8px;padding:9px 11px;margin:2px 0 10px;font-size:12px;color:#7a5230;line-height:1.75">
+        <div style="font-weight:700;margin-bottom:3px">📦 发货内容</div>
+        ${i.bundleItems.map(b=>`<div style="display:flex;justify-content:space-between"><span>• ${b.name}</span><span style="white-space:nowrap;margin-left:8px">${b.qty} ${b.unit||'件'}</span></div>`).join('')}
+      </div>`;
+    }
+  });
   html+=`<div class="total">合计 ${money(O.total)}</div></div>`;
 
   // 进度条：三个节点，当前高亮

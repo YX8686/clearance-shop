@@ -37,6 +37,32 @@
   .card .orig{color:#bbb;font-size:11px;text-decoration:line-through;margin-left:6px;font-weight:400}
   .card .add{margin-top:9px;background:#b8743f;color:#fff;border:none;border-radius:20px;padding:8px 0;font-size:13px;font-weight:600;cursor:pointer}
   .card .add:active{opacity:.8}
+  .card .price .from{font-size:11px;font-weight:400;margin-left:3px}
+  /* SKU 选择弹窗 */
+  .sku-modal{position:fixed;inset:0;z-index:55;background:rgba(0,0,0,.45);display:none;align-items:flex-end;justify-content:center}
+  .sku-modal.show{display:flex}
+  .sku-sheet{width:100%;max-width:480px;background:#fff;border-radius:18px 18px 0 0;padding:16px 16px 22px;max-height:86vh;overflow:auto;box-shadow:0 -4px 20px rgba(0,0,0,.15)}
+  .sku-head{display:flex;gap:12px;margin-bottom:16px;align-items:flex-start}
+  .sku-head img{width:72px;height:72px;border-radius:10px;object-fit:cover;background:#eee}
+  .sku-head .info{flex:1;min-width:0}
+  .sku-head .price{color:#c0392b;font-weight:700;font-size:20px}
+  .sku-head .stock{font-size:12px;color:#9a8f82;margin-top:4px}
+  .sku-head .close{width:28px;height:28px;border:none;background:#f4f1ec;border-radius:50%;font-size:18px;color:#7a6f62;cursor:pointer;flex-shrink:0}
+  .sku-title{font-size:13px;color:#7a6f62;margin:14px 0 8px}
+  .sku-opts{display:flex;flex-wrap:wrap;gap:10px}
+  .sku-opt{border:1px solid #e0d6c8;background:#fff;border-radius:10px;padding:9px 14px;font-size:13px;color:#3a322b;cursor:pointer;display:flex;align-items:center;gap:6px}
+  .sku-opt.on{border-color:#b8743f;background:#fff7ef;color:#b8743f;font-weight:700}
+  .sku-opt .op{font-size:11px;color:#9a8f82}
+  .sku-qty{display:flex;align-items:center;gap:10px;margin:16px 0}
+  .sku-qty button{width:32px;height:32px;border-radius:8px;border:1px solid #d8ccba;background:#fff;font-size:18px;cursor:pointer}
+  .sku-qty input{width:60px;text-align:center;border:1px solid #d8ccba;border-radius:8px;padding:7px;font-size:15px}
+  .sku-bundle{background:#faf7f2;border-radius:10px;padding:12px;margin:14px 0;font-size:13px;color:#5b5147;line-height:1.7}
+  .sku-bundle h5{margin:0 0 8px;font-size:13px;color:#7a5230;font-weight:700}
+  .sku-bundle .li{display:flex;justify-content:space-between;padding:3px 0}
+  .sku-foot{display:flex;gap:10px;margin-top:8px}
+  .sku-foot button{flex:1;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer}
+  .sku-foot .buy-now{background:#f3ece2;color:#7a5230}
+  .sku-foot .add-cart{background:#b8743f;color:#fff}
   /* 购物车右侧抽屉 */
   .fab{position:fixed;right:16px;bottom:18px;z-index:30;background:#b8743f;color:#fff;width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:24px;box-shadow:0 4px 14px rgba(184,116,63,.5);cursor:pointer}
   .badge{position:absolute;top:-2px;right:-2px;background:#c0392b;color:#fff;font-size:11px;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 4px}
@@ -121,6 +147,36 @@
   </div>
 
   <div class="grid" id="grid"></div>
+
+  <!-- SKU 选择弹窗 -->
+  <div class="sku-modal" id="skuModal" onclick="if(event.target===this)closeSkuModal()">
+    <div class="sku-sheet">
+      <div class="sku-head">
+        <img id="skuImg" src="" alt="">
+        <div class="info">
+          <div class="price" id="skuPrice">¥0</div>
+          <div class="stock" id="skuStock">库存：0 件</div>
+        </div>
+        <button class="close" onclick="closeSkuModal()">×</button>
+      </div>
+      <div class="sku-title">选择活动选项</div>
+      <div class="sku-opts" id="skuOpts"></div>
+      <div class="sku-qty">
+        <span style="font-size:13px;color:#7a6f62">数量</span>
+        <button onclick="changeSkuQty(-1)">−</button>
+        <input type="number" id="skuQty" value="1" min="1" onchange="syncSkuQty(this.value)">
+        <button onclick="changeSkuQty(1)">+</button>
+      </div>
+      <div class="sku-bundle" id="skuBundleBox" style="display:none">
+        <h5>该选项实际包含：</h5>
+        <div id="skuBundleList"></div>
+      </div>
+      <div class="sku-foot">
+        <button class="buy-now" onclick="skuBuyNow()">立即购买</button>
+        <button class="add-cart" onclick="skuAddToCart()">加入购物车</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 购物车 -->
   <div class="fab" onclick="openCart()">🛒<span class="badge" id="badge" style="display:none">0</span></div>
@@ -223,13 +279,16 @@ function renderGrid(){
   PRODUCTS.forEach(p=>{
     const div=document.createElement('div'); div.className='card';
     const orig = (p.originalPrice && p.originalPrice>p.price) ? '<span class="orig">'+money(p.originalPrice)+'</span>' : '';
+    const hasSkus = Array.isArray(p.skus) && p.skus.length>0;
+    const minPrice = hasSkus ? Math.min(...p.skus.map(s=>Number(s.price||p.price||0))) : (p.price||0);
+    const priceLabel = hasSkus ? (money(minPrice)+'<span class="from">起</span>') : money(p.price);
     div.innerHTML = `
       <img class="img" src="${p.image||'/assets/product-placeholder.svg'}" loading="lazy" decoding="async" onclick="goProduct('${p.id}')">
       <div class="body">
         <div class="name" onclick="goProduct('${p.id}')">${p.name}</div>
         <div class="desc">${p.desc||''}</div>
-        <div class="price">${money(p.price)}<small> /件</small>${orig}</div>
-        <button class="add" onclick="addToCart('${p.id}')">加入购物车</button>
+        <div class="price">${priceLabel}<small> /件</small>${orig}</div>
+        <button class="add" onclick="openSkuModal('${p.id}')">${hasSkus?'选择规格':'加入购物车'}</button>
       </div>`;
     g.appendChild(div);
   });
@@ -238,11 +297,75 @@ function renderGrid(){
 function goProduct(id){ location.href='/product/'+id; }
 
 function cartCount(){ return Object.values(cart).reduce((a,b)=>a+b,0); }
-function cartTotal(){ return Object.entries(cart).reduce((s,[id,q])=>{ const p=PRODUCTS.find(x=>x.id===id); return s+(p?p.price*q:0); },0); }
+function cartTotal(){ return Object.entries(cart).reduce((s,[id,q])=>{ const info=getCartInfo(id); return s+(info.price*q); },0); }
 function saveCart(){ localStorage.setItem('cart',JSON.stringify(cart)); updateBadge(); }
 function updateBadge(){ const n=cartCount(); const b=$('#badge'); if(n>0){b.style.display='flex';b.textContent=n;} else b.style.display='none'; }
 
-function addToCart(id){ cart[id]=(cart[id]||0)+1; saveCart(); openCart(); }
+function getCartInfo(key){
+  const [pid, skuId] = key.split('#');
+  const p = PRODUCTS.find(x=>x.id===pid) || {name:'已下架商品'};
+  if(!skuId) return {p, skuId:'', name:p.name, price:p?p.price:0, image:p?p.image||p.images&&p.images[0]:''};
+  const sku = (p.skus||[]).find(s=>String(s.id)===skuId);
+  if(!sku) return {p, skuId, name:p.name, price:p?p.price:0, image:p?p.image||p.images&&p.images[0]:''};
+  return {p, skuId, name: p.name+' · '+sku.name, price: Number(sku.price||p.price||0), image: sku.image||p.image||''};
+}
+
+// SKU 选择弹窗
+let curSkuProd=null, curSkuId='', curSkuQty=1;
+function getCartKey(p, skuId){ return skuId ? (p.id+'#'+skuId) : p.id; }
+function openSkuModal(pid){
+  const p = PRODUCTS.find(x=>x.id===pid); if(!p) return;
+  curSkuProd = p;
+  const skus = p.skus || [];
+  if(!skus.length){
+    cart[getCartKey(p,'')]=(cart[getCartKey(p,'')]||0)+1; saveCart(); openCart();
+    return;
+  }
+  curSkuId = skus[0].id; curSkuQty=1;
+  document.getElementById('skuImg').src = p.image||'/assets/product-placeholder.svg';
+  renderSkuOptions(); selectSku(curSkuId);
+  document.getElementById('skuModal').classList.add('show');
+}
+function closeSkuModal(){ document.getElementById('skuModal').classList.remove('show'); }
+function renderSkuOptions(){
+  const p=curSkuProd; if(!p) return;
+  const box=document.getElementById('skuOpts');
+  box.innerHTML = p.skus.map(s=>{
+    const stock = s.stock!=null ? s.stock : (p.stock!=null?p.stock:'—');
+    return `<div class="sku-opt ${s.id===curSkuId?'on':''}" onclick="selectSku('${s.id}')">
+      <span>${s.name}</span>
+      <span class="op">${money(s.price||p.price||0)} · 库存 ${stock}</span>
+    </div>`;
+  }).join('');
+}
+function selectSku(skuId){
+  curSkuId = skuId; curSkuQty = Math.max(1, curSkuQty);
+  renderSkuOptions();
+  const p=curSkuProd, sku=p.skus.find(s=>String(s.id)===skuId)||{};
+  document.getElementById('skuPrice').textContent = money(sku.price||p.price||0);
+  document.getElementById('skuStock').textContent = '库存：' + (sku.stock!=null?sku.stock:(p.stock!=null?p.stock:'—')) + ' 件';
+  const bundles = (sku.bundleItems && sku.bundleItems.length) ? sku.bundleItems : (p.bundleItems||[]);
+  const bb = document.getElementById('skuBundleBox');
+  if(bundles.length){ bb.style.display='block'; document.getElementById('skuBundleList').innerHTML = bundles.map(b=>`<div class="li"><span>• ${b.name}</span><span>${b.qty} ${b.unit||'件'}</span></div>`).join(''); }
+  else { bb.style.display='none'; }
+  document.getElementById('skuQty').value = curSkuQty;
+}
+function changeSkuQty(d){ curSkuQty = Math.max(1, curSkuQty+d); document.getElementById('skuQty').value=curSkuQty; }
+function syncSkuQty(v){ curSkuQty = Math.max(1, Math.floor(Number(v)||1)); document.getElementById('skuQty').value=curSkuQty; }
+function skuAddToCart(){
+  if(!curSkuProd || !curSkuId) return;
+  const key = getCartKey(curSkuProd, curSkuId);
+  cart[key] = (cart[key]||0) + curSkuQty;
+  saveCart(); closeSkuModal(); openCart();
+}
+function skuBuyNow(){
+  if(!curSkuProd || !curSkuId) return;
+  const key = getCartKey(curSkuProd, curSkuId);
+  cart[key] = (cart[key]||0) + curSkuQty;
+  saveCart(); closeSkuModal(); openCheckout();
+}
+
+function addToCart(id){ openSkuModal(id); }
 function changeQty(id,d){ cart[id]=(cart[id]||0)+d; if(cart[id]<=0) delete cart[id]; saveCart(); renderCart(); }
 
 function openCart(){ $('#mask').classList.add('show'); $('#drawer').classList.add('show'); renderCart(); }
@@ -254,11 +377,11 @@ function renderCart(){
   if(!ids.length){ box.innerHTML='<div class="empty">购物车还是空的</div>'; $('#chkBtn').disabled=true; }
   else {
     ids.forEach(id=>{
-      const p=PRODUCTS.find(x=>x.id===id); if(!p) return;
+      const info=getCartInfo(id); if(!info.p || info.name==='已下架商品') return;
       const row=document.createElement('div'); row.className='item';
       row.innerHTML=`
-        <img src="${p.image||'/assets/product-placeholder.svg'}" loading="lazy" decoding="async">
-        <div class="info"><div class="n">${p.name}</div><div class="p">${money(p.price)}</div></div>
+        <img src="${info.image||'/assets/product-placeholder.svg'}" loading="lazy" decoding="async">
+        <div class="info"><div class="n">${info.name}</div><div class="p">${money(info.price)}</div></div>
         <div class="stepper"><button onclick="changeQty('${id}',-1)">−</button><span>${cart[id]}</span><button onclick="changeQty('${id}',1)">+</button></div>`;
       box.appendChild(row);
     });
@@ -350,7 +473,10 @@ function markPaidAndGo(){
 function submitOrder(){
   const name=$('#cName').value.trim(), phone=$('#cPhone').value.trim(), addr=$('#cAddr').value.trim(), wechat=$('#cWechat').value.trim();
   if(!name||!phone||!addr){ alert('请填写完整收货信息'); return; }
-  const items=Object.entries(cart).map(([id,q])=>({id,qty:q}));
+  const items=Object.entries(cart).map(([id,q])=>{
+    const [pid, skuId] = id.split('#');
+    return {id:pid, skuId:skuId||undefined, qty:q};
+  });
   if(!items.length){ alert('购物车为空'); return; }
   fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,phone,address:addr,wechat,items})})
     .then(r=>r.json()).then(d=>{

@@ -339,8 +339,29 @@ const server = http.createServer(async (req, res)=>{
           res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'missing_contact'})); return;
         }
         const detail = items.map(it=>{
-          const p = products.find(p=>p.id===it.id);
-          return { id:it.id, name: p?p.name:it.id, price: p?p.price:0, qty:Number(it.qty), image: p?p.image||p.images&&p.images[0]:'' };
+          // 兼容旧格式：购物车键可能以 "产品id#SKUid" 形式整体传入
+          const rawId = String(it.id||'');
+          const split = rawId.split('#');
+          const pid = split[0] || rawId;
+          const skuIdFromKey = split.length>1 ? split[1] : '';
+          const p = products.find(p=>p.id===pid);
+          let name = p?p.name:rawId;
+          let price = p?p.price:0;
+          let image = p?p.image||p.images&&p.images[0]:'';
+          let skuId = String(it.skuId || skuIdFromKey || '');
+          let skuName = '';
+          let skuBundle = [];
+          if(p && skuId){
+            const sku = (p.skus||[]).find(s=>String(s.id)===skuId);
+            if(sku){
+              skuName = String(sku.name||'').trim();
+              price = Number(sku.price||p.price||0);
+              image = String(sku.image||p.image||'').trim() || image;
+              skuBundle = Array.isArray(sku.bundleItems)?sku.bundleItems:[];
+              if(skuName) name = name + ' · ' + skuName;
+            }
+          }
+          return { id:pid, skuId, skuName, name, price, qty:Number(it.qty), image, bundleItems: skuBundle.length?skuBundle:(p&&p.bundleItems?p.bundleItems:[]) };
         });
         const total = detail.reduce((s,x)=> s + x.price*x.qty, 0);
         const id = genId();
@@ -459,6 +480,11 @@ const server = http.createServer(async (req, res)=>{
         const id=String(p.id||'').trim();
         const isNew=!id || !products.find(x=>x.id===id);
         const newId=id || crypto.randomBytes(4).toString('hex').toUpperCase();
+        const skuBundle = (b)=>Array.isArray(b)?b.slice(0,20).map(x=>({
+          name: String(x.name||'').trim().slice(0,100),
+          qty: Math.max(0, Math.floor(Number(x.qty)||0)),
+          unit: String(x.unit||'件').trim().slice(0,10)
+        })).filter(x=>x.name && x.qty>0):[];
         const item={
           id: newId,
           name: String(p.name||'未命名').trim().slice(0,100),
@@ -472,11 +498,15 @@ const server = http.createServer(async (req, res)=>{
           detailImages: Array.isArray(p.detailImages) ? p.detailImages.filter(u=>String(u).startsWith('/')||/^https?:/.test(u)).slice(0,20) : [],
           folder: String(p.folder||'').trim(),
           shareImage: String(p.shareImage||'').trim(),
-          bundleItems: Array.isArray(p.bundleItems) ? p.bundleItems.slice(0,20).map(b=>({
-            name: String(b.name||'').trim().slice(0,100),
-            qty: Math.max(0, Math.floor(Number(b.qty)||0)),
-            unit: String(b.unit||'件').trim().slice(0,10)
-          })).filter(b=>b.name && b.qty>0) : [],
+          bundleItems: skuBundle(p.bundleItems),
+          skus: Array.isArray(p.skus) ? p.skus.slice(0,20).map(s=>({
+            id: String(s.id||'').trim() || crypto.randomBytes(3).toString('hex').toUpperCase(),
+            name: String(s.name||'').trim().slice(0,100),
+            price: Math.max(0, Number(s.price)||0),
+            stock: Math.max(0, Math.floor(Number(s.stock)||0)),
+            image: String(s.image||'').trim().slice(0,300),
+            bundleItems: skuBundle(s.bundleItems)
+          })).filter(s=>s.name) : [],
           updatedAt: Date.now()
         };
         if(isNew){ item.createdAt=item.updatedAt; products.push(item); }

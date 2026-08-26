@@ -168,8 +168,15 @@
         <textarea id="pDesc" placeholder="简短描述，会显示在产品卡片下方"></textarea>
       </div>
       <div class="form-row">
-        <label>该价格链接包含的产品明细（用于发货清单）</label>
-        <textarea id="pBundle" rows="4" placeholder="每行填写一个产品，格式：产品名 数量 单位&#10;例如：&#10;线雕面膜 5 盒&#10;液 10 瓶&#10;&#10;如果该链接就是单件直发，此处留空即可。"></textarea>
+        <label>该价格链接包含的产品明细（用于发货清单，无SKU时生效）</label>
+        <textarea id="pBundle" rows="4" placeholder="每行填写一个产品，格式：产品名 数量 单位&#10;例如：&#10;线雕面膜 5 盒&#10;液 10 瓶&#10;&#10;如果该链接就是单件直发，此处留空即可。&#10;&#10;注：若下方添加了 SKU/活动选项，此处可留空，由每个 SKU 单独填写发货明细。"></textarea>
+      </div>
+      <!-- SKU / 活动选项 -->
+      <div class="form-row">
+        <label>SKU / 活动选项（买家可选不同规格）</label>
+        <div id="skuList" style="display:flex;flex-direction:column;gap:10px;margin-bottom:10px"></div>
+        <button type="button" onclick="addSkuRow()" style="border:1px solid #b8743f;background:#fff;color:#b8743f;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer">+ 添加 SKU / 活动选项</button>
+        <div style="font-size:12px;color:#9a8f82;margin-top:8px">每个 SKU 可独立设置名称、价格、库存、发货明细。添加后，买家购买时必须先选择规格。</div>
       </div>
       <div class="form-row">
         <label>产品主图</label>
@@ -224,6 +231,7 @@ let pickerMode='main'; // 'main' | 'detail'
 let selectedGalUrls=[];
 let currentGalFolder='';
 let pendingIds=new Set(); // 乐观更新尚未被云端确认的订单，15s 轮询时保留本地版本
+let editingSkus=[]; // 当前编辑产品的 SKU 列表
 
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',1800); }
 function money(n){ return '¥'+Number(n).toLocaleString('zh-CN'); }
@@ -573,9 +581,17 @@ function openProdModal(p){
   document.getElementById('pCategory').value=p.category||'';
   document.getElementById('pDesc').value=p.desc||'';
   document.getElementById('pBundle').value=(p.bundleItems||[]).map(b=>`${b.name} ${b.qty} ${b.unit}`).join('\n');
+  editingSkus = (p.skus||[]).map(s=>({
+    id: s.id||generateSkuId(),
+    name: s.name||'',
+    price: s.price!=null?s.price:'',
+    stock: s.stock!=null?s.stock:'',
+    bundleItems: Array.isArray(s.bundleItems)?s.bundleItems:[]
+  }));
   document.getElementById('pMainImg').value=p.image||'';
   document.getElementById('pMainImgPreview').src=p.image||'/assets/products/default.svg';
   renderDetailImgs(p.detailImages||[]);
+  renderSkuList();
   const sel=document.getElementById('pFolder'); sel.innerHTML='<option value="">不指定</option>';
   GALLERY.forEach(f=>sel.innerHTML+=`<option value="${f.name}" ${f.name===p.folder?'selected':''}>${f.name}</option>`);
   document.getElementById('prodModal').classList.add('show');
@@ -605,6 +621,44 @@ function parseBundleText(text){
   }).filter(Boolean);
 }
 
+function generateSkuId(){
+  return 'SK'+Math.random().toString(36).slice(2,8).toUpperCase();
+}
+function renderSkuList(){
+  const box=document.getElementById('skuList');
+  if(!editingSkus.length){ box.innerHTML='<div style="color:#bbb;font-size:13px;padding:10px 0">暂无 SKU，买家将按默认价格直接购买。</div>'; return; }
+  box.innerHTML = editingSkus.map((s,idx)=>`
+    <div class="sku-row" data-idx="${idx}" style="background:#faf7f2;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input type="text" placeholder="SKU名称，如：1瓶" value="${escapeHtml(s.name)}" onchange="updateSku(${idx},'name',this.value)" style="flex:1;min-width:120px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px">
+        <input type="number" placeholder="价格" value="${s.price!==''?s.price:''}" onchange="updateSku(${idx},'price',this.value)" style="width:90px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px">
+        <input type="number" placeholder="库存" value="${s.stock!==''?s.stock:''}" onchange="updateSku(${idx},'stock',this.value)" style="width:80px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px">
+        <button type="button" onclick="removeSkuRow(${idx})" style="border:none;background:#e74c3c;color:#fff;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer">删除</button>
+      </div>
+      <textarea rows="2" placeholder="该SKU对应的发货明细（每行：产品名 数量 单位）。不填则继承上方“产品明细”。" onchange="updateSku(${idx},'bundle',this.value)" style="width:100%;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px;resize:vertical">${(s.bundleItems||[]).map(b=>`${b.name} ${b.qty} ${b.unit}`).join('\n')}</textarea>
+    </div>
+  `).join('');
+}
+function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function addSkuRow(){ editingSkus.push({id:generateSkuId(),name:'',price:'',stock:'',bundleItems:[]}); renderSkuList(); }
+function removeSkuRow(idx){ editingSkus.splice(idx,1); renderSkuList(); }
+function updateSku(idx, field, value){
+  const s=editingSkus[idx];
+  if(field==='name') s.name=value.trim();
+  if(field==='price') s.price=value===''?'':Math.max(0,Number(value)||0);
+  if(field==='stock') s.stock=value===''?'':Math.max(0,Math.floor(Number(value)||0));
+  if(field==='bundle') s.bundleItems=parseBundleText(value);
+}
+function collectSkus(){
+  return editingSkus.filter(s=>String(s.name).trim()).map(s=>({
+    id: s.id,
+    name: String(s.name).trim(),
+    price: s.price===''?0:Number(s.price),
+    stock: s.stock===''?0:Number(s.stock),
+    bundleItems: s.bundleItems||[]
+  }));
+}
+
 async function saveProduct(){
   const body={
     id: editingProdId,
@@ -616,6 +670,7 @@ async function saveProduct(){
     category: document.getElementById('pCategory').value,
     desc: document.getElementById('pDesc').value,
     bundleItems: parseBundleText(document.getElementById('pBundle').value),
+    skus: collectSkus(),
     image: document.getElementById('pMainImg').value,
     detailImages: selectedGalUrls,
     folder: document.getElementById('pFolder').value
