@@ -223,6 +223,7 @@ let editingProdId=null;
 let pickerMode='main'; // 'main' | 'detail'
 let selectedGalUrls=[];
 let currentGalFolder='';
+let pendingIds=new Set(); // 乐观更新尚未被云端确认的订单，15s 轮询时保留本地版本
 
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',1800); }
 function money(n){ return '¥'+Number(n).toLocaleString('zh-CN'); }
@@ -239,9 +240,19 @@ async function load(){
   // 仅首次打开显示 loading 提示；后续刷新（自动轮询/操作后）静默更新，避免页面闪烁
   if(firstLoad){ setLoading(true); }
   try{
-    const o=await fetch('/api/orders').then(r=>r.json());
-    ORDERS=o;
-  }catch(e){ toast('订单加载失败，请刷新重试'); }
+    const res=await fetch('/api/orders');
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const o=await res.json();
+    // 进行中的乐观更新订单以本地版本为准，避免 15s 轮询把刚点的状态冲掉
+    ORDERS = o.map(s => pendingIds.has(s.id) ? (ORDERS.find(l=>l.id===s.id) || s) : s);
+  }catch(e){
+    // 云端拉取失败时：保留旧 ORDERS 不清空，给出明确的重试入口
+    const list=document.getElementById('list');
+    list.innerHTML='<div class="empty" style="color:#e74c3c">⚠️ 订单数据加载失败（'+e.message+'）<br><br><button class="btn-primary" onclick="load()">重新加载</button></div>';
+    setLoading(false);
+    firstLoad=false;
+    return;
+  }
   firstLoad=false;
   setLoading(false);
   render();
@@ -362,6 +373,7 @@ function copyShipGroup(ids){
   navigator.clipboard.writeText(text).then(()=>toast('发货文本已复制，去微信粘贴')).catch(()=>{ window.prompt('复制下面内容：',text); });
 }
 // 金额核对：合并填写单号前必须展示每笔子订单金额及合并合计，详见 business_rules.md §2
+// 乐观 UI：点完立即本地全部流转到已发货并跳转，逐笔后台同步；单笔失败自动回滚
 async function shipGroup(ids){
   const group=ORDERS.filter(o=>ids.includes(o.id)).sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
   const first=group[0];
@@ -375,32 +387,68 @@ async function shipGroup(ids){
   if(!window.confirm(detail)) return;
   const tracking=prompt('请输入快递单号（将应用到该客户全部 '+ids.length+' 笔订单）：');
   if(tracking==null) return;
-  let failCnt=0;
-  for(const id of ids){
-    const r=await fetch('/api/orders/'+id+'/ship',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tracking:tracking.trim()})});
-    if(!r.ok) failCnt++;
-  }
-  if(failCnt){ toast('有 '+failCnt+' 笔发货失败，请重试'); return; }
-  toast('已发货，转入已发货列表');
+  const tr=tracking.trim();
+  const prevMap={};
+  ids.forEach(id=>{ const o=ORDERS.find(x=>x.id===id); if(o){ prevMap[id]=JSON.parse(JSON.stringify(o)); o.status='已发货'; o.tracking=tr.slice(0,60); o.shippedAt=Date.now(); } });
   curTab='已发货';
-  document.querySelectorAll('.tabs button').forEach(b=>{ b.classList.toggle('on', b.dataset.s===curTab); });
-  load();
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='已发货'));
+  render();
+  toast('已发货，转入已发货列表');
+  ids.forEach(id=>pendingIds.add(id));
+  for(const id of ids){
+    let r, tried=0;
+    while(tried<2){
+      try { r = await fetch('/api/orders/'+id+'/ship',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tracking:tr})}); }
+      catch(e){ r=null; }
+      if(r && r.ok) break;
+      let tip='发货同步失败';
+      if(r){ try{ const d=await r.json(); if(d.message) tip+=': '+d.message; }catch(e){} }
+      if(r && r.status>=500 && tried===0 && window.confirm(`订单 ${id} 云端同步可能失败，是否立即重试？`)){ tried++; continue; }
+      ORDERS=ORDERS.map(x=>x.id===id?prevMap[id]:x); pendingIds.delete(id); render();
+      toast(tip); r=null; break;
+    }
+    if(r && r.ok){ const d=await r.json().catch(()=>({})); if(d.order){ ORDERS=ORDERS.map(x=>x.id===id?d.order:x); } pendingIds.delete(id); }
+  }
+  render();
 }
 function switchTab(btn){ document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('on')); btn.classList.add('on'); curTab=btn.dataset.s; render(); }
 
 // 金额核对：确认收款前必须展示金额明细，详见 business_rules.md §2
+// 乐观 UI：点完立即本地流转到待发货并跳转，云端同步在后台跑；失败自动回滚
 async function confirmPaid(id){
   const o=ORDERS.find(x=>x.id===id);
   if(!o) return;
   const items=o.items.map(i=>`  ${i.name}  ${money(i.price)} × ${i.qty}`).join('\n');
   const msg=`请核对收款金额后再确认：\n\n姓名：${o.name}\n订单号：${o.id}\n\n商品明细：\n${items}\n\n本单合计：${money(o.total)}\n\n确认已收到该笔款项？`;
   if(!window.confirm(msg)) return;
-  const r=await fetch('/api/orders/'+id+'/confirm',{method:'POST'});
-  if(!r.ok){ toast('确认失败（服务未找到该订单），请刷新页面后重试'); return; }
-  toast('已确认收款，已转入待发货');
+  const prev=JSON.parse(JSON.stringify(o));
+  o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now();
+  ORDERS=ORDERS.map(x=>x.id===id?o:x);
   curTab='待发货';
-  await load();
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='待发货'));
+  render();
+  toast('已确认收款，已转入待发货');
+  await syncOrder(id, '/confirm', {}, prev);
+}
+// 通用后台同步：成功用服务端返回订单覆盖，失败回滚到 prev（含一次可选重试）
+async function syncOrder(id, action, body, prev){
+  pendingIds.add(id);
+  let r, tried=0;
+  while(tried<2){
+    try { r = await fetch('/api/orders/'+id+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
+    catch(e){ r=null; }
+    if(r && r.ok) break;
+    let tip='云端同步失败';
+    if(r){ try{ const d=await r.json(); if(d.message) tip+=': '+d.message; }catch(e){} }
+    if(r && r.status>=500 && tried===0 && window.confirm(tip+'\n\n云端同步可能失败，是否立即重试？')){ tried++; continue; }
+    pendingIds.delete(id);
+    ORDERS=ORDERS.map(x=>x.id===id?prev:x); render();
+    toast(tip);
+    return;
+  }
+  const d=await r.json().catch(()=>({}));
+  if(d.order){ ORDERS=ORDERS.map(x=>x.id===id?d.order:x); render(); }
+  pendingIds.delete(id);
 }
 function copyShip(id){
   const o=ORDERS.find(x=>x.id===id);
@@ -413,6 +461,7 @@ function copyShip(id){
   navigator.clipboard.writeText(text).then(()=>toast('发货文本已复制，去微信粘贴')).catch(()=>{ window.prompt('复制下面内容：',text); });
 }
 // 金额核对：填写单号前必须展示金额明细，详见 business_rules.md §2
+// 乐观 UI：点完立即本地流转到已发货并跳转，云端同步在后台跑；失败自动回滚
 async function ship(id){
   const o=ORDERS.find(x=>x.id===id);
   if(!o) return;
@@ -421,11 +470,15 @@ async function ship(id){
   if(!window.confirm(check)) return;
   const tracking=prompt('请输入快递单号：');
   if(tracking==null) return;
-  await fetch('/api/orders/'+id+'/ship',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tracking:tracking.trim()})});
-  toast('已发货，转入已发货列表');
+  const tr=tracking.trim();
+  const prev=JSON.parse(JSON.stringify(o));
+  o.status='已发货'; o.tracking=tr.slice(0,60); o.shippedAt=Date.now();
+  ORDERS=ORDERS.map(x=>x.id===id?o:x);
   curTab='已发货';
-  document.querySelectorAll('.tabs button').forEach(b=>{ b.classList.toggle('on', b.dataset.s===curTab); });
-  load();
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='已发货'));
+  render();
+  toast('已发货，转入已发货列表');
+  await syncOrder(id, '/ship', {tracking:tr}, prev);
 }
 
 function readFileToPrev(inputId, imgId){
@@ -449,7 +502,17 @@ async function saveSettings(){
   const b64Qr=document.getElementById('sQrPrev').dataset.b64; if(b64Qr) body.paymentQrBase64=b64Qr;
   const b64Wc=document.getElementById('sWcPrev').dataset.b64; if(b64Wc) body.paymentWechatQrBase64=b64Wc;
   const b64Ali=document.getElementById('sAliPrev').dataset.b64; if(b64Ali) body.paymentAlipayQrBase64=b64Ali;
-  await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  let res;
+  try { res = await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
+  catch(e){ toast('网络异常，请重试'); return; }
+  if(!res.ok){
+    let tip='设置保存失败';
+    try { const d=await res.json(); if(d.message) tip += '：'+d.message; } catch(e){}
+    if(res.status>=500 && window.confirm(tip+'\n\n云端同步可能失败，是否重试？')){
+      try { res = await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); } catch(e){ toast('重试仍失败'); return; }
+      if(!res.ok){ toast('重试失败，请稍后再试'); return; }
+    } else if(res.status>=500){ toast(tip); return; }
+  }
   toast('设置已保存'); load();
 }
 
@@ -559,8 +622,8 @@ async function saveProduct(){
   };
   const res=await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const data=await res.json();
-  if(data.ok){ toast('产品已保存'); closeProdModal(); load(); }
-  else toast('保存失败');
+  if(res.ok && data.ok){ toast('产品已保存'); closeProdModal(); load(); }
+  else toast('保存失败' + (data.message?('：'+data.message):''));
 }
 async function deleteProduct(id){
   if(!window.confirm('确定删除这个产品？删除后前台不再显示。')) return;

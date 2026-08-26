@@ -30,11 +30,18 @@ function loadEnvLocal(){
 loadEnvLocal();
 
 // ---------- Supabase 客户端（仅在配置了环境变量时启用；本地模式零依赖也能跑） ----------
+// supabase fetch 加超时（默认 fetch 不带超时，Supabase 免费层冷启动慢/抖动时会无限挂起，
+// 商家后台"确认收款"会卡到 30s+）。30s 已足够覆盖冷启动，但够短能让前端尽快感知失败。
 let sb = null;
 if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
   try {
     const { createClient } = require('@supabase/supabase-js');
-    sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+    const fetchWithTimeout = (url, opts) => {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 30000);
+      return fetch(url, { ...opts, signal: ctl.signal }).finally(() => clearTimeout(t));
+    };
+    sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, { global: { fetch: fetchWithTimeout } });
   } catch (e) {
     console.error('[Warn] 未能加载 @supabase/supabase-js，已回退本地文件模式：', e.message);
   }
@@ -77,30 +84,42 @@ async function loadKV(key, fallback){
     const now = Date.now();
     const hit = kvCache.get(key);
     if(hit){
-      if(now - hit.ts < KV_TTL_MS) return hit.value;   // 缓存新鲜，直接用
+      if(now - hit.ts < KV_TTL_MS && !hit.failed) return hit.value;   // 缓存新鲜且上一次没失败
       if(hit.promise) return hit.promise;              // 同 key 并发中，共享在途请求
     }
     const promise = (async()=>{
       try{
         const { data, error } = await sb.from('shop_data').select('value').eq('key', key).maybeSingle();
-        if(!error && data) return data.value;
-      }catch(e){ console.error('[loadKV]', key, e.message); }
-      return fallback;
+        if(error) throw new Error(error.message);
+        if(data) return data.value;
+        return fallback;
+      }catch(e){
+        console.error('[loadKV]', key, e.message);
+        // 关键修复：失败时不缓存，让下次请求重新尝试（避免一直用陈旧值）
+        kvCache.set(key, { ts: 0, value: fallback, promise: null, failed: true });
+        // boot 阶段或被调方已 try/catch 的场景下不抛错也能降级；显式调用方需要感知失败请看 promise 状态
+        throw e;
+      }
     })();
     kvCache.set(key, { ts: now, value: hit ? hit.value : fallback, promise });
-    const value = await promise;
-    kvCache.set(key, { ts: Date.now(), value, promise: null });
-    return value;
+    try{
+      const value = await promise;
+      kvCache.set(key, { ts: Date.now(), value, promise: null });
+      return value;
+    }catch(e){
+      // 让 await loadKV 的调用方能感知到错误（boot 阶段会被 ensureBoot catch 转 503）
+      throw e;
+    }
   }
   return readJson(key + '.json', fallback);
 }
 async function saveKV(key, value){
   if(USE_SUPABASE){
-    try{
-      const { error } = await sb.from('shop_data').upsert({ key, value });
-      if(error) console.error('[saveKV]', key, error.message);
-      else kvCache.set(key, { ts: Date.now(), value, promise: null }); // 写成功后同步缓存，保证读到自己刚写的数据
-    }catch(e){ console.error('[saveKV]', key, e.message); }
+    // 关键修复：失败必须抛错给调用方。之前是 console.error 静默吞掉，
+    // 导致前端拿到 {ok:true} 但云端没写入，重启服务后状态回退（症状：商家后台点"确认收款"成功但刷新后订单又回"待处理"）。
+    const { error } = await sb.from('shop_data').upsert({ key, value });
+    if(error) throw new Error('Supabase save error: ' + error.message);
+    kvCache.set(key, { ts: Date.now(), value, promise: null }); // 写成功后同步缓存，保证读到自己刚写的数据
     return;
   }
   writeJsonAtomic(key + '.json', value);
@@ -157,9 +176,14 @@ async function boot(){
   const seedProducts = readJson('products.json', []);
   const seedConfig = readJson('config.json', DEFAULT_CONFIG);
   const seedOrders = readJson('orders.json', []);
-  products = await loadKV('products', seedProducts);
-  config = await loadKV('config', seedConfig);
-  orders = await loadKV('orders', seedOrders);
+  // boot 阶段优雅降级：loadKV 失败时使用本地 data/*.json 种子，保证服务不挂；
+  // 首次写入成功后 kvCache 会被覆盖，自动切到云端。
+  try { products = await loadKV('products', seedProducts); }
+  catch(e){ console.error('[boot] products 加载失败，使用本地种子：', e.message); products = seedProducts; }
+  try { config = await loadKV('config', seedConfig); }
+  catch(e){ console.error('[boot] config 加载失败，使用本地种子：', e.message); config = seedConfig; }
+  try { orders = await loadKV('orders', seedOrders); }
+  catch(e){ console.error('[boot] orders 加载失败，使用本地种子：', e.message); orders = seedOrders; }
   if(config.paymentQr && !config.paymentWechatQr) config.paymentWechatQr = config.paymentQr;
   booted = true;
   console.log('[Data] 模式=' + (USE_SUPABASE ? 'Supabase云端' : '本地文件') +
@@ -188,10 +212,20 @@ function saveConfig(){ return withLock(()=> saveKV('config', config)); }
 function saveProducts(){ return withLock(()=> saveKV('products', products)); }
 
 // 订单读取：云端模式下每次从 Supabase 取最新，防止 Render 实例内存与本地后台不同步
-async function getOrders(){ return USE_SUPABASE ? await loadKV('orders', orders) : orders; }
+// 读失败时不抛错（避免后台一片空白），降级使用内存副本；写入失败必须抛错（让前端能感知）。
+async function getOrders(){
+  if(!USE_SUPABASE) return orders;
+  try { return await loadKV('orders', orders); }
+  catch(e){ console.error('[getOrders] 读云端失败，使用内存副本：', e.message); return orders; }
+}
 // 订单写入前必须先刷新内存副本：手机端在云端下的订单，本地服务内存里可能没有，
 // 直接 find 内存会 404 静默失败（症状：后台点"确认收款"提示成功但状态不变）
-async function syncOrders(){ if(USE_SUPABASE){ orders = await loadKV('orders', orders); } return orders; }
+async function syncOrders(){
+  if(!USE_SUPABASE) return orders;
+  try { orders = await loadKV('orders', orders); }
+  catch(e){ console.error('[syncOrders] 同步云端失败，继续使用内存副本：', e.message); }
+  return orders;
+}
 
 // ---------- 工具 ----------
 function htmlEscape(s){ return String(s==null?'':s)
@@ -328,7 +362,7 @@ const server = http.createServer(async (req, res)=>{
         const o = orders.find(o=>o.id===mPaid[1]);
         if(!o){ res.writeHead(404); res.end('no'); return; }
         if(o.status==='待付款'){ o.status='待确认'; o.paidScreenshotAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrders(); }
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, status:o.status})); return;
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
       // 确认收款
       const mConfirm = pathname.match(/^\/api\/orders\/([\w-]+)\/confirm$/);
@@ -339,7 +373,7 @@ const server = http.createServer(async (req, res)=>{
         if(o.status==='待付款' || o.status==='待确认'){
           o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrders();
         }
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, status:o.status})); return;
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
       // 发货
       const mShip = pathname.match(/^\/api\/orders\/([\w-]+)\/ship$/);
@@ -349,7 +383,7 @@ const server = http.createServer(async (req, res)=>{
         if(!o){ res.writeHead(404); res.end('no'); return; }
         let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
         o.status='已发货'; o.tracking=String(body.tracking||'').slice(0,60); o.shippedAt=Date.now(); await saveOrders();
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true})); return;
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
       // 更新配置（店铺名/联系人/公告/收款码）
       const mConfig = pathname.match(/^\/api\/config$/);
