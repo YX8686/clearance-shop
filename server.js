@@ -1,5 +1,6 @@
 // 清仓商城 · 单文件服务端（支持「本地文件 / Supabase 云端」双模式）
 // 本地双击图标零依赖即可跑；配置 SUPABASE_URL + SUPABASE_ANON_KEY 后自动切云端，数据持久化不丢。
+// Render 云端启动：先 listen 端口再异步 boot，避免健康检查超时。
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -126,6 +127,14 @@ const DEFAULT_CONFIG = {
 let products = [];
 let config = DEFAULT_CONFIG;
 let orders = [];
+let booted = false;
+let bootPromise = null;
+
+function ensureBoot(){
+  if(booted) return Promise.resolve();
+  if(!bootPromise) bootPromise = boot();
+  return bootPromise;
+}
 
 async function boot(){
   const seedProducts = readJson('products.json', []);
@@ -135,6 +144,7 @@ async function boot(){
   config = await loadKV('config', seedConfig);
   orders = await loadKV('orders', seedOrders);
   if(config.paymentQr && !config.paymentWechatQr) config.paymentWechatQr = config.paymentQr;
+  booted = true;
   console.log('[Data] 模式=' + (USE_SUPABASE ? 'Supabase云端' : '本地文件') +
     '，产品数=' + products.length + '，订单数=' + orders.length);
 }
@@ -219,6 +229,10 @@ function renderTemplate(name, vars){
 
 // ---------- 路由 ----------
 const server = http.createServer(async (req, res)=>{
+  try { await ensureBoot(); } catch(e){
+    console.error('[Boot Error]', e);
+    res.writeHead(503,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'boot_failed', message:e.message})); return;
+  }
   let u;
   try { u = new URL(req.url, 'http://localhost'); } catch(e){ res.writeHead(400); res.end('bad url'); return; }
   const pathname = decodeURIComponent(u.pathname);
@@ -501,11 +515,10 @@ const server = http.createServer(async (req, res)=>{
   }
 });
 
-// 先加载数据，再启动监听
+// 先启动监听（让 Render 健康检查立即通过），再异步加载数据
 (async ()=>{
-  await boot();
   server.listen(PORT, '0.0.0.0', ()=>{
-    console.log('不初限时狂欢商城已启动 → http://localhost:'+PORT);
+    console.log('不初限时狂欢商城已监听端口 ' + PORT);
     console.log('买家首页: http://localhost:'+PORT+'/');
     console.log('商家后台: http://localhost:'+PORT+'/admin');
     if(process.env.OPEN!=='0' && process.platform==='win32' && !USE_SUPABASE){
@@ -513,4 +526,5 @@ const server = http.createServer(async (req, res)=>{
       exec('cmd /c start "" "http://localhost:'+PORT+'/"');
     }
   });
+  ensureBoot().catch(e=>console.error('[Boot Error]', e));
 })();
