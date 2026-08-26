@@ -161,7 +161,15 @@
         已启用 SKU 规格：<b>售价和库存由各 SKU 决定</b>（添加 SKU 后，上方售价/原价/库存输入框自动隐藏）。
       </div>
       <div class="form-row" style="display:flex;gap:10px">
-        <div style="flex:1"><label>分类</label><input type="text" id="pCategory" placeholder="如：盲盒"></div>
+        <div style="flex:1"><label>活动分类</label>
+          <select id="pCategory" style="width:100%;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:14px;background:#fff">
+            <option value="">未选择</option>
+            <option value="特惠单品">特惠单品</option>
+            <option value="明星套装">明星套装</option>
+            <option value="明星组合">明星组合</option>
+            <option value="高功效私人定制">高功效私人定制</option>
+          </select>
+        </div>
         <div style="flex:1"><label>所属文件夹</label>
           <select id="pFolder"><option value="">不指定</option></select>
         </div>
