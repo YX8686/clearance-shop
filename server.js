@@ -419,6 +419,11 @@ const server = http.createServer(async (req, res)=>{
           const p = products.find(p=>p.id===pid);
           if(!p) continue;
           const needQty = needMap[k];
+          // 商家后台手动强制售罄：直接拒单（不管库存是否充足）
+          if(p.forceSoldOut){
+            res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'});
+            res.end(JSON.stringify({error:'manual_sold_out', message:'「'+p.name+'」已下架，请看看其他宝贝～'})); return;
+          }
           if(skuId){
             const sku = (p.skus||[]).find(s=>String(s.id)===skuId);
             if(sku && sku.stock!=null && Number(sku.stock) < needQty){
@@ -602,6 +607,7 @@ const server = http.createServer(async (req, res)=>{
           price: Math.max(0, Number(p.price)||0),
           originalPrice: Math.max(0, Number(p.originalPrice)||0),
           stock: Math.max(0, Number(p.stock)||0),
+          forceSoldOut: !!p.forceSoldOut, // 商家后台「强制售罄」开关：true 则前台永远显示已售罄、无法加购/下单
           category: String(p.category||'').trim().slice(0,50),
           desc: String(p.desc||'').trim().slice(0,500),
           image: String(p.image||'/assets/products/default.svg').trim(),
@@ -644,6 +650,15 @@ const server = http.createServer(async (req, res)=>{
         products=next;
         await saveProducts();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true})); return;
+      }
+      // 商家后台：快速切换「强制售罄」开关（不需打开编辑弹窗，列表卡片直接点）
+      const mToggleFSO = pathname.match(/^\/api\/products\/([\w-]+)\/toggle-force-sold-out$/);
+      if(method==='POST' && mToggleFSO){
+        const idx = products.findIndex(x=>x.id===mToggleFSO[1]);
+        if(idx===-1){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return; }
+        products[idx].forceSoldOut = !products[idx].forceSoldOut;
+        await saveProducts();
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, forceSoldOut: products[idx].forceSoldOut})); return;
       }
 
       res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return;
