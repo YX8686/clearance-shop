@@ -296,6 +296,7 @@ function skuStockOf(p, s){
   return null;
 }
 function isSoldOut(p){
+  if(p.forceSoldOut) return true;
   if(hasSkus(p)){
     return p.skus.every(s=>{ const st=skuStockOf(p,s); return st!=null && st<=0; });
   }
