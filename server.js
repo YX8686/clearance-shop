@@ -68,13 +68,29 @@ function writeJsonAtomic(file, data){
 }
 
 // ---------- 数据层（KV：云端=Supabase 表 shop_data；本地=data/*.json） ----------
+// 读取缓存：3 秒 TTL + 并发去重。商家后台一次打开会并发拉 orders/config/products/gallery，
+// 有了这层缓存，短时间内的重复请求（如刷新、多接口同时读 orders）只打一次 Supabase，大幅加快后台首屏。
+const KV_TTL_MS = 3000;
+const kvCache = new Map(); // key -> { ts, value, promise }
 async function loadKV(key, fallback){
   if(USE_SUPABASE){
-    try{
-      const { data, error } = await sb.from('shop_data').select('value').eq('key', key).maybeSingle();
-      if(!error && data) return data.value;
-    }catch(e){ console.error('[loadKV]', key, e.message); }
-    return fallback;
+    const now = Date.now();
+    const hit = kvCache.get(key);
+    if(hit){
+      if(now - hit.ts < KV_TTL_MS) return hit.value;   // 缓存新鲜，直接用
+      if(hit.promise) return hit.promise;              // 同 key 并发中，共享在途请求
+    }
+    const promise = (async()=>{
+      try{
+        const { data, error } = await sb.from('shop_data').select('value').eq('key', key).maybeSingle();
+        if(!error && data) return data.value;
+      }catch(e){ console.error('[loadKV]', key, e.message); }
+      return fallback;
+    })();
+    kvCache.set(key, { ts: now, value: hit ? hit.value : fallback, promise });
+    const value = await promise;
+    kvCache.set(key, { ts: Date.now(), value, promise: null });
+    return value;
   }
   return readJson(key + '.json', fallback);
 }
@@ -83,6 +99,7 @@ async function saveKV(key, value){
     try{
       const { error } = await sb.from('shop_data').upsert({ key, value });
       if(error) console.error('[saveKV]', key, error.message);
+      else kvCache.set(key, { ts: Date.now(), value, promise: null }); // 写成功后同步缓存，保证读到自己刚写的数据
     }catch(e){ console.error('[saveKV]', key, e.message); }
     return;
   }
@@ -286,7 +303,7 @@ const server = http.createServer(async (req, res)=>{
         }
         const detail = items.map(it=>{
           const p = products.find(p=>p.id===it.id);
-          return { id:it.id, name: p?p.name:it.id, price: p?p.price:0, qty:Number(it.qty) };
+          return { id:it.id, name: p?p.name:it.id, price: p?p.price:0, qty:Number(it.qty), image: p?p.image||p.images&&p.images[0]:'' };
         });
         const total = detail.reduce((s,x)=> s + x.price*x.qty, 0);
         const id = genId();

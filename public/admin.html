@@ -227,21 +227,40 @@ let currentGalFolder='';
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',1800); }
 function money(n){ return '¥'+Number(n).toLocaleString('zh-CN'); }
 
+let isLoading=false;
+function setLoading(v){
+  isLoading=v;
+  const list=document.getElementById('list');
+  if(v){ list.innerHTML='<div class="empty" id="loadingTip">⏳ 正在从云端同步订单数据，请稍候…</div>'; }
+}
+let firstLoad=true;
 async function load(){
-  const [o,c,p,g]=await Promise.all([
-    fetch('/api/orders').then(r=>r.json()),
+  // 第一优先：订单数据（商家最关心），先渲染，不等设置/产品/图库
+  // 仅首次打开显示 loading 提示；后续刷新（自动轮询/操作后）静默更新，避免页面闪烁
+  if(firstLoad){ setLoading(true); }
+  try{
+    const o=await fetch('/api/orders').then(r=>r.json());
+    ORDERS=o;
+  }catch(e){ toast('订单加载失败，请刷新重试'); }
+  firstLoad=false;
+  setLoading(false);
+  render();
+  // 其余数据并行加载，不阻塞订单显示
+  loadOthers();
+}
+async function loadOthers(){
+  const [c,p,g]=await Promise.all([
     fetch('/api/config').then(r=>r.json()),
     fetch('/api/products').then(r=>r.json()),
     fetch('/api/gallery').then(r=>r.json())
   ]);
-  ORDERS=o; CONFIG=c; PRODUCTS=p; GALLERY=g;
+  CONFIG=c; PRODUCTS=p; GALLERY=g;
   document.getElementById('sName').value=CONFIG.shopName||'';
   document.getElementById('sContact').value=CONFIG.contactName||'';
   document.getElementById('sAnn').value=CONFIG.announcement||'';
   document.getElementById('sBankName').value=CONFIG.bankName||'';
   document.getElementById('sBankAccount').value=CONFIG.bankAccount||'';
   document.getElementById('sBankHolder').value=CONFIG.bankHolder||'';
-  render();
   renderPM();
 }
 
@@ -374,7 +393,10 @@ async function confirmPaid(id){
   const msg=`请核对收款金额后再确认：\n\n姓名：${o.name}\n订单号：${o.id}\n\n商品明细：\n${items}\n\n本单合计：${money(o.total)}\n\n确认已收到该笔款项？`;
   if(!window.confirm(msg)) return;
   await fetch('/api/orders/'+id+'/confirm',{method:'POST'});
-  toast('已确认，转入待发货'); load();
+  toast('已确认收款，已转入待发货');
+  curTab='待发货';
+  await load();
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='待发货'));
 }
 function copyShip(id){
   const o=ORDERS.find(x=>x.id===id);
