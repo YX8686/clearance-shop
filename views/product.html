@@ -243,8 +243,8 @@ function set(){
     `).join('');
   }
 
-  // 详情页图
-  const details = Array.isArray(P.detailImages) ? P.detailImages.filter(u=>String(u).startsWith('/')) : [];
+  // 详情页图（支持本地路径 /xxx 与完整 http(s):// 外链）
+  const details = Array.isArray(P.detailImages) ? P.detailImages.filter(u=>String(u).trim()!=='') : [];
   if(details.length){
     const box=document.getElementById('detailBox'); box.style.display='block';
     document.getElementById('detailList').innerHTML = details.map(u=>`<img src="${u}" alt="详情图" loading="lazy" decoding="async">`).join('');

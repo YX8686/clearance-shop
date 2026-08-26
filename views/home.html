@@ -317,10 +317,18 @@ function updateBadge(){ const n=cartCount(); const b=$('#badge'); if(n>0){b.styl
 function getCartInfo(key){
   const [pid, skuId] = key.split('#');
   const p = PRODUCTS.find(x=>x.id===pid) || {name:'已下架商品'};
-  if(!skuId) return {p, skuId:'', name:p.name, price:p?p.price:0, image:p?p.image||p.images&&p.images[0]:''};
+  if(!skuId){
+    const image = p?p.image||p.images&&p.images[0]:'';
+    return {p, skuId:'', name:p.name, price:p?p.price:0, image, bundleItems:p.bundleItems||[]};
+  }
   const sku = (p.skus||[]).find(s=>String(s.id)===skuId);
-  if(!sku) return {p, skuId, name:p.name, price:p?p.price:0, image:p?p.image||p.images&&p.images[0]:''};
-  return {p, skuId, name: p.name+' · '+sku.name, price: Number(sku.price||p.price||0), image: sku.image||p.image||''};
+  if(!sku){
+    const image = p?p.image||p.images&&p.images[0]:'';
+    return {p, skuId, name:p.name, price:p?p.price:0, image, bundleItems:p.bundleItems||[]};
+  }
+  const image = sku.image||p.image||'';
+  const bundleItems = (sku.bundleItems&&sku.bundleItems.length)?sku.bundleItems:(p.bundleItems||[]);
+  return {p, skuId, name: p.name+' · '+sku.name, price: Number(sku.price||p.price||0), image, bundleItems};
 }
 
 // SKU 选择弹窗
@@ -397,10 +405,17 @@ function renderCart(){
   else {
     ids.forEach(id=>{
       const info=getCartInfo(id); if(!info.p || info.name==='已下架商品') return;
+      // 有 SKU 时直接显示发货明细，不显示产品标题
+      let titleHtml = '';
+      if(info.skuId && info.bundleItems && info.bundleItems.length){
+        titleHtml = info.bundleItems.map(b=>`<div>${b.name} <span style="color:#b8743f">${b.qty}${b.unit||'件'}</span></div>`).join('');
+      } else {
+        titleHtml = `<div>${info.name}</div>`;
+      }
       const row=document.createElement('div'); row.className='item';
       row.innerHTML=`
         <img src="${info.image||'/assets/product-placeholder.svg'}" loading="lazy" decoding="async">
-        <div class="info"><div class="n">${info.name}</div><div class="p">${money(info.price)}</div></div>
+        <div class="info"><div class="n" style="line-height:1.6">${titleHtml}</div><div class="p">${money(info.price)}</div></div>
         <div class="stepper"><button onclick="changeQty('${id}',-1)">−</button><span>${cart[id]}</span><button onclick="changeQty('${id}',1)">+</button></div>`;
       box.appendChild(row);
     });
