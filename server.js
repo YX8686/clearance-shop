@@ -211,6 +211,17 @@ function saveOrders(){ return withLock(()=> saveKV('orders', orders)); }
 function saveConfig(){ return withLock(()=> saveKV('config', config)); }
 function saveProducts(){ return withLock(()=> saveKV('products', products)); }
 
+// 产品读取：云端模式下每次从 Supabase 取最新，防止 Render 实例内存与本地后台不同步
+// 读失败时不抛错（避免商城一片空白），降级使用内存副本
+async function getProducts(){
+  if(!USE_SUPABASE) return products;
+  try {
+    kvCache.delete('products'); // 强制实时读取，避免 3 秒缓存导致不同步
+    return await loadKV('products', products);
+  }
+  catch(e){ console.error('[getProducts] 读云端失败，使用内存副本：', e.message); return products; }
+}
+
 // 订单读取：云端模式下每次从 Supabase 取最新，防止 Render 实例内存与本地后台不同步
 // 读失败时不抛错（避免后台一片空白），降级使用内存副本；写入失败必须抛错（让前端能感知）。
 async function getOrders(){
@@ -301,7 +312,8 @@ const server = http.createServer(async (req, res)=>{
     if(pathname.startsWith('/api/')){
       // 商品 / 配置 / 订单列表（只读）
       if(method==='GET' && pathname==='/api/products'){
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(products)); return;
+        const list = await getProducts();
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(list)); return;
       }
       if(method==='GET' && pathname==='/api/config'){
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(config)); return;
@@ -541,14 +553,15 @@ const server = http.createServer(async (req, res)=>{
 
     // ===== 页面 =====
     if(method==='GET' && (pathname==='/' || pathname==='')){
-      const ogImage = config.shareImage || (products[0]&&products[0].image) || '/assets/share-square.jpg';
+      const list = await getProducts();
+      const ogImage = config.shareImage || (list[0]&&list[0].image) || '/assets/share-square.jpg';
       const html = renderTemplate('home.html', {
         SHOP_NAME: htmlEscape(config.shopName),
         OG_TITLE: htmlEscape(config.shopName),
         OG_DESC: htmlEscape(config.announcement || '不初限时狂欢商城 · 全场超低价回馈老客户'),
         OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
         OG_URL: htmlEscape(BASE + '/'),
-        PRODUCTS_JSON: jsonForScript(products),
+        PRODUCTS_JSON: jsonForScript(list),
         CONFIG_JSON: jsonForScript(config)
       });
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(html); return;
@@ -556,7 +569,8 @@ const server = http.createServer(async (req, res)=>{
 
     const mProd = pathname.match(/^\/product\/([\w-]+)$/);
     if(method==='GET' && mProd){
-      const p = products.find(p=>p.id===mProd[1]);
+      const list = await getProducts();
+      const p = list.find(p=>p.id===mProd[1]);
       if(!p){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
       const ogImage = inferShareImage(p) || config.shareImage || '/assets/share-square.jpg';
       const html = renderTemplate('product.html', {
@@ -566,7 +580,7 @@ const server = http.createServer(async (req, res)=>{
         OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
         OG_URL: htmlEscape(BASE + '/product/'+p.id),
         PRODUCT_JSON: jsonForScript(p),
-        PRODUCTS_JSON: jsonForScript(products),
+        PRODUCTS_JSON: jsonForScript(list),
         CONFIG_JSON: jsonForScript(config)
       });
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(html); return;
