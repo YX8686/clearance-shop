@@ -815,11 +815,14 @@ async function saveProduct(){
   const data=await res.json();
   if(res.ok && data.ok){
     const savedDesc = (data.product && data.product.desc) || '';
-    if(descBefore.length>0 && savedDesc.length < descBefore.length*0.9){
-      toast('⚠️ 保存后文案疑似被截断（提交'+descBefore.length+'字符，保存'+savedDesc.length+'字符），请减少内容或联系技术支持');
+    const stripTags = (s)=>String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').trim();
+    const beforeText = stripTags(descBefore);
+    const savedText = stripTags(savedDesc);
+    if(beforeText.length>0 && savedText.length < beforeText.length*0.95){
+      toast('⚠️ 保存后文字内容疑似缺失（提交 '+beforeText.length+' 字，保存 '+savedText.length+' 字），请检查 Word 中是否有文本框/艺术字等非常规内容，或联系技术支持');
       return;
     }
-    toast('产品已保存（已存 '+ (savedDesc.replace(/<[^>]+>/g,'').length) +' 字内容）'); closeProdModal(); load();
+    toast('产品已保存（共 '+ savedText.length +' 字）'); closeProdModal(); load();
   }
   else toast('保存失败' + (data.message?('：'+data.message):''));
 }
