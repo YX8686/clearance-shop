@@ -802,8 +802,13 @@ const server = http.createServer(async (req, res)=>{
             image: String(s.image||'').trim().slice(0,300),
             bundleItems: skuBundle(s.bundleItems)
           })).filter(s=>s.name):[]):(existing.skus||[]),
+          // 有 SKU 时，主价格/库存自动以 SKU 最低价和总库存为准，避免列表与 SKU 不同步
           updatedAt: Date.now()
         };
+        if(item.skus && item.skus.length){
+          item.price = Math.min(...item.skus.map(s=>Number(s.price)||0));
+          item.stock = item.skus.reduce((sum,s)=>sum+(Number(s.stock)||0),0);
+        }
         if(isNew){ item.createdAt=item.updatedAt; products.push(item); }
         else { const idx=products.findIndex(x=>x.id===id); item.createdAt=products[idx].createdAt||item.updatedAt; products[idx]=item; }
         await saveProducts();

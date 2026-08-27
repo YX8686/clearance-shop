@@ -852,45 +852,54 @@ function collectSkus(){
 }
 
 async function saveProduct(){
-  flushSkuBundleTextareas(); // 先强制收集当前 textarea 内容，避免 onchange 未触发
-  const hasSku = editingSkus.length > 0;
-  const validSkus = collectSkus();
-  let price = document.getElementById('pPrice').value;
-  let stock = document.getElementById('pStock').value;
-  if(hasSku && validSkus.length){
-    price = Math.min(...validSkus.map(s=>Number(s.price)||0));
-    stock = validSkus.reduce((sum,s)=>sum+(Number(s.stock)||0),0);
-  }
-  const descBefore = document.getElementById('pDesc').innerHTML;
-  const body={
-    id: editingProdId,
-    name: document.getElementById('pName').value,
-    subtitle: document.getElementById('pSubtitle').value,
-    price: price,
-    originalPrice: document.getElementById('pOriginal').value,
-    stock: stock,
-    category: document.getElementById('pCategory').value,
-    desc: descBefore,
-    bundleItems: parseBundleText(document.getElementById('pBundle').value),
-    skus: collectSkus(),
-    image: document.getElementById('pMainImg').value,
-    detailImages: selectedGalUrls
-  };
-  const res=await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const data=await res.json();
-  if(res.ok && data.ok){
-    const savedDesc = (data.product && data.product.desc) || '';
-    const stripTags = (s)=>String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').trim();
-    const beforeText = stripTags(descBefore);
-    const savedText = stripTags(savedDesc);
-    if(beforeText.length>0 && savedText.length < beforeText.length*0.95){
-      toast('⚠️ 保存后文字比提交时少 '+(beforeText.length-savedText.length)+' 字，可能是 Word 文本框/艺术字未识别，已保存，请到买家端检查');
-    } else {
-      toast('产品已保存（共 '+ savedText.length +' 字）');
+  const btn = document.querySelector('#prodModal button.ok');
+  if(btn){ btn.disabled=true; btn.dataset.oldText=btn.textContent; btn.textContent='保存中…'; }
+  try{
+    flushSkuBundleTextareas(); // 先强制收集当前 textarea 内容，避免 onchange 未触发
+    const hasSku = editingSkus.length > 0;
+    const validSkus = collectSkus();
+    let price = document.getElementById('pPrice').value;
+    let stock = document.getElementById('pStock').value;
+    if(hasSku && validSkus.length){
+      price = Math.min(...validSkus.map(s=>Number(s.price)||0));
+      stock = validSkus.reduce((sum,s)=>sum+(Number(s.stock)||0),0);
     }
-    closeProdModal(); load();
+    const descBefore = document.getElementById('pDesc').innerHTML;
+    const body={
+      id: editingProdId,
+      name: document.getElementById('pName').value,
+      subtitle: document.getElementById('pSubtitle').value,
+      price: price,
+      originalPrice: document.getElementById('pOriginal').value,
+      stock: stock,
+      category: document.getElementById('pCategory').value,
+      desc: descBefore,
+      bundleItems: parseBundleText(document.getElementById('pBundle').value),
+      skus: collectSkus(),
+      image: document.getElementById('pMainImg').value,
+      detailImages: selectedGalUrls
+    };
+    const res=await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const data=await res.json();
+    if(res.ok && data.ok){
+      const savedDesc = (data.product && data.product.desc) || '';
+      const stripTags = (s)=>String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').trim();
+      const beforeText = stripTags(descBefore);
+      const savedText = stripTags(savedDesc);
+      if(beforeText.length>0 && savedText.length < beforeText.length*0.95){
+        toast('⚠️ 保存后文字比提交时少 '+(beforeText.length-savedText.length)+' 字，可能是 Word 文本框/艺术字未识别，已保存，请到买家端检查');
+      } else {
+        toast('产品已保存（共 '+ savedText.length +' 字）');
+      }
+      closeProdModal(); load();
+    }
+    else toast('保存失败' + (data.message?('：'+data.message):''));
+  }catch(e){
+    console.error('saveProduct error', e);
+    toast('保存出错：'+e.message);
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent=btn.dataset.oldText||'保存产品'; }
   }
-  else toast('保存失败' + (data.message?('：'+data.message):''));
 }
 async function deleteProduct(id){
   if(!window.confirm('确定删除这个产品？删除后前台不再显示。')) return;
