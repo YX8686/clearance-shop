@@ -769,6 +769,16 @@ function cleanWordStyles(){
     }
   };
   cleanNode(t);
+  // 关键：清理文本节点里的换行符。Word 粘贴后，</p> 与 <p> 之间常残留 \n\n，
+  // 而 #pDesc 有 white-space:pre-wrap，这些换行会被渲染成大段空白。
+  const tw=document.createTreeWalker(t, NodeFilter.SHOW_TEXT, null, false);
+  const textNodes=[];
+  while(tw.nextNode()) textNodes.push(tw.currentNode);
+  textNodes.forEach(n=>{
+    if(n.parentNode && (n.parentNode.tagName==='PRE' || n.parentNode.tagName==='CODE')) return;
+    n.textContent = n.textContent.replace(/[\r\n]+/g,' ').replace(/  +/g,' ').trim();
+  });
+  textNodes.forEach(n=>{ if(!n.textContent.trim()) n.remove(); });
   // 再扫一次，去掉残留的空段落/空 div/空 span
   let changed=true;
   while(changed){
