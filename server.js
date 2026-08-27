@@ -707,22 +707,24 @@ const server = http.createServer(async (req, res)=>{
         s = s.replace(/\son\w+\s*=\s*[^\s>]+/gi,'');
         s = s.replace(/(href|src)\s*=\s*("|')\s*(javascript|vbscript|data):/gi,'$1=$2#');
         const allowed=new Set(['P','BR','DIV','SPAN','B','STRONG','I','EM','U','UL','OL','LI','H1','H2','H3','H4','H5','H6','A','IMG','TABLE','TBODY','THEAD','TR','TD','TH','HR','SUB','SUP','SMALL','BIG','MARK','SECTION','ARTICLE','BLOCKQUOTE','PRE','CODE','FONT','FIGURE','FIGCAPTION','DL','DT','DD','CENTER','STRIKE','DEL','INS']);
-        s = s.replace(/<\/?\s*([a-zA-Z0-9]+)\b([^>]*)>/g, (m,tag,attrs)=>{
+        s = s.replace(/(<\/?)\s*([a-zA-Z0-9]+)\b([^>]*)>/g, (m,slash,tag,attrs)=>{
           const t=tag.toUpperCase();
           if(!allowed.has(t)) return '';
           if(t==='IMG'){
+            if(slash==='</') return '';
             const src=(attrs.match(/src\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
             if(!/^https?:\/\/|^data:image\//i.test(src)) return '';
             return '<img src="'+src.replace(/"/g,'')+'" alt="">';
           }
           if(t==='A'){
+            if(slash==='</') return '</a>';
             const href=(attrs.match(/href\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
-            if(/^\s*(javascript|vbscript):/i.test(href)) return '';
-            return '<a href="'+href.replace(/"/g,'')+'" target="_blank" rel="noopener noreferrer">';
+            const safeHref=/^\s*(javascript|vbscript):/i.test(href)?'#':href.replace(/"/g,'');
+            return '<a href="'+safeHref+'" target="_blank" rel="noopener noreferrer">';
           }
           const style=(attrs.match(/style\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
           const safeStyle=style.replace(/url\s*\(/gi,'').replace(/expression\s*\(/gi,'').replace(/javascript:/gi,'');
-          return '<'+tag.toLowerCase()+(safeStyle?' style="'+safeStyle.replace(/"/g,'')+'"':'')+'>';
+          return slash + tag.toLowerCase() + (safeStyle?' style="'+safeStyle.replace(/"/g,'')+'"':'') + '>';
         });
         return s;
       }
