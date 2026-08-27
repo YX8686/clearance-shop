@@ -193,8 +193,13 @@
         </div>
       </div>
       <div class="form-row">
-        <label>产品描述</label>
-        <textarea id="pDesc" placeholder="简短描述，会显示在产品卡片下方"></textarea>
+        <label>产品描述（买家看到的完整商品说明，可粘贴大段文案）</label>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 6px">
+          <span style="font-size:12px;color:#9a8f82">此处内容会完整展示在买家商品详情页「商品说明」里</span>
+          <button type="button" onclick="clearDesc()" style="border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer">清空</button>
+        </div>
+        <textarea id="pDesc" rows="10" placeholder="在此粘贴完整商品文案（可大段文字，买家端会完整显示，上限 10000 字）" oninput="updateDescCount()"></textarea>
+        <div style="font-size:12px;color:#b8743f;margin-top:4px">已输入 <span id="descCount">0</span> 字（上限 10000）</div>
       </div>
       <div class="form-row" id="pBundleRow">
         <label>该价格链接包含的产品明细（用于发货清单，无SKU时生效）</label>
@@ -656,6 +661,9 @@ function openProdModal(p){
   document.getElementById('pStock').value=p.stock||'';
   document.getElementById('pCategory').value=p.category||'';
   document.getElementById('pDesc').value=p.desc||'';
+  updateDescCount();
+  // 打开编辑时自动全选旧文案：用户一粘贴即整段替换，避免新旧混存导致只存了旧 500 字
+  setTimeout(()=>{ const t=document.getElementById('pDesc'); try{ t.focus(); t.select(); }catch(e){} }, 80);
   document.getElementById('pBundle').value=(p.bundleItems||[]).map(b=>`${b.name} ${b.qty} ${b.unit}`).join('\n');
   editingSkus = (p.skus||[]).map(s=>({
     id: s.id||generateSkuId(),
@@ -719,6 +727,8 @@ function renderSkuList(){
   `).join('');
 }
 function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function clearDesc(){ const t=document.getElementById('pDesc'); t.value=''; updateDescCount(); try{ t.focus(); }catch(e){} }
+function updateDescCount(){ const t=document.getElementById('pDesc'); const c=document.getElementById('descCount'); if(c) c.textContent=(t.value||'').length; }
 function addSkuRow(){ editingSkus.push({id:generateSkuId(),name:'',price:'',stock:'',bundleItems:[]}); renderSkuList(); }
 function removeSkuRow(idx){ editingSkus.splice(idx,1); renderSkuList(); }
 function updateSku(idx, field, value){

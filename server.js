@@ -718,7 +718,7 @@ const server = http.createServer(async (req, res)=>{
           stock: Math.max(0, Number(p.stock)||0),
           forceSoldOut: !!p.forceSoldOut, // 商家后台「强制售罄」开关：true 则前台永远显示已售罄、无法加购/下单
           category: String(p.category||'').trim().slice(0,50),
-          desc: String(p.desc||'').trim().slice(0,2000),
+          desc: String(p.desc||'').trim().slice(0,10000),
           image: String(p.image||'/assets/products/default.svg').trim(),
           detailImages: Array.isArray(p.detailImages) ? p.detailImages.filter(u=>String(u).startsWith('/')||/^https?:/.test(u)).slice(0,20) : [],
           folder: String(p.folder||'').trim(),
@@ -790,14 +790,14 @@ const server = http.createServer(async (req, res)=>{
       });
       html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
       setCachedHtml('home', html);
-      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':html); return;
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;
     }
 
     const mProd = pathname.match(/^\/product\/([\w-]+)$/);
     if((method==='GET'||method==='HEAD') && mProd){
       const pkey = 'product:'+mProd[1];
       const cached = getCachedHtml(pkey);
-      if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':cached); return; }
+      if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':cached); return; }
       const list = await getProducts();
       const p = list.find(p=>p.id===mProd[1]);
       if(!p){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
@@ -815,7 +815,7 @@ const server = http.createServer(async (req, res)=>{
       });
       html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
       setCachedHtml(pkey, html);
-      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':html); return;
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;
     }
 
     const mOrder = pathname.match(/^\/order\/([\w-]+)$/);
