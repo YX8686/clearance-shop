@@ -175,7 +175,7 @@ const DEFAULT_CONFIG = {
   bankAccount: '',
   bankHolder: '',
   announcement: '',
-  shareImage: '/assets/share-square.jpg'
+  shareImage: ''
 };
 
 let products = [];
@@ -271,7 +271,7 @@ function htmlEscape(s){ return String(s==null?'':s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function jsonForScript(obj){ return JSON.stringify(obj).replace(/</g,'\\u003c'); }
 function absUrl(src, base){
-  if(!src) return base + '/assets/share-square.jpg';
+  if(!src) return '';
   const s = String(src);
   if(/^https?:\/\//i.test(s)) return s;
   if(s.startsWith('//')) return 'https:' + s;
@@ -280,8 +280,19 @@ function absUrl(src, base){
 function inferShareImage(p){
   if(p.shareImage) return p.shareImage;
   const img = p.image || '';
-  if(/\.svg$/i.test(img)) return img.replace(/\.svg$/i, '-share.jpg');
+  if(!img) return '';
+  if(/\.svg$/i.test(img)) return ''; // svg 在聊天客户端常抓不到，留空更安全
   return img;
+}
+// 店铺分享图选择：config.shareImage 优先 https -> 第一个产品 HTTPS 公网图 -> 空
+function pickShopShareImage(list){
+  const cfg = (config.shareImage||'').toString().trim();
+  if(/^https:\/\//i.test(cfg)) return cfg;
+  for(const p of list||[]){
+    const url = (p.image || p.cover || '').toString().trim();
+    if(/^https:\/\//i.test(url)) return url;
+  }
+  return '';
 }
 function genId(){
   let id;
@@ -667,8 +678,8 @@ const server = http.createServer(async (req, res)=>{
     // ===== 页面 =====
     if(method==='GET' && (pathname==='/' || pathname==='')){
       const list = await getProducts();
-      const ogImage = config.shareImage || (list[0]&&list[0].image) || '/assets/share-square.jpg';
-      const html = renderTemplate('home.html', {
+      const ogImage = pickShopShareImage(list);
+      let html = renderTemplate('home.html', {
         SHOP_NAME: htmlEscape(config.shopName),
         OG_TITLE: htmlEscape(config.shopName),
         OG_DESC: htmlEscape(config.announcement || '不初限时狂欢商城 · 全场超低价回馈老客户'),
@@ -677,6 +688,7 @@ const server = http.createServer(async (req, res)=>{
         PRODUCTS_JSON: jsonForScript(list),
         CONFIG_JSON: jsonForScript(config)
       });
+      html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(html); return;
     }
 
@@ -685,17 +697,19 @@ const server = http.createServer(async (req, res)=>{
       const list = await getProducts();
       const p = list.find(p=>p.id===mProd[1]);
       if(!p){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
-      const ogImage = inferShareImage(p) || config.shareImage || '/assets/share-square.jpg';
-      const html = renderTemplate('product.html', {
+      const ogImage = inferShareImage(p) || pickShopShareImage(list);
+      let html = renderTemplate('product.html', {
         SHOP_NAME: htmlEscape(config.shopName),
         OG_TITLE: htmlEscape(p.name),
         OG_DESC: htmlEscape(p.desc || config.shopName),
         OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
         OG_URL: htmlEscape(BASE + '/product/'+p.id),
+        OG_PRICE: htmlEscape(p.price || ''),
         PRODUCT_JSON: jsonForScript(p),
         PRODUCTS_JSON: jsonForScript(list),
         CONFIG_JSON: jsonForScript(config)
       });
+      html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(html); return;
     }
 
