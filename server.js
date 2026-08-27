@@ -718,7 +718,7 @@ const server = http.createServer(async (req, res)=>{
           stock: Math.max(0, Number(p.stock)||0),
           forceSoldOut: !!p.forceSoldOut, // 商家后台「强制售罄」开关：true 则前台永远显示已售罄、无法加购/下单
           category: String(p.category||'').trim().slice(0,50),
-          desc: String(p.desc||'').trim().slice(0,500),
+          desc: String(p.desc||'').trim().slice(0,2000),
           image: String(p.image||'/assets/products/default.svg').trim(),
           detailImages: Array.isArray(p.detailImages) ? p.detailImages.filter(u=>String(u).startsWith('/')||/^https?:/.test(u)).slice(0,20) : [],
           folder: String(p.folder||'').trim(),
