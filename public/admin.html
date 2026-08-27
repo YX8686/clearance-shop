@@ -206,6 +206,7 @@
           <label style="margin:0;cursor:pointer;font-size:12px;color:#7a5230;border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 10px">
             <input type="file" id="descDocx" accept=".docx,.txt,.md" style="display:none" onchange="importWordDoc(this)">📄 导入Word/文本
           </label>
+          <button type="button" onclick="cleanWordStyles()" title="清除 Word 复制带来的 mso 样式、空 span、空段落，保留加粗/列表" style="border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer">🧹 清格式</button>
           <button type="button" onclick="clearDesc()" style="border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer">清空</button>
         </div>
         <div id="pDesc" contenteditable="true" style="min-height:200px;max-height:420px;overflow:auto;border:1px solid #ddd;border-radius:6px;padding:10px;font-size:14px;line-height:1.7;background:#fff;white-space:pre-wrap;word-break:break-word"></div>
@@ -740,6 +741,45 @@ function renderSkuList(){
 function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function stripTags(s){ return String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').trim(); }
 function clearDesc(){ const t=document.getElementById('pDesc'); t.innerHTML=''; updateDescCount(); try{ t.focus(); }catch(e){} }
+function cleanWordStyles(){
+  const t=document.getElementById('pDesc'); if(!t) return;
+  const allowed=new Set(['P','BR','STRONG','B','I','EM','U','UL','OL','LI','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','HR']);
+  const cleanNode=(node)=>{
+    let i=node.childNodes.length;
+    while(i--){
+      const c=node.childNodes[i];
+      if(c.nodeType===3) continue; // 保留文本节点
+      if(c.nodeType===8){ c.remove(); continue; } // 移除注释
+      if(c.nodeType!==1){ c.remove(); continue; } // 移除其他非元素
+      const tag=c.tagName.toUpperCase();
+      if(!allowed.has(tag)){
+        // 不在白名单的标签：拆包保留文本/子元素
+        while(c.firstChild) node.insertBefore(c.firstChild, c);
+        c.remove(); continue;
+      }
+      // 在白名单内：清理 Word 带来的属性
+      for(let a=c.attributes.length-1;a>=0;a--){
+        const n=c.attributes[a].name.toLowerCase();
+        if(n==='style'||n==='class'||n.startsWith('data-')||n.startsWith('on')||n.startsWith('xmlns')||n.startsWith('xml:')||n==='id'||n==='lang'||n==='dir'||n==='role'||n==='face'||n==='size'||n==='color'){
+          c.removeAttribute(c.attributes[a].name);
+        }
+      }
+      cleanNode(c);
+      if(!c.textContent.trim() && !c.querySelector('img,br')) c.remove();
+    }
+  };
+  cleanNode(t);
+  // 再扫一次，去掉残留的空段落/空 div/空 span
+  let changed=true;
+  while(changed){
+    changed=false;
+    Array.from(t.children).forEach(el=>{
+      if(!el.textContent.trim() && !el.querySelector('img,br')){ el.remove(); changed=true; }
+    });
+  }
+  updateDescCount();
+  toast('已清除 Word 格式，段间距已恢复（列表符号请用上方「项目」按钮重新点）');
+}
 function updateDescCount(){ const t=document.getElementById('pDesc'); const c=document.getElementById('descCount'); if(c) c.textContent=((t.innerText||t.textContent||'').length); }
 function execCmd(cmd){ const t=document.getElementById('pDesc'); t.focus(); try{ document.execCommand(cmd,false,null); }catch(e){} updateDescCount(); }
 function importWordDoc(input){
