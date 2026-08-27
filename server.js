@@ -226,8 +226,8 @@ if(!USE_SUPABASE){
 }
 
 function saveOrders(){ return withLock(()=> saveKV('orders', orders)); }
-function saveConfig(){ return withLock(()=> saveKV('config', config)); }
-function saveProducts(){ return withLock(()=> saveKV('products', products)); }
+function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config)); }
+function saveProducts(){ clearHtmlCache(); return withLock(()=> saveKV('products', products)); }
 
 // 产品读取：云端模式下每次从 Supabase 取最新，防止 Render 实例内存与本地后台不同步
 // 读失败时不抛错（避免商城一片空白），降级使用内存副本
@@ -330,6 +330,21 @@ function renderTemplate(name, vars){
   const tpl = fs.readFileSync(path.join(VIEWS, name), 'utf8');
   return tpl.replace(/\{\{(\w+)\}\}/g, (m, k)=> (vars[k]!==undefined ? vars[k] : m));
 }
+
+// ---------- 页面渲染缓存 ----------
+// 让微信/QQ/TIM 等爬虫与真实用户秒开页面：避免「冷启动 + 每次打云端 Supabase」导致首页十几秒、
+// 微信爬虫超时直接退化为纯文字链接、抓不到 OG 大图卡片。
+// 后台改完产品/配置会主动清缓存（见 saveProducts/saveConfig），兼顾新鲜度与速度。
+const htmlCache = new Map(); // key -> { html, ts }
+const HTML_CACHE_TTL = 30000; // 30 秒
+function getCachedHtml(key){
+  const c = htmlCache.get(key);
+  if(c && Date.now() - c.ts < HTML_CACHE_TTL) return c.html;
+  if(c) htmlCache.delete(key);
+  return null;
+}
+function setCachedHtml(key, html){ htmlCache.set(key, { html, ts: Date.now() }); }
+function clearHtmlCache(){ htmlCache.clear(); }
 
 // ---------- 路由 ----------
 const server = http.createServer(async (req, res)=>{
@@ -677,6 +692,8 @@ const server = http.createServer(async (req, res)=>{
 
     // ===== 页面 =====
     if(method==='GET' && (pathname==='/' || pathname==='')){
+      const cached = getCachedHtml('home');
+      if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(cached); return; }
       const list = await getProducts();
       const ogImage = pickShopShareImage(list);
       let html = renderTemplate('home.html', {
@@ -689,11 +706,15 @@ const server = http.createServer(async (req, res)=>{
         CONFIG_JSON: jsonForScript(config)
       });
       html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
+      setCachedHtml('home', html);
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(html); return;
     }
 
     const mProd = pathname.match(/^\/product\/([\w-]+)$/);
     if(method==='GET' && mProd){
+      const pkey = 'product:'+mProd[1];
+      const cached = getCachedHtml(pkey);
+      if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(cached); return; }
       const list = await getProducts();
       const p = list.find(p=>p.id===mProd[1]);
       if(!p){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
@@ -710,6 +731,7 @@ const server = http.createServer(async (req, res)=>{
         CONFIG_JSON: jsonForScript(config)
       });
       html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
+      setCachedHtml(pkey, html);
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(html); return;
     }
 
