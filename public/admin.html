@@ -50,9 +50,11 @@
   .pm-card .name{font-size:14px;font-weight:700;margin-top:8px;color:#3a322b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pm-card .price{font-size:13px;color:#c0392b;margin-top:2px}
   .pm-card .sub{font-size:12px;color:#9a8f82;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .pm-card .pm-acts{display:flex;gap:6px;margin-top:8px}
-  .pm-card .pm-acts button{flex:1;border:none;border-radius:6px;padding:6px 0;font-size:12px;cursor:pointer}
+  .pm-card .pm-acts{display:flex;gap:6px;margin-top:8px;justify-content:flex-start}
+  .pm-card .pm-acts button{flex:none;border:none;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;line-height:1.4;min-width:48px}
   .pm-card .pm-acts .edit{background:#b8743f;color:#fff}
+  .pm-card .pm-acts .sold{background:#fff;color:#b8743f;border:1px solid #b8743f}
+  .pm-card .pm-acts .sold.on{background:#b8743f;color:#fff}
   .pm-card .pm-acts .del{background:#f4f1ec;color:#7a6f62}
   .btn-primary{border:none;background:#b8743f;color:#fff;border-radius:8px;padding:10px 16px;font-size:14px;cursor:pointer;font-weight:600}
 
@@ -133,6 +135,23 @@
       <div id="pmWrap"></div>
     </details>
 
+    <div class="card" style="padding:12px 14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:14px;font-weight:700;color:#3a322b">💰 销售统计</div>
+        <button class="btn-primary" style="padding:6px 12px;font-size:12px" onclick="clearSalesCache()">清除金额</button>
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div style="flex:1;min-width:140px;background:#faf7f2;border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:12px;color:#9a8f82">今日销售</div>
+          <div id="saleToday" style="font-size:18px;font-weight:700;color:#b8743f;margin-top:4px">¥0</div>
+        </div>
+        <div style="flex:1;min-width:140px;background:#faf7f2;border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:12px;color:#9a8f82">近7天销售</div>
+          <div id="sale7days" style="font-size:18px;font-weight:700;color:#b8743f;margin-top:4px">¥0</div>
+        </div>
+      </div>
+    </div>
+
     <div class="tabs">
       <button class="on" data-s="待确认" onclick="switchTab(this)">待处理 <span id="cWait">0</span></button>
       <button data-s="待发货" onclick="switchTab(this)">待发货 <span id="cShip">0</span></button>
@@ -172,9 +191,6 @@
             <option value="高功效私人定制">高功效私人定制</option>
           </select>
         </div>
-        <div style="flex:1"><label>所属文件夹</label>
-          <select id="pFolder"><option value="">不指定</option></select>
-        </div>
       </div>
       <div class="form-row">
         <label>产品描述</label>
@@ -183,14 +199,6 @@
       <div class="form-row" id="pBundleRow">
         <label>该价格链接包含的产品明细（用于发货清单，无SKU时生效）</label>
         <textarea id="pBundle" rows="4" placeholder="每行填写一个产品，格式：产品名 数量 单位&#10;例如：&#10;线雕面膜 5 盒&#10;液 10 瓶&#10;&#10;如果该链接就是单件直发，此处留空即可。&#10;&#10;注：若下方添加了 SKU/活动选项，此处可留空，由每个 SKU 单独填写发货明细。"></textarea>
-      </div>
-      <!-- SKU / 活动选项 -->
-      <div class="form-row" style="background:#fff7ec;border:1px dashed #b8743f;border-radius:8px;padding:10px 12px">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="checkbox" id="pForceSoldOut" style="width:18px;height:18px;accent-color:#b8743f">
-          <span>🚫 强制显示售罄（即使有库存也不让下单）</span>
-        </label>
-        <div style="font-size:12px;color:#9a8f82;margin-top:6px">开启后前台永远显示「已售罄」，客户无法加购。补货时关闭即可恢复上架。也可在下方产品列表卡片上一键切换。</div>
       </div>
       <div class="form-row">
         <label>SKU / 活动选项（买家可选不同规格）</label>
@@ -312,7 +320,29 @@ function fmtTime(ts){
   const p=n=>String(n).padStart(2,'0');
   return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());
 }
+function startOfDay(offsetDays=0){
+  const d=new Date();
+  d.setHours(0,0,0,0);
+  d.setDate(d.getDate()+offsetDays);
+  return d.getTime();
+}
+function renderSalesSummary(){
+  const todayStart=startOfDay(0);
+  const days7Start=startOfDay(-6);
+  // 统计已成交订单：待确认、待发货、已发货均视为已付款成交；不包含待付款/已取消
+  const paidOrders=ORDERS.filter(o=>o.status!=='待付款' && o.status!=='已取消');
+  const todayTotal=paidOrders.filter(o=>o.createdAt>=todayStart).reduce((s,o)=>s+(Number(o.total)||0),0);
+  const days7Total=paidOrders.filter(o=>o.createdAt>=days7Start).reduce((s,o)=>s+(Number(o.total)||0),0);
+  const t=document.getElementById('saleToday'); if(t) t.textContent=money(todayTotal);
+  const s7=document.getElementById('sale7days'); if(s7) s7.textContent=money(days7Total);
+}
+function clearSalesCache(){
+  // 仅重置前端统计展示，不会删除或修改任何订单数据
+  renderSalesSummary();
+  toast('金额统计已刷新');
+}
 function render(){
+  renderSalesSummary();
   const waits=ORDERS.filter(o=>o.status==='待确认').length;
   const ships=ORDERS.filter(o=>o.status==='待发货').length;
   const dones=ORDERS.filter(o=>o.status==='已发货').length;
@@ -569,7 +599,7 @@ function renderPM(){
       <div class="sub">${p.subtitle||p.desc||'无副标题'}</div>
       <div class="pm-acts">
         <button class="edit" onclick="editProduct('${p.id}')">编辑</button>
-        <button onclick="toggleForceSoldOut('${p.id}')" style="background:${p.forceSoldOut?'#b8743f':'#fff'};color:${p.forceSoldOut?'#fff':'#b8743f'};border:1px solid #b8743f;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px" title="点一下手动切换是否强制显示售罄，不影响真实库存">${p.forceSoldOut?'🚫 强制售罄中（点我恢复）':'📦 正常销售（点我强制售罄）'}</button>
+        <button class="sold ${p.forceSoldOut?'on':''}" onclick="toggleForceSoldOut('${p.id}')">${p.forceSoldOut?'在售':'售罄'}</button>
         <button class="del" onclick="deleteProduct('${p.id}')">删除</button>
       </div>
     </div>
@@ -624,7 +654,6 @@ function openProdModal(p){
   document.getElementById('pPrice').value=p.price||'';
   document.getElementById('pOriginal').value=p.originalPrice||'';
   document.getElementById('pStock').value=p.stock||'';
-  document.getElementById('pForceSoldOut').checked=!!p.forceSoldOut;
   document.getElementById('pCategory').value=p.category||'';
   document.getElementById('pDesc').value=p.desc||'';
   document.getElementById('pBundle').value=(p.bundleItems||[]).map(b=>`${b.name} ${b.qty} ${b.unit}`).join('\n');
@@ -639,8 +668,6 @@ function openProdModal(p){
   document.getElementById('pMainImgPreview').src=p.image||'/assets/products/default.svg';
   renderDetailImgs(p.detailImages||[]);
   renderSkuList();
-  const sel=document.getElementById('pFolder'); sel.innerHTML='<option value="">不指定</option>';
-  GALLERY.forEach(f=>sel.innerHTML+=`<option value="${f.name}" ${f.name===p.folder?'selected':''}>${f.name}</option>`);
   document.getElementById('prodModal').classList.add('show');
 }
 function closeProdModal(){ document.getElementById('prodModal').classList.remove('show'); }
@@ -732,9 +759,7 @@ async function saveProduct(){
     bundleItems: parseBundleText(document.getElementById('pBundle').value),
     skus: collectSkus(),
     image: document.getElementById('pMainImg').value,
-    detailImages: selectedGalUrls,
-    folder: document.getElementById('pFolder').value,
-    forceSoldOut: document.getElementById('pForceSoldOut').checked
+    detailImages: selectedGalUrls
   };
   const res=await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const data=await res.json();
