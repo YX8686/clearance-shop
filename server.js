@@ -5,6 +5,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+let _sanitizeHtml;
+try { _sanitizeHtml = require('sanitize-html'); } catch(e){ _sanitizeHtml = null; }
 
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
@@ -698,15 +700,30 @@ const server = http.createServer(async (req, res)=>{
       }
 
       // 富文本描述安全过滤：白名单标签 + 移除脚本/事件属性/危险协议
+      const SANITIZE_ALLOWED_TAGS = ['p','br','div','span','b','strong','i','em','u','ul','ol','li','h1','h2','h3','h4','h5','h6','a','img','table','tbody','thead','tr','td','th','hr','sub','sup','small','big','mark','section','article','blockquote','pre','code','font','figure','figcaption','dl','dt','dd','center','strike','del','ins'];
       function sanitizeHtml(html){
         if(!html) return '';
-        let s=String(html);
+        if(_sanitizeHtml){
+          return _sanitizeHtml(String(html).trim(), {
+            allowedTags: SANITIZE_ALLOWED_TAGS,
+            allowedAttributes: {
+              '*': ['style'],
+              'a': ['href','target','rel'],
+              'img': ['src','alt']
+            },
+            allowedSchemes: ['http','https','data'],
+            allowedSchemesAppliedToAttributes: ['href','src'],
+            allowProtocolRelative: false
+          });
+        }
+        // 降级：库未安装时的自定义过滤（保留格式标签，文本优先保留）
+        let s=String(html).trim();
         s = s.replace(/<\s*(script|style|iframe|object|embed|link|meta|head|html|body|svg|math|form|input|button|textarea|select|option)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>|\s*<\s*(script|style|iframe|object|embed|link|meta|head|html|body|svg|math|form|input|button|textarea|select|option)\b[^>]*\/?>/gi,'');
         s = s.replace(/\son\w+\s*=\s*"[^"]*"/gi,'');
         s = s.replace(/\son\w+\s*=\s*'[^']*'/gi,'');
         s = s.replace(/\son\w+\s*=\s*[^\s>]+/gi,'');
         s = s.replace(/(href|src)\s*=\s*("|')\s*(javascript|vbscript|data):/gi,'$1=$2#');
-        const allowed=new Set(['P','BR','DIV','SPAN','B','STRONG','I','EM','U','UL','OL','LI','H1','H2','H3','H4','H5','H6','A','IMG','TABLE','TBODY','THEAD','TR','TD','TH','HR','SUB','SUP','SMALL','BIG','MARK','SECTION','ARTICLE','BLOCKQUOTE','PRE','CODE','FONT','FIGURE','FIGCAPTION','DL','DT','DD','CENTER','STRIKE','DEL','INS']);
+        const allowed=new Set(SANITIZE_ALLOWED_TAGS.map(t=>t.toUpperCase()));
         s = s.replace(/(<\/?)\s*([a-zA-Z0-9]+)\b([^>]*)>/g, (m,slash,tag,attrs)=>{
           const t=tag.toUpperCase();
           if(!allowed.has(t)) return '';
@@ -861,7 +878,13 @@ const server = http.createServer(async (req, res)=>{
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':html); return;
     }
 
-    if(method==='GET' && pathname==='/admin'){ sendFile(res, path.join(PUBLIC,'admin.html')); return; }
+    if(method==='GET' && pathname==='/admin'){
+      fs.readFile(path.join(PUBLIC,'admin.html'), (err, buf)=>{
+        if(err){ res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'}); res.end('Not found'); return; }
+        res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(buf);
+      });
+      return;
+    }
 
     if(method==='GET' && pathname==='/business_rules.js'){ sendFile(res, path.join(PUBLIC,'business_rules.js')); return; }
 

@@ -611,7 +611,7 @@ function renderPM(){
       <img class="img" src="${p.image||'/assets/products/default.svg'}" onerror="this.src='/assets/products/default.svg'">
       <div class="name">${p.name||'未命名'}</div>
       <div class="price">${money(p.price||0)} <span style="color:#bbb;text-decoration:line-through;font-size:12px">${p.originalPrice?money(p.originalPrice):''}</span></div>
-      <div class="sub">${p.subtitle||p.desc||'无副标题'}</div>
+      <div class="sub">${stripTags(p.subtitle||p.desc||'无副标题')}</div>
       <div class="pm-acts">
         <button class="edit" onclick="editProduct('${p.id}')">编辑</button>
         <button class="sold ${p.forceSoldOut?'on':''}" onclick="toggleForceSoldOut('${p.id}')">${p.forceSoldOut?'在售':'售罄'}</button>
@@ -738,6 +738,7 @@ function renderSkuList(){
   `).join('');
 }
 function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function stripTags(s){ return String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').trim(); }
 function clearDesc(){ const t=document.getElementById('pDesc'); t.innerHTML=''; updateDescCount(); try{ t.focus(); }catch(e){} }
 function updateDescCount(){ const t=document.getElementById('pDesc'); const c=document.getElementById('descCount'); if(c) c.textContent=((t.innerText||t.textContent||'').length); }
 function execCmd(cmd){ const t=document.getElementById('pDesc'); t.focus(); try{ document.execCommand(cmd,false,null); }catch(e){} updateDescCount(); }
@@ -819,10 +820,11 @@ async function saveProduct(){
     const beforeText = stripTags(descBefore);
     const savedText = stripTags(savedDesc);
     if(beforeText.length>0 && savedText.length < beforeText.length*0.95){
-      toast('⚠️ 保存后文字内容疑似缺失（提交 '+beforeText.length+' 字，保存 '+savedText.length+' 字），请检查 Word 中是否有文本框/艺术字等非常规内容，或联系技术支持');
-      return;
+      toast('⚠️ 保存后文字比提交时少 '+(beforeText.length-savedText.length)+' 字，可能是 Word 文本框/艺术字未识别，已保存，请到买家端检查');
+    } else {
+      toast('产品已保存（共 '+ savedText.length +' 字）');
     }
-    toast('产品已保存（共 '+ savedText.length +' 字）'); closeProdModal(); load();
+    closeProdModal(); load();
   }
   else toast('保存失败' + (data.message?('：'+data.message):''));
 }

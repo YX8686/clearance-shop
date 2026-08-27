@@ -286,6 +286,7 @@ try { cart = JSON.parse(localStorage.getItem('cart')||'{}'); } catch(e){ cart={}
 
 const $ = s=>document.querySelector(s);
 function money(n){ return '¥'+Number(n).toLocaleString('zh-CN'); }
+function stripTags(s){ return String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').trim(); }
 
 function copyText(text, msg){
   if(navigator.clipboard){
@@ -370,10 +371,11 @@ function renderGrid(){
       ${imgHtml}
       <div class="body">
         <div class="name" onclick="goProduct('${p.id}')">${p.name}</div>
-        <div class="desc">${p.desc||''}</div>
+        <div class="desc"></div>
         <div class="price">${priceLabel}<small> /件</small>${orig}</div>
         ${btnHtml}
       </div>`;
+    div.querySelector('.desc').textContent = stripTags(p.desc||'');
     g.appendChild(div);
   });
   if(!list.length) g.innerHTML='<p style="grid-column:1/-1;text-align:center;color:#bbb;padding:30px 0">'+(currentCat==='全部'?'暂未上架商品':'该分类下暂无商品')+'</p>';
