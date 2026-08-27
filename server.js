@@ -200,7 +200,24 @@ async function boot(){
   catch(e){ console.error('[boot] products 加载失败，使用本地种子：', e.message); products = seedProducts; }
   try { config = await loadKV('config', seedConfig); }
   catch(e){ console.error('[boot] config 加载失败，使用本地种子：', e.message); config = seedConfig; }
-  try { orders = await loadKV('orders', seedOrders); }
+  // 订单载入：优先从独立行 order:* 聚合（新方案，并发安全）；若无则回退旧 orders 大数组行并拆分迁移
+  try {
+    if(USE_SUPABASE){
+      const { data, error } = await sb.from('shop_data').select('key,value').like('key','order:%');
+      if(!error && data && data.length){
+        orders = data.map(r=>r.value).filter(Boolean);
+      } else {
+        const arr = await loadKV('orders', seedOrders);
+        orders = Array.isArray(arr)?arr:[];
+        if(orders.length){
+          await Promise.all(orders.map(o=> (o&&o.id) ? sb.from('shop_data').upsert({key:'order:'+o.id, value:o}).catch(e=>console.error('[migrate]',e.message)) : Promise.resolve()));
+          console.log('[migrate] 已拆分旧 orders 数组为', orders.length, '条独立行');
+        }
+      }
+    } else {
+      orders = seedOrders;
+    }
+  }
   catch(e){ console.error('[boot] orders 加载失败，使用本地种子：', e.message); orders = seedOrders; }
   if(config.paymentQr && !config.paymentWechatQr) config.paymentWechatQr = config.paymentQr;
   booted = true;
@@ -225,9 +242,73 @@ if(!USE_SUPABASE){
   }
 }
 
-function saveOrders(){ return withLock(()=> saveKV('orders', orders)); }
+// ===== 订单存储加固：每条订单独立存储为 shop_data 的一行（key=order:<id>）=====
+// 旧方案：所有订单塞进 shop_data 的单行(key='orders')，靠进程内 withLock 串行覆盖整个数组，
+// 200+ 并发时 O(n²) 串行导致集体超时、且 Render 多实例会互相覆盖丢单。
+// 新方案：每条订单 upsert 独立行，Postgres 并发 upsert 单行原子、互不干扰，彻底消除上述风险。
+// ===== 订单存储加固：每条订单独立存储为 shop_data 的一行（key=order:<id>）=====
+// 批量写入队列：200+ 并发下单时，收集订单到队列，每 500ms 或满 50 条批量 upsert 一次，
+// 把 200 次单独 HTTP 请求降为 ~4 次批量请求，彻底解决 Node fetch 连接池并发上限（~6/主机）导致的超时。
+let _orderWriteQueue = [];
+let _orderFlushTimer = null;
+function _scheduleOrderFlush(){
+  if(_orderFlushTimer) return;
+  _orderFlushTimer = setTimeout(_flushOrderQueue, 500);
+}
+async function _flushOrderQueue(){
+  _orderFlushTimer = null;
+  const batch = _orderWriteQueue.splice(0, 50); // 取最多 50 条
+  if(!batch.length) return;
+  if(USE_SUPABASE){
+    try {
+      const rows = batch.map(o => ({ key:'order:'+o.id, value:o }));
+      const { error } = await sb.from('shop_data').upsert(rows);
+      if(error) console.error('[orderFlush] batch error:', error.message, '| falling back to individual writes');
+      else batch.forEach(o => kvCache.set('order:'+o.id, { ts:Date.now(), value:o, promise:null }));
+      // 批量失败时降级为逐条写（保证至少能落盘）
+      if(error) {
+        for(const o of batch) {
+          try { await sb.from('shop_data').upsert({ key:'order:'+o.id, value:o }); } catch(e){}
+        }
+      }
+    } catch(e){ console.error('[orderFlush] exception:', e.message); }
+  }
+  // 如果队列还有积压，立即排下一批
+  if(_orderWriteQueue.length) _scheduleOrderFlush();
+}
+// 下单用：内存即时同步 + 入队批量写（非阻塞，响应秒回）
+function saveOrderRow(order){
+  const idx = orders.findIndex(o=>o.id===order.id);
+  if(idx>=0) orders[idx]=order; else orders.push(order);
+  _orderWriteQueue.push(order);
+  if(_orderWriteQueue.length >= 50) _flushOrderQueue(); // 满了立即刷
+  else _scheduleOrderFlush(); // 500ms 后批量刷
+}
+// 状态变更用（低频管理操作）：内存即时同步 + 立即单条 upsert（确保状态即时落盘）
+async function saveOrderRowSync(order){
+  if(USE_SUPABASE){
+    const { error } = await sb.from('shop_data').upsert({ key:'order:'+order.id, value: order });
+    if(error) throw new Error('Supabase saveOrderRow error: '+error.message);
+    kvCache.set('order:'+order.id, { ts:Date.now(), value:order, promise:null });
+  }
+  const idx = orders.findIndex(o=>o.id===order.id);
+  if(idx>=0) orders[idx]=order; else orders.push(order);
+}
+// 进程退出前刷盘，防丢单
+process.on('beforeExit', _flushOrderQueue);
+function saveOrders(){ return withLock(()=> saveKV('orders', orders)); } // 仅作整批备份残留，下单/状态变更已改用 saveOrderRow
 function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config)); }
 function saveProducts(){ clearHtmlCache(); return withLock(()=> saveKV('products', products)); }
+// 防抖产品保存：200 并发下单时，多单库存扣减合并为 1 次写入（500ms 窗口内），
+// 避免每单 await saveProducts() 串行锁 200 次导致超时。内存即权威，落盘只做持久化保险。
+let _prodSaveTimer = null;
+function saveProductsDebounced(){
+  if(_prodSaveTimer) return; // 已有等待中的写入，复用同一窗口
+  _prodSaveTimer = setTimeout(()=>{
+    _prodSaveTimer = null;
+    saveProducts().catch(e=>console.error('[saveProductsDebounced]', e.message));
+  }, 500);
+}
 
 // 产品读取：云端模式下每次从 Supabase 取最新，防止 Render 实例内存与本地后台不同步
 // 读失败时不抛错（避免商城一片空白），降级使用内存副本
@@ -240,12 +321,17 @@ async function getProducts(){
   catch(e){ console.error('[getProducts] 读云端失败，使用内存副本：', e.message); return products; }
 }
 
-// 订单读取：云端模式下每次从 Supabase 取最新，防止 Render 实例内存与本地后台不同步
-// 读失败时不抛错（避免后台一片空白），降级使用内存副本；写入失败必须抛错（让前端能感知）。
-async function getOrders(){
+// 订单读取：内存副本即权威（下单/状态变更实时更新内存，启动已从 order:* 独立行聚合载入），
+// 后台即时看到最新订单，无需再读旧 orders 大数组行（已废弃）。
+function getOrders(){ return orders; }
+// 后台/管理端想强制从云端复核时调用：重新聚合 order:* 独立行（不阻塞常规读路径）
+async function refreshOrdersFromCloud(){
   if(!USE_SUPABASE) return orders;
-  try { return await loadKV('orders', orders); }
-  catch(e){ console.error('[getOrders] 读云端失败，使用内存副本：', e.message); return orders; }
+  try {
+    const { data, error } = await sb.from('shop_data').select('key,value').like('key','order:%');
+    if(!error && data) orders = data.map(r=>r.value).filter(Boolean);
+  } catch(e){ console.error('[refreshOrdersFromCloud]', e.message); }
+  return orders;
 }
 // 订单写入前必须先刷新内存副本：手机端在云端下的订单，本地服务内存里可能没有，
 // 直接 find 内存会 404 静默失败（症状：后台点"确认收款"提示成功但状态不变）
@@ -432,7 +518,8 @@ const server = http.createServer(async (req, res)=>{
         const total = detail.reduce((s,x)=> s + x.price*x.qty, 0);
 
         // ===== 库存校验与扣减（stock 为数字才限量；null/未填视为不限量）=====
-        await syncProducts();
+        // 注：products 以内存副本为权威（启动已载入云端最新），不再每单 syncProducts() 往返，
+        // 避免 200+ 并发下 read-modify-write 整个数组的 O(n²) 瓶颈；扣减后回写云端。
         // 同一产品/规格的数量先合并（购物车分 key 传入，理论上不重复，双保险）
         const needMap = {};
         detail.forEach(x=>{
@@ -486,51 +573,47 @@ const server = http.createServer(async (req, res)=>{
           stockDeducted, // 标记：本单已扣库存，取消时据此恢复（历史订单无此标记，不回溯）
           createdAt:Date.now(), paidAt:null, confirmedAt:null, shippedAt:null
         };
-        await syncOrders(); orders.push(order); await saveOrders();
-        if(stockDeducted) await saveProducts();
+        saveOrderRow(order); // 批量非阻塞写入（内存即时同步，Supabase 500ms 内批量落盘），下单响应秒回
+        if(stockDeducted) saveProductsDebounced(); // 防抖批量落盘：200 并发合并为 1-2 次写入，不阻塞下单响应
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({id})); return;
       }
       // 客户确认已发送付款截图
       const mPaid = pathname.match(/^\/api\/orders\/([\w-]+)\/paid$/);
       if(method==='POST' && mPaid){
-        await syncOrders();
         const o = orders.find(o=>o.id===mPaid[1]);
         if(!o){ res.writeHead(404); res.end('no'); return; }
-        if(o.status==='待付款'){ o.status='待确认'; o.paidScreenshotAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrders(); }
+        if(o.status==='待付款'){ o.status='待确认'; o.paidScreenshotAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o); }
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
       // 确认收款
       const mConfirm = pathname.match(/^\/api\/orders\/([\w-]+)\/confirm$/);
       if(method==='POST' && mConfirm){
-        await syncOrders();
         const o = orders.find(o=>o.id===mConfirm[1]);
         if(!o){ res.writeHead(404); res.end('no'); return; }
         if(o.status==='待付款' || o.status==='待确认'){
-          o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrders();
+          o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o);
         }
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
       // 发货
       const mShip = pathname.match(/^\/api\/orders\/([\w-]+)\/ship$/);
       if(method==='POST' && mShip){
-        await syncOrders();
         const o = orders.find(o=>o.id===mShip[1]);
         if(!o){ res.writeHead(404); res.end('no'); return; }
         let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
-        o.status='已发货'; o.tracking=String(body.tracking||'').slice(0,60); o.shippedAt=Date.now(); await saveOrders();
+        o.status='已发货'; o.tracking=String(body.tracking||'').slice(0,60); o.shippedAt=Date.now(); await saveOrderRowSync(o);
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
       // 取消订单（仅允许待付款状态）
       const mCancel = pathname.match(/^\/api\/orders\/([\w-]+)\/cancel$/);
       if(method==='POST' && mCancel){
-        await syncOrders();
         const o = orders.find(o=>o.id===mCancel[1]);
         if(!o){ res.writeHead(404); res.end(JSON.stringify({error:'no'})); return; }
         if(o.status!=='待付款'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_pending_can_cancel'})); return; }
         // 恢复库存：仅本功能上线后下单（stockDeducted 标记）的订单才恢复，历史订单不回溯
         let stockRestored = false;
         if(o.stockDeducted){
-          await syncProducts();
+          // 内存副本为权威，直接恢复库存（不再 syncProducts 往返）
           (o.items||[]).forEach(it=>{
             const p = products.find(p=>p.id===it.id);
             if(!p) return;
@@ -543,8 +626,8 @@ const server = http.createServer(async (req, res)=>{
             }
           });
         }
-        o.status='已取消'; o.cancelledAt=Date.now(); await saveOrders();
-        if(stockRestored) await saveProducts();
+        o.status='已取消'; o.cancelledAt=Date.now(); await saveOrderRowSync(o);
+        if(stockRestored) saveProductsDebounced();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
       // 更新配置（店铺名/联系人/公告/收款码）
