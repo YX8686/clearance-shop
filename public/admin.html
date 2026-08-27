@@ -196,7 +196,12 @@
         <label>产品描述（买家看到的完整商品说明，可粘贴大段文案）</label>
         <div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 6px">
           <span style="font-size:12px;color:#9a8f82">此处内容会完整展示在买家商品详情页「商品说明」里</span>
-          <button type="button" onclick="clearDesc()" style="border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer">清空</button>
+          <div style="display:flex;gap:8px;align-items:center">
+            <label style="margin:0;cursor:pointer;font-size:12px;color:#7a5230;border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 10px">
+              <input type="file" id="descFile" accept=".txt,.md" style="display:none" onchange="importDescFile(this)">📄 导入文案文件
+            </label>
+            <button type="button" onclick="clearDesc()" style="border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer">清空</button>
+          </div>
         </div>
         <textarea id="pDesc" rows="10" placeholder="在此粘贴完整商品文案（可大段文字，买家端会完整显示，上限 10000 字）" oninput="updateDescCount()"></textarea>
         <div style="font-size:12px;color:#b8743f;margin-top:4px">已输入 <span id="descCount">0</span> 字（上限 10000）</div>
@@ -729,6 +734,21 @@ function renderSkuList(){
 function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function clearDesc(){ const t=document.getElementById('pDesc'); t.value=''; updateDescCount(); try{ t.focus(); }catch(e){} }
 function updateDescCount(){ const t=document.getElementById('pDesc'); const c=document.getElementById('descCount'); if(c) c.textContent=(t.value||'').length; }
+function importDescFile(input){
+  const file=input.files && input.files[0];
+  if(!file) return;
+  const reader=new FileReader();
+  reader.onload=(e)=>{
+    const t=document.getElementById('pDesc');
+    t.value=e.target.result.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+    updateDescCount();
+    toast('已导入文件：'+file.name+'（'+t.value.length+'字）');
+    try{ t.focus(); t.select(); }catch(err){}
+  };
+  reader.onerror=()=>toast('文件读取失败，请重试');
+  reader.readAsText(file,'UTF-8');
+  input.value='';
+}
 function addSkuRow(){ editingSkus.push({id:generateSkuId(),name:'',price:'',stock:'',bundleItems:[]}); renderSkuList(); }
 function removeSkuRow(idx){ editingSkus.splice(idx,1); renderSkuList(); }
 function updateSku(idx, field, value){
@@ -757,6 +777,7 @@ async function saveProduct(){
     price = Math.min(...validSkus.map(s=>Number(s.price)||0));
     stock = validSkus.reduce((sum,s)=>sum+(Number(s.stock)||0),0);
   }
+  const descBefore = document.getElementById('pDesc').value;
   const body={
     id: editingProdId,
     name: document.getElementById('pName').value,
@@ -765,7 +786,7 @@ async function saveProduct(){
     originalPrice: document.getElementById('pOriginal').value,
     stock: stock,
     category: document.getElementById('pCategory').value,
-    desc: document.getElementById('pDesc').value,
+    desc: descBefore,
     bundleItems: parseBundleText(document.getElementById('pBundle').value),
     skus: collectSkus(),
     image: document.getElementById('pMainImg').value,
@@ -773,7 +794,14 @@ async function saveProduct(){
   };
   const res=await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const data=await res.json();
-  if(res.ok && data.ok){ toast('产品已保存'); closeProdModal(); load(); }
+  if(res.ok && data.ok){
+    const savedDesc = (data.product && data.product.desc) || '';
+    if(savedDesc.length < descBefore.length){
+      toast('⚠️ 保存后文案被截断（提交'+descBefore.length+'字，保存'+savedDesc.length+'字），请用「导入文案文件」按钮上传 .txt 文件');
+      return;
+    }
+    toast('产品已保存（'+savedDesc.length+'字）'); closeProdModal(); load();
+  }
   else toast('保存失败' + (data.message?('：'+data.message):''));
 }
 async function deleteProduct(id){
