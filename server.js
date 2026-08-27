@@ -151,19 +151,25 @@ async function saveImage(base64, fileName, storageSub){
   const ext = m[1]==='image/png'?'png':(m[1]==='image/jpeg'?'jpg':(m[1]==='image/webp'?'webp':'png'));
   const buf = Buffer.from(m[2], 'base64');
   const file = String(fileName||'img').replace(/[\\/:*?"<>|]/g,'_').replace(/\.[^.]+$/,'') + '.' + ext;
+  const relDir = String(storageSub||'').replace(/\\/g,'/').replace(/^\/+|\/+$/g,'');
+  const localDir = relDir ? path.join(PUBLIC, 'assets', relDir) : path.join(PUBLIC, 'assets');
+  ensureDir(localDir);
+  const localFile = path.join(localDir, file);
+  const localUrl = relDir ? '/assets/' + relDir + '/' + file : '/assets/' + file;
+
   if(USE_SUPABASE){
     try{
       const safeSub = toSafeStoragePath(storageSub);
       const safeFile = toSafeStorageKey(file, true);
       const objectPath = (safeSub ? safeSub + '/' : 'uploads/') + safeFile;
       const { error } = await sb.storage.from('shop').upload(objectPath, buf, { contentType: m[1], upsert: true });
-      if(error){ console.error('[saveImage] storage', error.message, 'path=', objectPath); return ''; }
+      if(error) throw error;
       const { data:{ publicUrl } } = sb.storage.from('shop').getPublicUrl(objectPath);
       return publicUrl;
-    }catch(e){ console.error('[saveImage]', e.message); return ''; }
+    }catch(e){ console.error('[saveImage] storage failed, fallback local', e.message); }
   }
-  fs.writeFileSync(path.join(PUBLIC, 'assets', file), buf);
-  return '/assets/' + file;
+  fs.writeFileSync(localFile, buf);
+  return localUrl;
 }
 
 const DEFAULT_CONFIG = {
@@ -757,29 +763,30 @@ const server = http.createServer(async (req, res)=>{
           qty: Math.max(0, Math.floor(Number(x.qty)||0)),
           unit: String(x.unit||'件').trim().slice(0,10)
         })).filter(x=>x.name && x.qty>0):[];
+        const existing = products.find(x=>x.id===id) || {};
         const item={
           id: newId,
-          name: String(p.name||'未命名').trim().slice(0,100),
-          subtitle: String(p.subtitle||'').trim().slice(0,300),
-          price: Math.max(0, Number(p.price)||0),
-          originalPrice: Math.max(0, Number(p.originalPrice)||0),
-          stock: Math.max(0, Number(p.stock)||0),
-          forceSoldOut: !!p.forceSoldOut, // 商家后台「强制售罄」开关：true 则前台永远显示已售罄、无法加购/下单
-          category: String(p.category||'').trim().slice(0,50),
-          desc: sanitizeHtml(String(p.desc||'').trim()).slice(0,30000),
-          image: String(p.image||'/assets/products/default.svg').trim(),
-          detailImages: Array.isArray(p.detailImages) ? p.detailImages.filter(u=>String(u).startsWith('/')||/^https?:/.test(u)).slice(0,20) : [],
-          folder: String(p.folder||'').trim(),
-          shareImage: String(p.shareImage||'').trim(),
-          bundleItems: skuBundle(p.bundleItems),
-          skus: Array.isArray(p.skus) ? p.skus.slice(0,20).map(s=>({
+          name: String(p.name!==undefined?p.name:(existing.name||'未命名')).trim().slice(0,100),
+          subtitle: String(p.subtitle!==undefined?p.subtitle:(existing.subtitle||'')).trim().slice(0,300),
+          price: p.price!==undefined?Math.max(0, Number(p.price)||0):(existing.price||0),
+          originalPrice: p.originalPrice!==undefined?Math.max(0, Number(p.originalPrice)||0):(existing.originalPrice||0),
+          stock: p.stock!==undefined?Math.max(0, Number(p.stock)||0):(existing.stock||0),
+          forceSoldOut: p.forceSoldOut!==undefined?!!p.forceSoldOut:(existing.forceSoldOut||false), // 后台弹窗没提供该字段，必须与旧数据合并，防止被清空
+          category: String(p.category!==undefined?p.category:(existing.category||'')).trim().slice(0,50),
+          desc: p.desc!==undefined?sanitizeHtml(String(p.desc).trim()).slice(0,30000):(existing.desc||''),
+          image: String(p.image!==undefined?p.image:(existing.image||'/assets/products/default.svg')).trim(),
+          detailImages: p.detailImages!==undefined?(Array.isArray(p.detailImages)?p.detailImages.filter(u=>String(u).startsWith('/')||/^https?:/.test(u)).slice(0,20):[]):(existing.detailImages||[]),
+          folder: String(p.folder!==undefined?p.folder:(existing.folder||'')).trim(),
+          shareImage: String(p.shareImage!==undefined?p.shareImage:(existing.shareImage||'')).trim(),
+          bundleItems: p.bundleItems!==undefined?skuBundle(p.bundleItems):(existing.bundleItems||[]),
+          skus: p.skus!==undefined?(Array.isArray(p.skus)?p.skus.slice(0,20).map(s=>({
             id: String(s.id||'').trim() || crypto.randomBytes(3).toString('hex').toUpperCase(),
             name: String(s.name||'').trim().slice(0,100),
             price: Math.max(0, Number(s.price)||0),
             stock: Math.max(0, Math.floor(Number(s.stock)||0)),
             image: String(s.image||'').trim().slice(0,300),
             bundleItems: skuBundle(s.bundleItems)
-          })).filter(s=>s.name) : [],
+          })).filter(s=>s.name):[]):(existing.skus||[]),
           updatedAt: Date.now()
         };
         if(isNew){ item.createdAt=item.updatedAt; products.push(item); }
