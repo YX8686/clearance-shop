@@ -112,6 +112,7 @@
   .bundle-inline{font-size:11px;color:#9a6b3f;padding:2px 0 2px 2px;line-height:1.5}
   .it-line{display:flex;justify-content:space-between;font-size:13px;color:#5b5147;padding:2px 0}
 </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 </head>
 <body>
   <div class="top"><h1>商家后台</h1><div class="stat" id="stat"></div></div>
@@ -193,18 +194,22 @@
         </div>
       </div>
       <div class="form-row">
-        <label>产品描述（买家看到的完整商品说明，可粘贴大段文案）</label>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 6px">
-          <span style="font-size:12px;color:#9a8f82">此处内容会完整展示在买家商品详情页「商品说明」里</span>
-          <div style="display:flex;gap:8px;align-items:center">
-            <label style="margin:0;cursor:pointer;font-size:12px;color:#7a5230;border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 10px">
-              <input type="file" id="descFile" accept=".txt,.md" style="display:none" onchange="importDescFile(this)">📄 导入文案文件
-            </label>
-            <button type="button" onclick="clearDesc()" style="border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer">清空</button>
-          </div>
+        <label>产品描述（买家看到的完整商品说明，支持从 Word 直接复制粘贴保留加粗/符号，也可「导入Word/文本」）</label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0 6px">
+          <button type="button" onclick="execCmd('bold')" style="min-width:34px;border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 8px;font-size:13px;cursor:pointer"><b>B</b></button>
+          <button type="button" onclick="execCmd('italic')" style="min-width:34px;border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 8px;font-size:13px;cursor:pointer"><i>I</i></button>
+          <button type="button" onclick="execCmd('underline')" style="min-width:34px;border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 8px;font-size:13px;cursor:pointer"><u>U</u></button>
+          <button type="button" onclick="execCmd('insertUnorderedList')" style="border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 8px;font-size:13px;cursor:pointer">• 项目</button>
+          <button type="button" onclick="execCmd('insertOrderedList')" style="border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 8px;font-size:13px;cursor:pointer">1. 编号</button>
+          <button type="button" onclick="execCmd('justifyLeft')" style="border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 8px;font-size:13px;cursor:pointer">⬅ 左</button>
+          <button type="button" onclick="execCmd('justifyCenter')" style="border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 8px;font-size:13px;cursor:pointer">⬌ 中</button>
+          <label style="margin:0;cursor:pointer;font-size:12px;color:#7a5230;border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 10px">
+            <input type="file" id="descDocx" accept=".docx,.txt,.md" style="display:none" onchange="importWordDoc(this)">📄 导入Word/文本
+          </label>
+          <button type="button" onclick="clearDesc()" style="border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer">清空</button>
         </div>
-        <textarea id="pDesc" rows="10" placeholder="在此粘贴完整商品文案（可大段文字，买家端会完整显示，上限 10000 字）" oninput="updateDescCount()"></textarea>
-        <div style="font-size:12px;color:#b8743f;margin-top:4px">已输入 <span id="descCount">0</span> 字（上限 10000）</div>
+        <div id="pDesc" contenteditable="true" style="min-height:200px;max-height:420px;overflow:auto;border:1px solid #ddd;border-radius:6px;padding:10px;font-size:14px;line-height:1.7;background:#fff;white-space:pre-wrap;word-break:break-word"></div>
+        <div style="font-size:12px;color:#b8743f;margin-top:4px">已输入 <span id="descCount">0</span> 字（含格式标记；上限 30000）</div>
       </div>
       <div class="form-row" id="pBundleRow">
         <label>该价格链接包含的产品明细（用于发货清单，无SKU时生效）</label>
@@ -665,10 +670,11 @@ function openProdModal(p){
   document.getElementById('pOriginal').value=p.originalPrice||'';
   document.getElementById('pStock').value=p.stock||'';
   document.getElementById('pCategory').value=p.category||'';
-  document.getElementById('pDesc').value=p.desc||'';
+  const pDescEl=document.getElementById('pDesc');
+  pDescEl.innerHTML=p.desc||'';
   updateDescCount();
-  // 打开编辑时自动全选旧文案：用户一粘贴即整段替换，避免新旧混存导致只存了旧 500 字
-  setTimeout(()=>{ const t=document.getElementById('pDesc'); try{ t.focus(); t.select(); }catch(e){} }, 80);
+  // 打开编辑时自动全选旧文案：用户一粘贴即整段替换，避免新旧混存
+  setTimeout(()=>{ const t=document.getElementById('pDesc'); try{ const r=document.createRange(); r.selectNodeContents(t); const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(r); t.focus(); }catch(e){} }, 80);
   document.getElementById('pBundle').value=(p.bundleItems||[]).map(b=>`${b.name} ${b.qty} ${b.unit}`).join('\n');
   editingSkus = (p.skus||[]).map(s=>({
     id: s.id||generateSkuId(),
@@ -732,22 +738,35 @@ function renderSkuList(){
   `).join('');
 }
 function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function clearDesc(){ const t=document.getElementById('pDesc'); t.value=''; updateDescCount(); try{ t.focus(); }catch(e){} }
-function updateDescCount(){ const t=document.getElementById('pDesc'); const c=document.getElementById('descCount'); if(c) c.textContent=(t.value||'').length; }
-function importDescFile(input){
+function clearDesc(){ const t=document.getElementById('pDesc'); t.innerHTML=''; updateDescCount(); try{ t.focus(); }catch(e){} }
+function updateDescCount(){ const t=document.getElementById('pDesc'); const c=document.getElementById('descCount'); if(c) c.textContent=((t.innerText||t.textContent||'').length); }
+function execCmd(cmd){ const t=document.getElementById('pDesc'); t.focus(); try{ document.execCommand(cmd,false,null); }catch(e){} updateDescCount(); }
+function importWordDoc(input){
   const file=input.files && input.files[0];
+  input.value='';
   if(!file) return;
+  const name=(file.name||'').toLowerCase();
   const reader=new FileReader();
   reader.onload=(e)=>{
     const t=document.getElementById('pDesc');
-    t.value=e.target.result.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
-    updateDescCount();
-    toast('已导入文件：'+file.name+'（'+t.value.length+'字）');
-    try{ t.focus(); t.select(); }catch(err){}
+    if(name.endsWith('.docx')){
+      if(typeof mammoth==='undefined'){ alert('Word 解析组件未加载，请刷新后台页面后重试，或改用「直接复制粘贴」'); return; }
+      mammoth.convertToHtml({arrayBuffer:e.target.result}).then(res=>{
+        t.innerHTML=res.value||'';
+        updateDescCount();
+        toast('已导入 Word：'+file.name);
+        try{ const r=document.createRange(); r.selectNodeContents(t); const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(r); t.focus(); }catch(err){}
+      }).catch(err=>{ alert('Word 解析失败：'+((err&&err.message)||err)); });
+    } else {
+      const txt=(e.target.result||'').replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+      t.innerHTML=''; t.innerText=txt;
+      updateDescCount();
+      toast('已导入文件：'+file.name+'（'+txt.length+'字）');
+      try{ const r=document.createRange(); r.selectNodeContents(t); const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(r); t.focus(); }catch(err){}
+    }
   };
   reader.onerror=()=>toast('文件读取失败，请重试');
-  reader.readAsText(file,'UTF-8');
-  input.value='';
+  if(name.endsWith('.docx')) reader.readAsArrayBuffer(file); else reader.readAsText(file,'UTF-8');
 }
 function addSkuRow(){ editingSkus.push({id:generateSkuId(),name:'',price:'',stock:'',bundleItems:[]}); renderSkuList(); }
 function removeSkuRow(idx){ editingSkus.splice(idx,1); renderSkuList(); }
@@ -777,7 +796,7 @@ async function saveProduct(){
     price = Math.min(...validSkus.map(s=>Number(s.price)||0));
     stock = validSkus.reduce((sum,s)=>sum+(Number(s.stock)||0),0);
   }
-  const descBefore = document.getElementById('pDesc').value;
+  const descBefore = document.getElementById('pDesc').innerHTML;
   const body={
     id: editingProdId,
     name: document.getElementById('pName').value,
@@ -796,11 +815,11 @@ async function saveProduct(){
   const data=await res.json();
   if(res.ok && data.ok){
     const savedDesc = (data.product && data.product.desc) || '';
-    if(savedDesc.length < descBefore.length){
-      toast('⚠️ 保存后文案被截断（提交'+descBefore.length+'字，保存'+savedDesc.length+'字），请用「导入文案文件」按钮上传 .txt 文件');
+    if(descBefore.length>0 && savedDesc.length < descBefore.length*0.9){
+      toast('⚠️ 保存后文案疑似被截断（提交'+descBefore.length+'字符，保存'+savedDesc.length+'字符），请减少内容或联系技术支持');
       return;
     }
-    toast('产品已保存（'+savedDesc.length+'字）'); closeProdModal(); load();
+    toast('产品已保存（已存 '+ (savedDesc.replace(/<[^>]+>/g,'').length) +' 字内容）'); closeProdModal(); load();
   }
   else toast('保存失败' + (data.message?('：'+data.message):''));
 }

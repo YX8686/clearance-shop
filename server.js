@@ -697,6 +697,35 @@ const server = http.createServer(async (req, res)=>{
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, url, fileName})); return;
       }
 
+      // 富文本描述安全过滤：白名单标签 + 移除脚本/事件属性/危险协议
+      function sanitizeHtml(html){
+        if(!html) return '';
+        let s=String(html);
+        s = s.replace(/<\s*(script|style|iframe|object|embed|link|meta|head|html|body|svg|math|form|input|button|textarea|select|option)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>|\s*<\s*(script|style|iframe|object|embed|link|meta|head|html|body|svg|math|form|input|button|textarea|select|option)\b[^>]*\/?>/gi,'');
+        s = s.replace(/\son\w+\s*=\s*"[^"]*"/gi,'');
+        s = s.replace(/\son\w+\s*=\s*'[^']*'/gi,'');
+        s = s.replace(/\son\w+\s*=\s*[^\s>]+/gi,'');
+        s = s.replace(/(href|src)\s*=\s*("|')\s*(javascript|vbscript|data):/gi,'$1=$2#');
+        const allowed=new Set(['P','BR','DIV','SPAN','B','STRONG','I','EM','U','UL','OL','LI','H1','H2','H3','H4','H5','H6','A','IMG','TABLE','TBODY','THEAD','TR','TD','TH','HR','SUB','SUP','SMALL','BIG','MARK','SECTION','ARTICLE','BLOCKQUOTE','PRE','CODE','FONT','FIGURE','FIGCAPTION','DL','DT','DD','CENTER','STRIKE','DEL','INS']);
+        s = s.replace(/<\/?\s*([a-zA-Z0-9]+)\b([^>]*)>/g, (m,tag,attrs)=>{
+          const t=tag.toUpperCase();
+          if(!allowed.has(t)) return '';
+          if(t==='IMG'){
+            const src=(attrs.match(/src\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
+            if(!/^https?:\/\/|^data:image\//i.test(src)) return '';
+            return '<img src="'+src.replace(/"/g,'')+'" alt="">';
+          }
+          if(t==='A'){
+            const href=(attrs.match(/href\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
+            if(/^\s*(javascript|vbscript):/i.test(href)) return '';
+            return '<a href="'+href.replace(/"/g,'')+'" target="_blank" rel="noopener noreferrer">';
+          }
+          const style=(attrs.match(/style\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
+          const safeStyle=style.replace(/url\s*\(/gi,'').replace(/expression\s*\(/gi,'').replace(/javascript:/gi,'');
+          return '<'+tag.toLowerCase()+(safeStyle?' style="'+safeStyle.replace(/"/g,'')+'"':'')+'>';
+        });
+        return s;
+      }
       // 产品管理：增 / 改
       if(method==='POST' && pathname==='/api/products'){
         let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
@@ -718,7 +747,7 @@ const server = http.createServer(async (req, res)=>{
           stock: Math.max(0, Number(p.stock)||0),
           forceSoldOut: !!p.forceSoldOut, // 商家后台「强制售罄」开关：true 则前台永远显示已售罄、无法加购/下单
           category: String(p.category||'').trim().slice(0,50),
-          desc: String(p.desc||'').trim().slice(0,10000),
+          desc: sanitizeHtml(String(p.desc||'').trim()).slice(0,30000),
           image: String(p.image||'/assets/products/default.svg').trim(),
           detailImages: Array.isArray(p.detailImages) ? p.detailImages.filter(u=>String(u).startsWith('/')||/^https?:/.test(u)).slice(0,20) : [],
           folder: String(p.folder||'').trim(),
@@ -805,7 +834,7 @@ const server = http.createServer(async (req, res)=>{
       let html = renderTemplate('product.html', {
         SHOP_NAME: htmlEscape(config.shopName),
         OG_TITLE: htmlEscape(p.name),
-        OG_DESC: htmlEscape(p.desc || config.shopName),
+        OG_DESC: htmlEscape(String(p.desc||'').replace(/<[^>]+>/g,'').slice(0,200) || config.shopName),
         OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
         OG_URL: htmlEscape(BASE + '/product/'+p.id),
         OG_PRICE: htmlEscape(p.price || ''),

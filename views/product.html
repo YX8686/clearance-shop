@@ -37,7 +37,7 @@
   .panel .stock{font-size:12px;color:#9a8f82;margin-top:6px}
   .desc{background:#fff;padding:16px;font-size:14px;line-height:1.8;color:#5b5147;max-width:480px;margin:0 auto}
   .desc h4{margin:0 0 8px;font-size:14px;color:#7a5230}
-  .desc .body{white-space:pre-line}
+  .desc .body{white-space:pre-wrap;word-break:break-word}
   .detail-images{background:#fff;padding:16px;max-width:480px;margin:0 auto;border-bottom:1px solid #f0ece4}
   .detail-images h4{margin:0 0 12px;font-size:14px;color:#7a5230}
   .detail-images img{width:100%;border-radius:10px;margin-bottom:12px;display:block;background:#eee}
@@ -257,7 +257,7 @@ function set(){
   document.getElementById('pStock').innerHTML = isSoldOut(P)
     ? '<span style="color:#c0392b;font-weight:700">已售罄 · 可联系夏天老师询问补货</span>'
     : (pSt!=null ? ('库存：'+pSt+' 件'+(pSt<=5?'<span style="color:#c0392b">（仅剩少量，欲购从速）</span>':'')) : '');
-  document.getElementById('pDesc').textContent = P.desc||'';
+  document.getElementById('pDesc').innerHTML = P.desc||'';
 
   // 有 SKU 时，“该活动链接实际包含”不再固定展示，改为在 SKU 弹窗里随选随显
   const bundles = Array.isArray(P.bundleItems) ? P.bundleItems.filter(b=>b.name && b.qty>0) : [];
