@@ -691,9 +691,9 @@ const server = http.createServer(async (req, res)=>{
     }
 
     // ===== 页面 =====
-    if(method==='GET' && (pathname==='/' || pathname==='')){
+    if((method==='GET'||method==='HEAD') && (pathname==='/' || pathname==='')){
       const cached = getCachedHtml('home');
-      if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(cached); return; }
+      if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':cached); return; }
       const list = await getProducts();
       const ogImage = pickShopShareImage(list);
       let html = renderTemplate('home.html', {
@@ -707,14 +707,14 @@ const server = http.createServer(async (req, res)=>{
       });
       html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
       setCachedHtml('home', html);
-      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(html); return;
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':html); return;
     }
 
     const mProd = pathname.match(/^\/product\/([\w-]+)$/);
-    if(method==='GET' && mProd){
+    if((method==='GET'||method==='HEAD') && mProd){
       const pkey = 'product:'+mProd[1];
       const cached = getCachedHtml(pkey);
-      if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(cached); return; }
+      if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':cached); return; }
       const list = await getProducts();
       const p = list.find(p=>p.id===mProd[1]);
       if(!p){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
@@ -732,7 +732,7 @@ const server = http.createServer(async (req, res)=>{
       });
       html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
       setCachedHtml(pkey, html);
-      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(html); return;
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':html); return;
     }
 
     const mOrder = pathname.match(/^\/order\/([\w-]+)$/);
@@ -744,7 +744,7 @@ const server = http.createServer(async (req, res)=>{
         ORDER_JSON: jsonForScript(o),
         CONFIG_JSON: jsonForScript(config)
       });
-      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(html); return;
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':html); return;
     }
 
     if(method==='GET' && pathname==='/admin'){ sendFile(res, path.join(PUBLIC,'admin.html')); return; }
