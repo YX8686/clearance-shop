@@ -704,15 +704,28 @@ function renderDetailImgs(urls){
 }
 function removeDetailImg(i){ selectedGalUrls.splice(i,1); renderDetailImgs(selectedGalUrls); }
 
-// 解析“包含的产品明细”文本为结构化数组：每行 "产品名 数量 单位"
+// 解析“包含的产品明细”文本为结构化数组：每行 "产品名 数量 单位"，兼容无空格/中文单位
 function parseBundleText(text){
   return text.split('\n').map(line=>{
     line=line.trim();
     if(!line) return null;
-    const m=line.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*(.*)$/);
+    // 优先匹配：名称 + 空白 + 数字 + 可选单位
+    let m=line.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*(.*)$/);
+    if(!m){
+      // 兼容无空格：名称后紧跟数字，再跟单位
+      m=line.match(/^(.+?)(\d+(?:\.\d+)?)(.*)$/);
+    }
     if(!m) return null;
     return { name:m[1].trim(), qty:Number(m[2]), unit:(m[3]||'件').trim() || '件' };
   }).filter(Boolean);
+}
+// 保存前强制从 DOM 读取当前 textarea 内容，避免用户没触发 onchange 就点保存
+function flushSkuBundleTextareas(){
+  document.querySelectorAll('#skuList .sku-row').forEach(row=>{
+    const idx=Number(row.dataset.idx);
+    const ta=row.querySelector('textarea.sku-bundle-text');
+    if(ta && editingSkus[idx]) editingSkus[idx].bundleItems=parseBundleText(ta.value);
+  });
 }
 
 function generateSkuId(){
@@ -734,7 +747,7 @@ function renderSkuList(){
         <input type="number" placeholder="库存" value="${s.stock!==''?s.stock:''}" onchange="updateSku(${idx},'stock',this.value)" style="width:80px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px">
         <button type="button" onclick="removeSkuRow(${idx})" style="border:none;background:#e74c3c;color:#fff;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer">删除</button>
       </div>
-      <textarea rows="2" placeholder="该SKU对应的发货明细（每行：产品名 数量 单位）。必须填写，否则商城不会显示该SKU的发货内容。" onchange="updateSku(${idx},'bundle',this.value)" style="width:100%;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px;resize:vertical">${(s.bundleItems||[]).map(b=>`${b.name} ${b.qty} ${b.unit}`).join('\n')}</textarea>
+      <textarea class="sku-bundle-text" rows="2" placeholder="该SKU对应的发货明细（每行：产品名 数量 单位）。必须填写，否则商城不会显示该SKU的发货内容。" onchange="updateSku(${idx},'bundle',this.value)" style="width:100%;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px;resize:vertical">${(s.bundleItems||[]).map(b=>`${b.name} ${b.qty} ${b.unit}`).join('\n')}</textarea>
     </div>
   `).join('');
 }
@@ -839,6 +852,7 @@ function collectSkus(){
 }
 
 async function saveProduct(){
+  flushSkuBundleTextareas(); // 先强制收集当前 textarea 内容，避免 onchange 未触发
   const hasSku = editingSkus.length > 0;
   const validSkus = collectSkus();
   let price = document.getElementById('pPrice').value;

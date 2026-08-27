@@ -250,8 +250,9 @@ function set(){
   document.getElementById('pName').textContent = P.name;
   const hasSkus = Array.isArray(P.skus) && P.skus.length>0;
   const minPrice = hasSkus ? Math.min(...P.skus.map(s=>Number(s.price||P.price||0))) : (P.price||0);
-  const priceLabel = hasSkus ? (money(minPrice)+'<span class="from">起</span>') : money(P.price);
-  document.getElementById('pPrice').innerHTML = priceLabel+' <small>/件</small>' + ((P.originalPrice&&P.originalPrice>minPrice)?'<span class="orig">'+money(P.originalPrice)+'</span>':'');
+  const priceLabel = money(minPrice);
+  const unitLabel = hasSkus ? '<small>/件起</small>' : '<small>/件</small>';
+  document.getElementById('pPrice').innerHTML = priceLabel+unitLabel + ((P.originalPrice&&P.originalPrice>minPrice)?'<span class="orig">'+money(P.originalPrice)+'</span>':'');
   // 库存行：售罄红字提示，有货显示剩余件数
   const pSt = (P.stock!=null && P.stock!=='') ? Number(P.stock) : null;
   document.getElementById('pStock').innerHTML = isSoldOut(P)
@@ -338,7 +339,7 @@ function openSkuModal(p, quickBuy){
   document.getElementById('skuImg').src = p.image||'/assets/product-placeholder.svg';
   document.getElementById('skuPicked').textContent = '请选择型号';
   const minPrice = Math.min(...skus.map(s=>Number(s.price||p.price||0)));
-  document.getElementById('skuPrice').innerHTML = money(minPrice)+'<span class="from">起</span>';
+  document.getElementById('skuPrice').innerHTML = money(minPrice)+'<small>/件起</small>';
   document.getElementById('skuStock').textContent = '库存：' + (p.stock!=null?p.stock:'—') + ' 件';
   document.getElementById('skuStockHint').textContent = '库存 ' + (p.stock!=null?p.stock:'—') + ' 件';
   renderSkuOptions(p);

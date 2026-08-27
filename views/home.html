@@ -354,7 +354,8 @@ function renderGrid(){
     const orig = (p.originalPrice && p.originalPrice>p.price) ? '<span class="orig">'+money(p.originalPrice)+'</span>' : '';
     const hasSkus = Array.isArray(p.skus) && p.skus.length>0;
     const minPrice = hasSkus ? Math.min(...p.skus.map(s=>Number(s.price||p.price||0))) : (p.price||0);
-    const priceLabel = hasSkus ? (money(minPrice)+'<span class="from">起</span>') : money(p.price||0);
+    const priceLabel = money(minPrice);
+    const unitLabel = hasSkus ? '<small>/件起</small>' : '<small>/件</small>';
     const soldOut = isSoldOut(p);
     // 售罄：主图蒙半透明黑 + 居中斜向右上「已售罄」印章；未售罄保持原图可点进详情
     const imgHtml = soldOut
@@ -372,7 +373,7 @@ function renderGrid(){
       <div class="body">
         <div class="name" onclick="goProduct('${p.id}')">${p.name}</div>
         <div class="desc"></div>
-        <div class="price">${priceLabel}<small> /件</small>${orig}</div>
+        <div class="price">${priceLabel}${unitLabel}${orig}</div>
         ${btnHtml}
       </div>`;
     div.querySelector('.desc').textContent = stripTags(p.desc||'');
@@ -423,7 +424,7 @@ function openSkuModal(pid){
   document.getElementById('skuImg').src = p.image||'/assets/product-placeholder.svg';
   document.getElementById('skuPicked').textContent = '请选择型号';
   const minPrice = Math.min(...skus.map(s=>Number(s.price||p.price||0)));
-  document.getElementById('skuPrice').innerHTML = money(minPrice)+'<span class="from">起</span>';
+  document.getElementById('skuPrice').innerHTML = money(minPrice)+'<small>/件起</small>';
   document.getElementById('skuStock').textContent = '库存：' + (p.stock!=null?p.stock:'—') + ' 件';
   document.getElementById('skuStockHint').textContent = '库存 ' + (p.stock!=null?p.stock:'—') + ' 件';
   renderSkuOptions(); selectSku(curSkuId);
