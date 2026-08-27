@@ -81,6 +81,21 @@ function writeJsonAtomic(file, data){
 // 有了这层缓存，短时间内的重复请求（如刷新、多接口同时读 orders）只打一次 Supabase，大幅加快后台首屏。
 const KV_TTL_MS = 3000;
 const kvCache = new Map(); // key -> { ts, value, promise }
+
+// 云端调用重试：覆盖 Supabase 免费层间歇 fetch failed / 冷启动抖动（避免一阵子连不上就保存失败）
+async function withRetry(fn, label, retries=3){
+  let lastErr;
+  for(let i=0;i<retries;i++){
+    try{ return await fn(); }
+    catch(e){
+      lastErr=e;
+      console.error(`[${label}] 云端第${i+1}/${retries}次调用失败:`, e.message);
+      if(i<retries-1) await new Promise(r=>setTimeout(r, 400*(i+1)));
+    }
+  }
+  throw lastErr;
+}
+
 async function loadKV(key, fallback){
   if(USE_SUPABASE){
     const now = Date.now();
@@ -91,7 +106,7 @@ async function loadKV(key, fallback){
     }
     const promise = (async()=>{
       try{
-        const { data, error } = await sb.from('shop_data').select('value').eq('key', key).maybeSingle();
+        const { data, error } = await withRetry(()=>sb.from('shop_data').select('value').eq('key', key).maybeSingle(), 'loadKV:'+key);
         if(error) throw new Error(error.message);
         if(data) return data.value;
         return fallback;
@@ -119,7 +134,7 @@ async function saveKV(key, value){
   if(USE_SUPABASE){
     // 关键修复：失败必须抛错给调用方。之前是 console.error 静默吞掉，
     // 导致前端拿到 {ok:true} 但云端没写入，重启服务后状态回退（症状：商家后台点"确认收款"成功但刷新后订单又回"待处理"）。
-    const { error } = await sb.from('shop_data').upsert({ key, value });
+    const { error } = await withRetry(()=>sb.from('shop_data').upsert({ key, value }), 'saveKV:'+key);
     if(error) throw new Error('Supabase save error: ' + error.message);
     kvCache.set(key, { ts: Date.now(), value, promise: null }); // 写成功后同步缓存，保证读到自己刚写的数据
     return;
