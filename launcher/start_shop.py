@@ -45,6 +45,10 @@ def start_service():
     if pid:
         return
 
+    # 把 Python 侧选定的端口传给 node，确保 server.js 实际监听一致端口
+    env = os.environ.copy()
+    env['PORT'] = str(PORT)
+
     # 只在失败时输出；成功时保持静默，避免闪屏
     # CREATE_NO_WINDOW = 0x08000000，避免显示黑框
     log_path = os.path.join(SHOP_DIR, 'server.log')
@@ -52,6 +56,7 @@ def start_service():
     subprocess.Popen(
         [NODE_EXE, 'server.js'],
         cwd=SHOP_DIR,
+        env=env,
         creationflags=0x08000000,
         stdout=log_file,
         stderr=log_file,
