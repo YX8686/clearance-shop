@@ -11,7 +11,7 @@ import webbrowser
 
 SHOP_DIR = r"C:\Users\华为mate14\WorkBuddy\2026-08-24-15-09-30\clearance-shop"
 NODE_EXE = r"C:\Users\华为mate14\.workbuddy\binaries\node\versions\22.22.2\node.exe"
-PORT = 4100
+PORT = 4301
 
 
 def is_port_open(port):
@@ -68,11 +68,11 @@ def start_service():
 
 
 def open_client():
-    webbrowser.open('http://localhost:4100/')
+    webbrowser.open('http://localhost:4301/')
 
 
 def open_admin():
-    webbrowser.open('http://localhost:4100/admin')
+    webbrowser.open('http://localhost:4301/admin')
 
 
 def show_error(msg):
