@@ -82,15 +82,16 @@ function writeJsonAtomic(file, data){
 const KV_TTL_MS = 3000;
 const kvCache = new Map(); // key -> { ts, value, promise }
 
-// 云端调用重试：覆盖 Supabase 免费层间歇 fetch failed / 冷启动抖动（避免一阵子连不上就保存失败）
-async function withRetry(fn, label, retries=3){
+// 云端调用重试：覆盖 Supabase 免费层间歇 fetch failed / 冷启动抖动
+// 默认 5 次指数退避（400/800/1600/3200/6400ms ≈ 12.4s），把偶发断网的保存失败率降到最低
+async function withRetry(fn, label, retries=5){
   let lastErr;
   for(let i=0;i<retries;i++){
     try{ return await fn(); }
     catch(e){
       lastErr=e;
       console.error(`[${label}] 云端第${i+1}/${retries}次调用失败:`, e.message);
-      if(i<retries-1) await new Promise(r=>setTimeout(r, 400*(i+1)));
+      if(i<retries-1) await new Promise(r=>setTimeout(r, 400*Math.pow(2,i)));
     }
   }
   throw lastErr;
@@ -482,6 +483,9 @@ const server = http.createServer(async (req, res)=>{
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(config)); return;
       }
       if(method==='GET' && pathname==='/api/orders'){
+        // 关键：让 /api/orders 始终反映云端最新状态（外部进程如 buchu-ship-cloud
+        // 也会写 order:<id> 单行，仅靠内存副本会看不到）
+        await refreshOrdersFromCloud();
         const list = await getOrders();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(list)); return;
       }
@@ -626,6 +630,54 @@ const server = http.createServer(async (req, res)=>{
         let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
         o.status='已发货'; o.tracking=String(body.tracking||'').slice(0,60); o.shippedAt=Date.now(); await saveOrderRowSync(o);
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+      }
+      // 允许/禁止发货管家采集（仅待发货状态可设置）
+      const mAllowPull = pathname.match(/^\/api\/orders\/([\w-]+)\/allow-pull$/);
+      if(method==='POST' && mAllowPull){
+        await syncOrders();
+        const o = orders.find(o=>o.id===mAllowPull[1]);
+        if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+        o.allowPull = !!body.allowPull;
+        o.allowPullAt = o.allowPull ? Date.now() : null;
+        await saveOrderRowSync(o);
+        if(!USE_SUPABASE) await saveKV('orders', orders).catch(e=>console.error('[allow-pull disk]',e.message));
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
+      }
+      // 批量允许/禁止（仅操作 status==='待发货' 的订单）
+      const mBatchAllow = pathname.match(/^\/api\/orders\/batch-allow-pull$/);
+      if(method==='POST' && mBatchAllow){
+        await syncOrders();
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+        const allow = !!body.allow;
+        const ids = Array.isArray(body.ids) ? body.ids : null; // 不传 ids 则全量操作待发货
+        const targets = orders.filter(o => o.status==='待发货' && (!ids || ids.includes(o.id)));
+        const now = Date.now();
+        targets.forEach(o => { o.allowPull = allow; o.allowPullAt = allow ? now : null; });
+        // 逐行落盘（沿用既有 saveOrderRowSync）；用 Promise.all 加速
+        await Promise.all(targets.map(o => saveOrderRowSync(o).catch(e=>console.error('[batch-allow]',o.id,e.message))));
+        if(!USE_SUPABASE) await saveKV('orders', orders).catch(e=>console.error('[batch-allow disk]',e.message));
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, count:targets.length})); return;
+      }
+      // 商家后台「今日可发订单」→ 全部导出：把当前允许采集的待发货订单形成一个「商城本次汇总单」，
+      // 追加到 mall_sessions 数组（一天可多次汇总）。发货管家 /shipper 读取 sessions 列表。
+      const mMallExport = pathname.match(/^\/api\/mall-today-export$/);
+      if(method==='POST' && mMallExport){
+        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
+        const date = String(body.date||new Date().toISOString().slice(0,10));
+        const orders = Array.isArray(body.orders) ? body.orders.filter(o=>o && o.id && o.phone) : [];
+        const session = {
+          sessionId: 'M'+Date.now().toString(36)+Math.random().toString(36).slice(2,4),
+          ts: Date.now(), date, orders
+        };
+        try {
+          const arr = await loadKV('mall_sessions', []);
+          const list = Array.isArray(arr) ? arr : [];
+          list.push(session);
+          await saveKV('mall_sessions', list);
+        }
+        catch(e){ res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'save_failed', message:e.message})); return; }
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, sessionId:session.sessionId, ts:session.ts, count:orders.length, totalSessions:(await loadKV('mall_sessions',[])).length})); return;
       }
       // 取消订单（仅允许待付款状态）
       const mCancel = pathname.match(/^\/api\/orders\/([\w-]+)\/cancel$/);

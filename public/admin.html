@@ -111,6 +111,15 @@
   .so-total{text-align:right;font-size:12px;color:#7a6f62;margin-top:4px;font-weight:600}
   .bundle-inline{font-size:11px;color:#9a6b3f;padding:2px 0 2px 2px;line-height:1.5}
   .it-line{display:flex;justify-content:space-between;font-size:13px;color:#5b5147;padding:2px 0}
+  /* 允许发货管家采集 */
+  .allow-pull-top{background:#fff8ec;border:1px dashed #b8743f;border-radius:10px;padding:8px 12px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;color:#5b5147}
+  .allow-pull-top b{color:#b8743f}
+  .allow-pull-top button{border:1px solid #b8743f;background:#fff;color:#b8743f;border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer}
+  .allow-pull-top button:hover{background:#b8743f;color:#fff}
+  .allow-pull-group{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#1f9d55;font-weight:600;cursor:pointer;background:#e6f7ec;padding:3px 8px;border-radius:10px}
+  .allow-pull-group input{width:14px;height:14px;cursor:pointer}
+  .allow-pull-per{display:inline-flex;align-items:center;gap:3px;font-size:11px;color:#1f9d55;font-weight:400;cursor:pointer;padding:2px 6px;border-radius:8px;background:#f0faf3}
+  .allow-pull-per input{width:13px;height:13px;cursor:pointer}
 </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 </head>
@@ -156,6 +165,7 @@
     <div class="tabs">
       <button class="on" data-s="待确认" onclick="switchTab(this)">待处理 <span id="cWait">0</span></button>
       <button data-s="待发货" onclick="switchTab(this)">待发货 <span id="cShip">0</span></button>
+      <button data-s="今日可发订单" onclick="switchTab(this)">今日可发 <span id="cToday">0</span></button>
       <button data-s="已发货" onclick="switchTab(this)">已发货 <span id="cDone">0</span></button>
     </div>
     <div id="list"></div>
@@ -365,9 +375,11 @@ function render(){
   document.getElementById('cWait').textContent=waits;
   document.getElementById('cShip').textContent=ships;
   document.getElementById('cDone').textContent=dones;
-  document.getElementById('stat').textContent='共 '+ORDERS.length+' 单 · 待处理'+waits+' / 待发'+ships+' / 已发'+dones;
+  document.getElementById('cToday').textContent=ORDERS.filter(o=>o.status==='待发货' && o.allowPull).length;
+  document.getElementById('stat').textContent='共 '+ORDERS.length+' 单 · 待处理'+waits+' / 待发'+ships+' / 今日可发'+ORDERS.filter(o=>o.status==='待发货' && o.allowPull).length+' / 已发'+dones;
   const list=document.getElementById('list'); list.innerHTML='';
   if(curTab==='待发货'){ renderMergedShip(); return; }
+  if(curTab==='今日可发订单'){ renderTodayShip(); return; }
   const rows=ORDERS.filter(o=>curTab==='待确认'?o.status==='待确认':o.status===curTab).sort((a,b)=>b.createdAt-a.createdAt);
   if(!rows.length){ list.innerHTML='<div class="empty">暂无订单</div>'; return; }
   rows.forEach(o=>{
@@ -405,8 +417,24 @@ function render(){
 function renderMergedShip(){
   const list=document.getElementById('list');
   const pending=ORDERS.filter(o=>o.status==='待发货');
-  if(!pending.length){ list.innerHTML='<div class="empty">暂无待发货订单</div>'; return; }
-  const     groups={};
+  // 顶部快捷操作：无论有没有待发货，都展示「0/N 已允许」的灯 + 全允许/全禁止按钮
+  const allowedCount=pending.filter(o=>o.allowPull).length;
+  const topBar=document.createElement('div');
+  topBar.className='allow-pull-top';
+  topBar.innerHTML=`
+    <span>🟢 已允许 <b style="color:${allowedCount?'':'#888'}">${allowedCount}</b>/${pending.length} 单可被发货管家采集</span>
+    <button onclick="batchAllowPull()">✅ 一键全部允许（再单独取消不发的那几单）</button>
+    ${pending.length?'':'<span style="color:#888">（暂无待发货订单）</span>'}
+  `;
+  list.appendChild(topBar);
+  if(!pending.length){
+    const empty=document.createElement('div');
+    empty.className='empty';
+    empty.innerHTML='暂无待发货订单。<br><br><span style="font-size:13px;color:#999">上方按钮会在新订单到来后自动生效；有订单勾选后，发货管家云端版的「从商城拉取」会自动看到。</span>';
+    list.appendChild(empty);
+    return;
+  }
+  const groups={};
     pending.forEach(o=>{
       const key=BUSINESS_RULES.merge.makeKey(o);
       (groups[key]=groups[key]||[]).push(o);
@@ -416,9 +444,19 @@ function renderMergedShip(){
     const ids=group.map(o=>o.id);
     const first=group[0];
     const total=group.reduce((s,o)=>s+o.total,0);
-    const orderBlocks=group.map(o=>`
+    const allAllowed=group.every(o=>o.allowPull);
+    const someAllowed=group.some(o=>o.allowPull);
+    const orderBlocks=group.map(o=>{
+      const checked=o.allowPull?'checked':'';
+      return `
       <div class="suborder">
-        <div class="so-h"><span>${o.id}</span><span class="so-time">付款 ${fmtTime(o.paidAt)}</span></div>
+        <div class="so-h">
+          <span>${o.id}</span>
+          <label class="allow-pull-per" onclick="event.stopPropagation()">
+            <input type="checkbox" ${checked} onchange="toggleAllowPull('${o.id}', this.checked)"> 允许采集
+          </label>
+        </div>
+        <div class="so-time">付款 ${fmtTime(o.paidAt)} · 本单 ${money(o.total)}</div>
         ${o.items.map(i=>{
           let h=`<div class="so-item"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
           if(i.bundleItems && i.bundleItems.length){
@@ -427,10 +465,18 @@ function renderMergedShip(){
           return h;
         }).join('')}
         <div class="so-total">本单合计 ${money(o.total)}</div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
+    const groupChecked=allAllowed?'checked':(someAllowed?'':'');
+    const groupIndeterminate=!allAllowed && someAllowed;
     const div=document.createElement('div'); div.className='card merge-card';
     div.innerHTML=`
-      <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-ship">待发货</span></div>
+      <div class="h">
+        <span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span>
+        <label class="allow-pull-group" onclick="event.stopPropagation()">
+          <input type="checkbox" id="gap-${ids.join('-')}" ${groupChecked} ${groupIndeterminate?'data-indeterminate="1"':''} onchange="toggleAllowPullGroup(['${ids.join("','")}'], this.checked)"> 允许发货管家采集
+        </label>
+      </div>
       <div class="line"><span class="k">姓名</span>${first.name}</div>
       ${first.wechat ? `<div class="line"><span class="k">微信</span>${first.wechat}</div>` : ''}
       <div class="line"><span class="k">电话</span>${first.phone}</div>
@@ -439,6 +485,140 @@ function renderMergedShip(){
       <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-ship" onclick="shipGroup(['${ids.join("','")}'])">填写单号发货</button></div>`;
     list.appendChild(div);
   });
+  // 设置 indeterminate 状态（HTML 属性不会自动反映）
+  list.querySelectorAll('input[data-indeterminate="1"]').forEach(cb=>cb.indeterminate=true);
+}
+// 「今日可发订单」栏目：展示已在待发货里勾选「允许发货管家采集」的订单，可一键全部导出到发货管家
+function renderTodayShip(){
+  const list=document.getElementById('list');
+  const today=ORDERS.filter(o=>o.status==='待发货' && o.allowPull);
+  const topBar=document.createElement('div');
+  topBar.className='allow-pull-top';
+  topBar.innerHTML=`
+    <span>📦 今日可发 <b style="color:${today.length?'#1f9d55':'#888'}">${today.length}</b> 单
+      <span style="color:#9a8f82;font-weight:400">（在「待发货」勾选「允许发货管家采集」即进入此处）</span></span>
+    <button onclick="exportTodayOrders()">📤 全部导出到发货管家</button>`;
+  list.appendChild(topBar);
+  if(!today.length){
+    const empty=document.createElement('div'); empty.className='empty';
+    empty.innerHTML='还没有「今日可发」订单。<br><br><span style="font-size:13px;color:#999">去「待发货」栏目，在每笔订单（或合并组）勾选「允许发货管家采集」，勾选的订单会自动出现在这里；再点上方「全部导出」，就会同步到发货管家「今日可发货」里的「商城今日订单总表」。</span>';
+    list.appendChild(empty);
+    return;
+  }
+  const groups={};
+  today.forEach(o=>{ const key=BUSINESS_RULES.merge.makeKey(o); (groups[key]=groups[key]||[]).push(o); });
+  Object.values(groups).forEach(group=>{
+    group.sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
+    const ids=group.map(o=>o.id);
+    const first=group[0];
+    const itemsHtml=group.map(o=>o.items.map(i=>{
+      // 优先用订单 items 自带的 bundleItems（最新下单时已复制），兼容历史空数组
+      let bi = i.bundleItems || [];
+      if(!bi.length){
+        const prod = PRODUCTS.find(p=>p.id===i.id);
+        if(prod && Array.isArray(prod.skus) && prod.skus.length){
+          const sku = prod.skus.find(s=>s.name===i.name)
+                   || prod.skus.find(s=>(s.name||'').includes((i.name||'').slice(0,8)))
+                   || prod.skus[0];
+          if(sku && Array.isArray(sku.bundleItems)) bi = sku.bundleItems;
+        }
+      }
+      if(bi.length){
+        // 竖行显示：每个 bundle item 一行"产品名 数量单位"，末尾再写 "× qty"
+        const lines = bi.map(b=>`• ${b.name} ${b.qty}${b.unit||'件'}`).join('<br>');
+        return `<div class="so-item"><span>${escapeHtml(i.name)}</span><span>${money(i.price)} × ${i.qty}</span></div>`+
+               `<div class="bundle-inline" style="white-space:pre-line">${lines}<br>× ${i.qty}</div>`;
+      }
+      // 没有发货明细：回退到产品标题 + ×qty
+      return `<div class="so-item"><span>${escapeHtml(i.name)}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
+    }).join('')).join('');
+    const div=document.createElement('div'); div.className='card merge-card';
+    div.innerHTML=`
+      <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-ship">今日可发</span></div>
+      <div class="line"><span class="k">姓名</span>${first.name}</div>
+      ${first.wechat?`<div class="line"><span class="k">微信</span>${first.wechat}</div>`:''}
+      <div class="line"><span class="k">电话</span>${first.phone}</div>
+      <div class="line"><span class="k">地址</span>${first.address}</div>
+      <div class="items">${itemsHtml}</div>
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button></div>`;
+    list.appendChild(div);
+  });
+}
+// 把「今日可发」订单导出到发货管家云端版：写入 Supabase mall_today_export，发货员 /shipper 视图即自动看到「商城今日订单总表」
+function toExportOrder(o){
+  return {
+    id:o.id, name:o.name, phone:o.phone, address:o.address, wechat:o.wechat||'',
+    items:(o.items||[]).map(i=>{
+      // 优先用订单 items 自带的 bundleItems（最新下单时已复制）
+      let bi = i.bundleItems || [];
+      // 兼容历史订单：items[i].id 是产品 id，从 PRODUCTS 反查该产品下所有 SKU 的 bundleItems，
+      // 找不到 SKU 时按 items[i].name 名称模糊匹配 SKU，命中后取其 bundleItems。
+      if(!bi.length){
+        const prod = PRODUCTS.find(p=>p.id===i.id);
+        if(prod && Array.isArray(prod.skus) && prod.skus.length){
+          const sku = prod.skus.find(s=>s.name===i.name)
+                   || prod.skus.find(s=>(s.name||'').includes((i.name||'').slice(0,8)))
+                   || prod.skus[0];
+          if(sku && Array.isArray(sku.bundleItems)) bi = sku.bundleItems;
+        }
+      }
+      // 渲染成多行 shipDetail："产品名 数量单位\n产品名 数量单位"，最后另起一行写 "× qty"
+      const shipDetail = bi.length
+        ? bi.map(b=>`${b.name||''} ${b.qty||''}${b.unit||''}`).join('\n') + `\n× ${i.qty||1}`
+        : `${i.name||''}\n× ${i.qty||1}`;
+      return {id:i.id, name:i.name, qty:i.qty, shipDetail};
+    })
+  };
+}
+async function exportTodayOrders(){
+  const list=ORDERS.filter(o=>o.status==='待发货' && o.allowPull);
+  if(!list.length){ toast('没有已允许待发货的订单'); return; }
+  if(!window.confirm(`确认把 ${list.length} 单「今日可发」订单导出到发货管家？\n（发货员会在发货管家的「今日可发货」里看到这份「商城今日订单总表」）`)) return;
+  try{
+    const r=await fetch('/api/mall-today-export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:new Date().toISOString().slice(0,10), orders:list.map(toExportOrder)})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.message||('HTTP '+r.status));
+    toast(`已导出 ${d.count} 单到发货管家「今日可发货」`);
+  }catch(e){ toast('导出失败：'+e.message); console.error('[mall-export]',e); }
+}
+// 勾选确认：单笔待发货订单允许/禁止发货管家采集
+async function toggleAllowPull(id, allow){
+  const o=ORDERS.find(x=>x.id===id);
+  if(o){
+    o.allowPull=allow; o.allowPullAt=allow?Date.now():null;
+    render();
+  }
+  try{
+    const r=await fetch('/api/orders/'+encodeURIComponent(id)+'/allow-pull',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({allowPull:allow})});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+  }catch(e){
+    toast('同步失败，请重试'); console.error('[allow-pull]',e);
+    if(o){ o.allowPull=!allow; o.allowPullAt=o.allowPull?Date.now():null; render(); }
+  }
+}
+// 勾选确认：组合内全部订单批量设置
+function toggleAllowPullGroup(ids, allow){
+  ids.forEach(id=>toggleAllowPull(id, allow));
+}
+// 顶部快捷：一键全部允许（仅对待发货）。点完后自己去单独取消"今天不能发"的那些
+async function batchAllowPull(){
+  const pending=ORDERS.filter(o=>o.status==='待发货');
+  if(!pending.length){ toast('当前没有待发货订单'); return; }
+  if(!window.confirm(`确认把当前 ${pending.length} 单待发货全部允许被发货管家采集？\n（之后你可以单独点击不需要的那几单取消勾选）`)) return;
+  const allow=true;
+  // 乐观更新
+  pending.forEach(o=>{ o.allowPull=allow; o.allowPullAt=allow?Date.now():null; });
+  render();
+  try{
+    const r=await fetch('/api/orders/batch-allow-pull',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({allow})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.message||('HTTP '+r.status));
+    toast(`已全部允许 ${d.count} 单，去单独取消今天不能发的那几单`);
+  }catch(e){
+    toast('同步失败：'+e.message);
+    pending.forEach(o=>{ o.allowPull=!allow; o.allowPullAt=o.allowPull?Date.now():null; });
+    render();
+  }
 }
 // 合并发货文本格式：仅姓名+电话+地址+所有商品数量，详见 business_rules.md §3
 function copyShipGroup(ids){
@@ -879,21 +1059,45 @@ async function saveProduct(){
       image: document.getElementById('pMainImg').value,
       detailImages: selectedGalUrls
     };
-    const res=await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    const data=await res.json();
-    if(res.ok && data.ok){
-      const savedDesc = (data.product && data.product.desc) || '';
-      const stripTags = (s)=>String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').trim();
-      const beforeText = stripTags(descBefore);
-      const savedText = stripTags(savedDesc);
-      if(beforeText.length>0 && savedText.length < beforeText.length*0.95){
-        toast('⚠️ 保存后文字比提交时少 '+(beforeText.length-savedText.length)+' 字，可能是 Word 文本框/艺术字未识别，已保存，请到买家端检查');
-      } else {
-        toast('产品已保存（共 '+ savedText.length +' 字）');
+
+    // 前端自动重试：Supabase 免费层偶发 fetch failed，点一次保存自动重试 2 次，提升成功率
+    let lastErr, lastData, lastRes;
+    for(let attempt=0; attempt<3; attempt++){
+      try{
+        const res=await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        const data=await res.json();
+        lastRes=res; lastData=data;
+        if(res.ok && data.ok){
+          const savedDesc = (data.product && data.product.desc) || '';
+          const stripTags = (s)=>String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').trim();
+          const beforeText = stripTags(descBefore);
+          const savedText = stripTags(savedDesc);
+          if(beforeText.length>0 && savedText.length < beforeText.length*0.95){
+            toast('⚠️ 保存后文字比提交时少 '+(beforeText.length-savedText.length)+' 字，可能是 Word 文本框/艺术字未识别，已保存，请到买家端检查');
+          } else {
+            toast('产品已保存（共 '+ savedText.length +' 字）');
+          }
+          closeProdModal(); load(); return;
+        }
+        // 业务错误直接抛出，不再重试
+        throw new Error(data.message || '保存失败');
+      }catch(e){
+        lastErr=e;
+        console.error('saveProduct attempt', attempt, e);
+        if(attempt < 2){
+          if(e.message && e.message.includes('fetch failed')){
+            toast('云端连接抖动，正在自动重试…' + (attempt+1) + '/2');
+          } else {
+            toast('保存失败，正在自动重试…');
+          }
+          await new Promise(r=>setTimeout(r, 800*(attempt+1)));
+        }
       }
-      closeProdModal(); load();
     }
-    else toast('保存失败' + (data.message?('：'+data.message):''));
+
+    // 三次都失败才弹最终错误，保留弹窗让用户可以再点保存
+    const msg = (lastData && lastData.message) || (lastErr && lastErr.message) || '网络错误';
+    toast('保存失败：' + msg + '。可再次点击「保存产品」重试');
   }catch(e){
     console.error('saveProduct error', e);
     toast('保存出错：'+e.message);
