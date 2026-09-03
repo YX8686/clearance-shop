@@ -32,8 +32,9 @@
   .panel{background:#fff;padding:16px;border-bottom:1px solid #f0ece4;max-width:480px;margin:0 auto}
   .panel .name{font-size:20px;font-weight:700}
   .panel .price{color:#c0392b;font-weight:700;font-size:24px;margin-top:8px}
-  .subtitle-box{max-width:480px;margin:12px auto 0;background:#f9f6f2;border-radius:10px;padding:14px 16px;font-size:13px;line-height:1.7;color:#5b5147;border:1px solid #ebe5dc;box-sizing:border-box}
+  .subtitle-box{max-width:480px;margin:12px auto 0;background:#f9f6f2;border-radius:10px;padding:14px 16px;font-size:13px;line-height:1.7;color:#5b5147;border:1px solid #ebe5dc;box-sizing:border-box;white-space:pre-wrap}
   .subtitle-box:empty{display:none}
+  .subtitle-box::before{content:"• ";color:#000;font-weight:700}
   .panel .price small{font-size:13px;font-weight:400}
   .panel .orig{color:#bbb;font-size:14px;text-decoration:line-through;margin-left:8px}
   .panel .stock{font-size:12px;color:#9a8f82;margin-top:6px}
