@@ -35,6 +35,37 @@
   .subtitle-box{max-width:480px;margin:12px auto 0;background:#f9f6f2;border-radius:10px;padding:14px 16px;font-size:13px;line-height:1.7;color:#5b5147;border:1px solid #ebe5dc;box-sizing:border-box;white-space:pre-wrap}
   .subtitle-box:empty{display:none}
   .subtitle-box::before{content:"• ";color:#000;font-weight:700}
+
+  /* 活动倒计时红条（Style B 修改版：闪动圆点 + 大数字） */
+  .cdbar{background:linear-gradient(135deg,#c0392b,#e0563f);color:#fff;padding:9px 14px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;font-weight:700;letter-spacing:.3px}
+  .cdbar .dot{width:9px;height:9px;border-radius:50%;background:#fff;animation:cdpulse 1s infinite}
+  @keyframes cdpulse{0%{box-shadow:0 0 0 0 rgba(255,255,255,.75)}70%{box-shadow:0 0 0 9px rgba(255,255,255,0)}100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}}
+  .cdbar .num{font-size:18px;color:#fff700;font-weight:800;margin:0 3px}
+  .cdbar.end{background:#6b6b6b;justify-content:center}
+  .cdbar.end .num{color:#fff}
+
+  /* 详情页 SKU 卡片（3 卡/行） */
+  .sku-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 4px}
+  .sku-card{border:1px solid #e6ddd1;background:#fff;border-radius:10px;padding:9px 5px 8px;text-align:center;cursor:pointer;position:relative;transition:all .15s}
+  .sku-card.on{border-color:#c0392b;box-shadow:0 0 0 2px rgba(192,57,43,.15)}
+  .sku-card .sc-name{font-size:12px;font-weight:700;color:#5b5147;line-height:1.3}
+  .sku-card .sc-price{font-size:15px;color:#c0392b;font-weight:800;margin-top:4px}
+  .sku-card .sc-per{font-size:10px;color:#9a8f82;margin-top:2px}
+  .sku-card .sc-best{position:absolute;top:-9px;left:50%;transform:translateX(-50%);background:#c0392b;color:#fff;font-size:9px;font-weight:700;padding:2px 6px;border-radius:10px;white-space:nowrap;animation:scbest 1s infinite}
+  @keyframes scbest{0%,100%{opacity:1}50%{opacity:.5}}
+  .sku-card.off{opacity:.45;cursor:not-allowed}
+  .sku-card.off .sc-name{text-decoration:line-through}
+
+  /* 购物车紧迫文案（方案②：合计正上方） */
+  .urgency{margin:10px 16px 2px;background:#fff5f3;border:1px solid #f3c9c2;border-radius:10px;padding:10px 12px}
+  .urgency .u-title{color:#c0392b;font-weight:800;font-size:13px;display:flex;align-items:center;gap:6px}
+  .urgency .u-line{color:#8a6f63;font-size:12px;line-height:1.55;margin-top:5px}
+  .urgency .u-finger{text-align:center;color:#c0392b;font-weight:800;font-size:13px;margin-top:5px;animation:uffinger .9s infinite}
+  @keyframes uffinger{0%,100%{transform:translateY(0)}50%{transform:translateY(4px)}}
+
+  /* 详情页底部双按钮 */
+  .bar .add2cart{flex:1;background:#c0392b;color:#fff;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer}
+  .bar .buynow{flex:1;background:#fff;color:#c0392b;border:2px solid #c0392b;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer}
   .panel .price small{font-size:13px;font-weight:400}
   .panel .orig{color:#bbb;font-size:14px;text-decoration:line-through;margin-left:8px}
   .panel .stock{font-size:12px;color:#9a8f82;margin-top:6px}
@@ -133,6 +164,9 @@
 </head>
 <body>
   <div class="nav"><a href="/">← 返回商城</a></div>
+  <div class="cdbar" id="cdbar" style="display:none">
+    <span class="dot"></span><span>距活动结束仅</span><span class="num" id="cdNum">--</span><span id="cdUnit">小时</span><span>　抢完提前截止</span>
+  </div>
   <div class="herowrap">
     <img class="hero" id="hero" src="" loading="eager" decoding="async">
     <div class="soldout-veil" id="soldVeil" style="display:none"></div>
@@ -142,6 +176,7 @@
     <div class="name" id="pName"></div>
     <div class="price" id="pPrice"></div>
     <div class="stock" id="pStock"></div>
+    <div class="sku-cards" id="skuCards" style="display:none"></div>
   </div>
   <div class="subtitle-box" id="pSubtitle"></div>
   <div class="desc"><h4>商品说明</h4><div class="body" id="pDesc"></div></div>
@@ -155,8 +190,9 @@
   </div>
 
   <div class="bar">
-    <button class="home" onclick="location.href='/'">🏠 商城</button>
-    <button class="buy" id="buyBtn" onclick="buy()">加入购物车</button>
+    <button class="home" onclick="location.href='/'">🏠</button>
+    <button class="add2cart" id="addBtn" onclick="addToCartSelected(false)">加入购物车</button>
+    <button class="buynow" id="buyNowBtn" onclick="addToCartSelected(true)">直接购买</button>
   </div>
 
   <!-- SKU 选择弹窗 -->
@@ -203,6 +239,12 @@
   <div class="drawer" id="drawer">
     <h3>购物车 <span class="cls" onclick="closeCart()">×</span></h3>
     <div class="items" id="cartItems"></div>
+    <div class="urgency">
+      <div class="u-title">⚠️ 库存告急 · 抢完即下架</div>
+      <div class="u-line">活动链接随时可能失效，未付款不保留</div>
+      <div class="u-line">立刻点击下方去结算，付款后才锁定库存</div>
+      <div class="u-finger">👇 请立刻支付</div>
+    </div>
     <div class="foot">
       <div class="tot"><span>合计</span><b id="cartTotal">¥0</b></div>
       <div class="btns">
@@ -270,7 +312,7 @@ function set(){
   const pSt = (P.stock!=null && P.stock!=='') ? Number(P.stock) : null;
   document.getElementById('pStock').innerHTML = isSoldOut(P)
     ? '<span style="color:#c0392b;font-weight:700">已售罄 · 可联系夏天老师询问补货</span>'
-    : (pSt!=null ? ('库存：'+pSt+' 件'+(pSt<=5?'<span style="color:#c0392b">（仅剩少量，欲购从速）</span>':'')) : '');
+    : '库存告急 · 抢完即下架' + (pSt!=null ? '<span style="color:#c0392b">（余'+pSt+'件）</span>' : '');
   document.getElementById('pDesc').innerHTML = P.desc||'';
 
   // 有 SKU 时，“该活动链接实际包含”不再固定展示，改为在 SKU 弹窗里随选随显
@@ -289,17 +331,71 @@ function set(){
     document.getElementById('detailList').innerHTML = details.map(u=>`<img src="${u}" alt="详情图" loading="lazy" decoding="async">`).join('');
   }
 
-  // 底部按钮文案 + 售罄禁用
-  const buyBtn = document.getElementById('buyBtn');
+  // 底部双按钮 + 售罄禁用 + SKU 卡片
+  const addBtn = document.getElementById('addBtn');
+  const buyNowBtn = document.getElementById('buyNowBtn');
   if(isSoldOut(P)){
-    buyBtn.disabled = true;
-    buyBtn.innerHTML = '已售罄';
+    addBtn.disabled = true; addBtn.textContent = '已售罄';
+    buyNowBtn.disabled = true; buyNowBtn.textContent = '已售罄';
     document.getElementById('soldVeil').style.display='block';
     document.getElementById('soldStamp').style.display='block';
+  } else if(hasSkus){
+    renderSkuCards(P);
+    // 默认选中最便宜且有货的规格
+    const firstOk = P.skus.find(s=>{ const st=skuStockOf(P,s); return st==null || st>0; }) || P.skus[0];
+    selectSkuOnPage(P, firstOk.id);
   } else {
-    buyBtn.disabled = false;
-    buyBtn.innerHTML = hasSkus ? '选择规格 <span class="from">加入购物车</span>' : '加入购物车';
+    addBtn.disabled = false; addBtn.textContent = '加入购物车';
+    buyNowBtn.disabled = false; buyNowBtn.textContent = '直接购买';
   }
+}
+
+// 渲染详情页 SKU 卡片（3/行），标记最便宜卡「强烈推荐买它！最划算」
+function renderSkuCards(p){
+  const box = document.getElementById('skuCards');
+  box.style.display = 'grid';
+  const prices = p.skus.map(s=>Number(s.price||p.price||0));
+  const minP = Math.min(...prices);
+  const perBottle = s=>{ const m=String(s.name||'').match(/(\d+)\s*瓶/); const b=m?Number(m[1]):0; return b>0?('<span class="sc-per">单瓶约 ¥'+(Number(s.price||0)/b).toFixed(1)+'</span>'):''; };
+  box.innerHTML = p.skus.map(s=>{
+    const st = skuStockOf(p, s);
+    const off = st!=null && st<=0;
+    const best = (Number(s.price||0)===minP) ? '<div class="sc-best">🔥 强烈推荐买它！最划算</div>' : '';
+    return `<div class="sku-card ${off?'off':''}" ${off?'':`onclick="selectSkuOnPage(P,'${s.id}')"`} data-sku="${s.id}">
+      ${best}
+      <div class="sc-name">${s.name||'规格'}</div>
+      <div class="sc-price">${money(s.price||p.price||0)}</div>
+      ${perBottle(s)}
+    </div>`;
+  }).join('');
+}
+// 在详情页选中某 SKU（同步价格/主图/库存高亮），不弹窗
+function selectSkuOnPage(p, skuId){
+  curSkuId = skuId; curSkuQty = 1;
+  document.querySelectorAll('#skuCards .sku-card').forEach(c=>c.classList.toggle('on', c.dataset.sku===String(skuId)));
+  const sku = p.skus.find(s=>String(s.id)===skuId) || {};
+  const skuImgUrl = sku.image || p.image || '/assets/product-placeholder.svg';
+  const heroEl = document.getElementById('hero'); if(heroEl) heroEl.src = skuImgUrl;
+  document.getElementById('pPrice').innerHTML = money(sku.price||p.price||0) + (p.originalPrice && p.originalPrice>Number(sku.price||0)?'<span class="orig">'+money(p.originalPrice)+'</span>':'');
+  const st = skuStockOf(p, sku);
+  document.getElementById('pStock').innerHTML = (st!=null && st<=0)
+    ? '<span style="color:#c0392b;font-weight:700">该规格已售罄</span>'
+    : '库存告急 · 抢完即下架' + (st!=null?'<span style="color:#c0392b">（余'+st+'件）</span>':'');
+}
+// 底部双按钮：加入购物车 / 直接购买（合并付款）
+function addToCartSelected(quick){
+  if(isSoldOut(P)){ alert('该商品已售罄，看看其他宝贝吧～'); return; }
+  if(hasSkus(P) && !curSkuId){
+    const firstOk = P.skus.find(s=>{ const st=skuStockOf(P,s); return st==null || st>0; }) || P.skus[0];
+    curSkuId = firstOk.id;
+  }
+  const key = getCartKey(P, curSkuId);
+  const sku = curSkuId ? (P.skus||[]).find(s=>String(s.id)===curSkuId) : null;
+  const st = sku ? skuStockOf(P, sku) : ((P.stock!=null&&P.stock!=='')?Number(P.stock):null);
+  if(st!=null && st<=0){ alert('该规格已售罄，请选择其他规格'); return; }
+  cart[key] = (cart[key]||0) + 1;
+  saveCart();
+  if(quick) openCheckout(); else openCart();
 }
 
 function cartCount(){ return Object.values(cart).reduce((a,b)=>a+b,0); }
@@ -559,7 +655,27 @@ function submitOrder(){
     }).catch(e=>alert('网络错误：'+e.message+'\n\n请检查是否已双击桌面图标启动商城服务。'));
 }
 
-set(); updateBadge(); checkPendingOrders();
+// 活动倒计时（Style B 修改版）：剩 >1 小时显「小时」，最后 1 小时显「分钟」，归零显「活动已结束」
+function startCountdown(){
+  const bar=$('#cdbar'), num=$('#cdNum'), unit=$('#cdUnit');
+  const dl=(CONFIG&&CONFIG.activityDeadline)||'';
+  if(!dl){ bar.style.display='none'; return; }
+  const target=new Date(dl);
+  if(isNaN(target.getTime())){ bar.style.display='none'; return; }
+  function tick(){
+    const diff=target.getTime()-Date.now();
+    if(diff<=0){ bar.style.display='flex'; bar.classList.add('end'); bar.innerHTML='活动已结束'; return; }
+    const hrs=Math.floor(diff/3600000);
+    const mins=Math.floor(diff/60000);
+    bar.style.display='flex'; bar.classList.remove('end');
+    if(diff>=3600000){ num.textContent=hrs; unit.textContent='小时'; }
+    else { num.textContent=mins; unit.textContent='分钟'; }
+    setTimeout(tick,1000);
+  }
+  tick();
+}
+
+set(); updateBadge(); checkPendingOrders(); startCountdown();
 </script>
 </body>
 </html>

@@ -223,7 +223,8 @@ const DEFAULT_CONFIG = {
   bankHolder: '',
   announcement: '',
   shareImage: '',
-  hiddenCategories: []
+  hiddenCategories: [],
+  activityDeadline: ''
 };
 
 let products = [];
@@ -830,6 +831,7 @@ const server = http.createServer(async (req, res)=>{
         if(body.shopName!=null) config.shopName=String(body.shopName).slice(0,50);
         if(body.contactName!=null) config.contactName=String(body.contactName).slice(0,30);
         if(body.announcement!=null) config.announcement=String(body.announcement).slice(0,300);
+        if(body.activityDeadline!=null) config.activityDeadline=String(body.activityDeadline).slice(0,50);
         if(body.bankName!=null) config.bankName=String(body.bankName).slice(0,50);
         if(body.bankAccount!=null) config.bankAccount=String(body.bankAccount).slice(0,60);
         if(body.bankHolder!=null) config.bankHolder=String(body.bankHolder).slice(0,20);

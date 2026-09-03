@@ -28,6 +28,21 @@
   .notify-text{display:inline-block;padding-right:60px}
   @keyframes notifyScroll{0%{transform:translateX(0)}100%{transform:translateX(-100%)}}
 
+  /* 活动倒计时红条（Style B 修改版：闪动圆点 + 大数字） */
+  .cdbar{background:linear-gradient(135deg,#c0392b,#e0563f);color:#fff;padding:9px 14px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;font-weight:700;letter-spacing:.3px}
+  .cdbar .dot{width:9px;height:9px;border-radius:50%;background:#fff;animation:cdpulse 1s infinite}
+  @keyframes cdpulse{0%{box-shadow:0 0 0 0 rgba(255,255,255,.75)}70%{box-shadow:0 0 0 9px rgba(255,255,255,0)}100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}}
+  .cdbar .num{font-size:18px;color:#fff700;font-weight:800;margin:0 3px}
+  .cdbar.end{background:#6b6b6b;justify-content:center}
+  .cdbar.end .num{color:#fff}
+
+  /* 购物车紧迫文案（方案②：合计正上方） */
+  .urgency{margin:10px 16px 2px;background:#fff5f3;border:1px solid #f3c9c2;border-radius:10px;padding:10px 12px}
+  .urgency .u-title{color:#c0392b;font-weight:800;font-size:13px;display:flex;align-items:center;gap:6px}
+  .urgency .u-line{color:#8a6f63;font-size:12px;line-height:1.55;margin-top:5px}
+  .urgency .u-finger{text-align:center;color:#c0392b;font-weight:800;font-size:13px;margin-top:5px;animation:uffinger .9s infinite}
+  @keyframes uffinger{0%,100%{transform:translateY(0)}50%{transform:translateY(4px)}}
+
   /* 分类导航 */
   .catbar{position:sticky;top:46px;z-index:18;background:#f6f3ee;padding:6px 10px 3px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
   .catbar::-webkit-scrollbar{display:none}
@@ -50,6 +65,7 @@
   .card .name{font-size:13px;font-weight:600;line-height:1.2;cursor:pointer;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
   .card .desc{font-size:11px;color:#9a8f82;margin:1px 0 0;line-height:1.2;flex:0 0 auto;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
   .card .price{color:#c0392b;font-weight:700;font-size:14px;margin-top:1px;flex:0 0 auto}
+  .card .unitline{font-size:11px;color:#7a6f62;margin-top:3px;line-height:1.3;flex:0 0 auto}
   .card .price small{font-size:10px}
   .card .orig{color:#bbb;font-size:10px;text-decoration:line-through;margin-left:3px;font-weight:400}
   .card .add{margin-top:3px;background:#b8743f;color:#fff;border:none;border-radius:22px;padding:9px 0;font-size:14px;font-weight:600;cursor:pointer;flex:0 0 auto}
@@ -172,6 +188,11 @@
     </div>
   </div>
 
+  <!-- 活动倒计时红条 -->
+  <div class="cdbar" id="cdbar" style="display:none">
+    <span class="dot"></span><span>距活动结束仅</span><span class="num" id="cdNum">--</span><span id="cdUnit">小时</span><span>　抢完提前截止</span>
+  </div>
+
   <!-- 活动分类导航 -->
   <div class="catbar" id="catbar">
     <div class="catinner" id="catinner"></div>
@@ -223,6 +244,12 @@
   <div class="drawer" id="drawer">
     <h3>购物车 <span class="cls" onclick="closeCart()">×</span></h3>
     <div class="items" id="cartItems"></div>
+    <div class="urgency">
+      <div class="u-title">⚠️ 库存告急 · 抢完即下架</div>
+      <div class="u-line">活动链接随时可能失效，未付款不保留</div>
+      <div class="u-line">立刻点击下方去结算，付款后才锁定库存</div>
+      <div class="u-finger">👇 请立刻支付</div>
+    </div>
     <div class="foot">
       <div class="tot"><span>合计</span><b id="cartTotal">¥0</b></div>
       <div class="btns">
@@ -356,6 +383,21 @@ function isSoldOut(p){
   return st!=null && st<=0;
 }
 
+function productUnitLine(p){
+  const skus = p.skus||[];
+  if(!skus.length){ return '单瓶 ¥'+(p.price||0); }
+  let minPer=Infinity; const bottles=[];
+  skus.forEach(s=>{
+    const m=String(s.name||'').match(/(\d+)\s*瓶/);
+    const b = m?Number(m[1]):0;
+    const price=Number(s.price||p.price||0);
+    if(b>0){ minPer=Math.min(minPer, price/b); if(!bottles.includes(b)) bottles.push(b); }
+  });
+  if(!isFinite(minPer)) return '';
+  bottles.sort((a,b)=>a-b);
+  const tiers = bottles.map(b=>b+'瓶').join('/');
+  return '单瓶低至 ¥'+minPer.toFixed(1)+' · '+tiers+'套装';
+}
 function renderGrid(){
   const g = $('#grid'); g.innerHTML='';
   const visible = PRODUCTS.filter(p=>!isProductHidden(p));
@@ -384,6 +426,7 @@ function renderGrid(){
       <div class="body">
         <div class="name" onclick="goProduct('${p.id}')">${p.name}</div>
         <div class="desc"></div>
+        <div class="unitline">${productUnitLine(p)}</div>
         <div class="price">${priceLabel}${unitLabel}${orig}</div>
         ${btnHtml}
       </div>`;
@@ -707,7 +750,27 @@ function lookupOrder(){
 }
 function closeResult(){ $('#resultModal').classList.remove('show'); }
 
-renderCats(); renderGrid(); updateBadge(); checkPendingOrders();
+// 活动倒计时（Style B 修改版）：剩 >1 小时显「小时」，最后 1 小时显「分钟」，归零显「活动已结束」
+function startCountdown(){
+  const bar=$('#cdbar'), num=$('#cdNum'), unit=$('#cdUnit');
+  const dl=(CONFIG&&CONFIG.activityDeadline)||'';
+  if(!dl){ bar.style.display='none'; return; }
+  const target=new Date(dl);
+  if(isNaN(target.getTime())){ bar.style.display='none'; return; }
+  function tick(){
+    const diff=target.getTime()-Date.now();
+    if(diff<=0){ bar.style.display='flex'; bar.classList.add('end'); bar.innerHTML='活动已结束'; return; }
+    const hrs=Math.floor(diff/3600000);
+    const mins=Math.floor(diff/60000);
+    bar.style.display='flex'; bar.classList.remove('end');
+    if(diff>=3600000){ num.textContent=hrs; unit.textContent='小时'; }
+    else { num.textContent=mins; unit.textContent='分钟'; }
+    setTimeout(tick,1000);
+  }
+  tick();
+}
+
+renderCats(); renderGrid(); updateBadge(); checkPendingOrders(); startCountdown();
 </script>
 </body>
 </html>
