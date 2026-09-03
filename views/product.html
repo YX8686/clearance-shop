@@ -31,6 +31,7 @@
   .soldout-stamp{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-18deg);color:#fff;font-size:26px;font-weight:800;letter-spacing:6px;border:3px solid rgba(255,255,255,.9);border-radius:8px;padding:6px 14px;background:rgba(0,0,0,.28);white-space:nowrap}
   .panel{background:#fff;padding:16px;border-bottom:1px solid #f0ece4;max-width:480px;margin:0 auto}
   .panel .name{font-size:20px;font-weight:700}
+  .panel .subtitle{font-size:14px;color:#c0392b;font-weight:600;margin-top:6px;line-height:1.4}
   .panel .price{color:#c0392b;font-weight:700;font-size:24px;margin-top:8px}
   .panel .price small{font-size:13px;font-weight:400}
   .panel .orig{color:#bbb;font-size:14px;text-decoration:line-through;margin-left:8px}
@@ -137,6 +138,7 @@
   </div>
   <div class="panel">
     <div class="name" id="pName"></div>
+    <div class="subtitle" id="pSubtitle"></div>
     <div class="price" id="pPrice"></div>
     <div class="stock" id="pStock"></div>
   </div>
@@ -256,6 +258,7 @@ function set(){
   document.querySelector('meta[property="og:title"]').setAttribute('content', P.name);
   document.getElementById('hero').src = P.image||'/assets/product-placeholder.svg';
   document.getElementById('pName').textContent = P.name;
+  document.getElementById('pSubtitle').textContent = P.subtitle||'';
   const hasSkus = Array.isArray(P.skus) && P.skus.length>0;
   const minPrice = hasSkus ? Math.min(...P.skus.map(s=>Number(s.price||P.price||0))) : (P.price||0);
   const priceLabel = money(minPrice);
