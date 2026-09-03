@@ -429,7 +429,7 @@ async function loadOthers(){
     fetch('/api/products').then(r=>r.json()),
     fetch('/api/gallery').then(r=>r.json())
   ]);
-  CONFIG=c; PRODUCTS=p; GALLERY=g;
+  CONFIG=c; GALLERY=g;
   document.getElementById('sName').value=CONFIG.shopName||'';
   document.getElementById('sContact').value=CONFIG.contactName||'';
   document.getElementById('sAnn').value=CONFIG.announcement||'';
@@ -438,7 +438,42 @@ async function loadOthers(){
   document.getElementById('sBankHolder').value=CONFIG.bankHolder||'';
   const hiddenCats=Array.isArray(CONFIG.hiddenCategories)?CONFIG.hiddenCategories:[];
   document.querySelectorAll('.cat-hide-cb').forEach(cb=>{ cb.checked=hiddenCats.includes(cb.value); });
+
+  // 避免 15s 轮询导致产品列表不断重建、图片重载、页面闪烁
+  const modalOpen=document.getElementById('prodModal')?.classList.contains('show');
+  const firstPM=!window.pmRendered;
+  const changed=!deepEqual(PRODUCTS,p);
+  if(!firstPM && !changed && !modalOpen){
+    // 数据无变化：只更新引用，保持现有 DOM（包括勾选状态）
+    PRODUCTS=p;
+    return;
+  }
+  if(modalOpen){
+    // 编辑弹窗打开时，后台刷新数据但不重绘列表，避免把用户正在编辑的状态冲掉
+    PRODUCTS=p;
+    return;
+  }
+  PRODUCTS=p;
   renderPM();
+  window.pmRendered=true;
+}
+
+function deepEqual(a,b){
+  if(a===b) return true;
+  if(a==null || b==null) return false;
+  if(typeof a!==typeof b) return false;
+  const ta=Array.isArray(a), tb=Array.isArray(b);
+  if(ta!==tb) return false;
+  if(ta){
+    if(a.length!==b.length) return false;
+    return a.every((x,i)=>deepEqual(x,b[i]));
+  }
+  if(typeof a==='object'){
+    const ka=Object.keys(a), kb=Object.keys(b);
+    if(ka.length!==kb.length) return false;
+    return ka.every(k=>Object.prototype.hasOwnProperty.call(b,k) && deepEqual(a[k],b[k]));
+  }
+  return false;
 }
 
 // ---------- 订单管理 ----------
