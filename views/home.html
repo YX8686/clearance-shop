@@ -757,6 +757,9 @@ function startCountdown(){
   if(!dl){ bar.style.display='none'; return; }
   const target=new Date(dl);
   if(isNaN(target.getTime())){ bar.style.display='none'; return; }
+  // 活动开始时间：未到开始时间则隐藏红条，到点才显示
+  const st=(CONFIG&&CONFIG.activityStart)||'';
+  if(st){ const startTime=new Date(st); if(!isNaN(startTime.getTime()) && Date.now()<startTime.getTime()){ bar.style.display='none'; return; } }
   function tick(){
     const diff=target.getTime()-Date.now();
     if(diff<=0){ bar.style.display='flex'; bar.classList.add('end'); bar.innerHTML='活动已结束'; return; }
