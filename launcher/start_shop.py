@@ -9,7 +9,7 @@ import ctypes
 import subprocess
 import webbrowser
 
-SHOP_DIR = r"C:\Users\华为mate14\WorkBuddy\2026-08-24-15-09-30\clearance-shop"
+SHOP_DIR = r"C:\Users\华为mate14\WorkBuddy\2026-08-24-15-09-30\clearance-shop-github"
 NODE_EXE = r"C:\Users\华为mate14\.workbuddy\binaries\node\versions\22.22.2\node.exe"
 PORT = 4301
 
