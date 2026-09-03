@@ -59,6 +59,16 @@
   .pm-card .pm-acts .hide{background:#f4f1ec;color:#7a6f62;border:1px solid #e0d6c8}
   .pm-card .pm-acts .hide.on{background:#e74c3c;color:#fff;border-color:#e74c3c}
   .pm-card .pm-acts .del{background:#f4f1ec;color:#7a6f62}
+  .pm-card .pm-check{position:absolute;top:8px;left:8px;z-index:2;display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.88);border-radius:6px;padding:3px 6px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  .pm-card .pm-check input{width:16px;height:16px;cursor:pointer;margin:0;vertical-align:middle}
+  .pm-card .pm-check span{font-size:11px;color:#7a6f62}
+  .pm-topbar{display:flex;justify-content:space-between;align-items:center;margin:10px 0;gap:10px;flex-wrap:wrap}
+  .pm-batch{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .pm-batch label{display:flex;align-items:center;gap:4px;font-size:13px;color:#7a6f62;cursor:pointer}
+  .pm-batch label input{width:16px;height:16px;cursor:pointer;margin:0}
+  .pm-batch button.del{background:#e74c3c;color:#fff;border:none;border-radius:8px;padding:10px 16px;font-size:14px;cursor:pointer;font-weight:600}
+  .pm-batch button.del:disabled{opacity:.5;cursor:not-allowed}
+  .pm-count{font-size:13px;color:#9a8f82;white-space:nowrap}
   .btn-primary{border:none;background:#b8743f;color:#fff;border-radius:8px;padding:10px 16px;font-size:14px;cursor:pointer;font-weight:600}
 
   /* 图库 */
@@ -885,6 +895,9 @@ function renderPM(){
   const wrap=document.getElementById('pmWrap');
   const itemsHtml=PRODUCTS.map((p,idx)=>`
     <div class="pm-card" draggable="true" data-id="${p.id}" data-idx="${idx}">
+      <label class="pm-check" onclick="event.stopPropagation()" ondragstart="event.stopPropagation();return false" onmousedown="event.stopPropagation()">
+        <input type="checkbox" class="pm-sel" value="${p.id}" onchange="updateBatchDelete()" onclick="event.stopPropagation()">
+      </label>
       <img class="img" src="${p.image||'/assets/products/default.svg'}" ${idx>=6?'loading="lazy"':''} decoding="async" onload="this.classList.add('loaded')" onerror="this.src='/assets/products/default.svg';this.classList.add('loaded')">
       <div class="name">${p.name||'未命名'}</div>
       <div class="price">${money(p.price||0)} <span style="color:#bbb;text-decoration:line-through;font-size:12px">${p.originalPrice?money(p.originalPrice):''}</span></div>
@@ -893,13 +906,16 @@ function renderPM(){
         <button class="edit" onclick="editProduct('${p.id}')">编辑</button>
         <button class="hide ${p.hidden?'on':''}" onclick="toggleHidden('${p.id}')">${p.hidden?'上架':'隐藏'}</button>
         <button class="sold ${p.forceSoldOut?'on':''}" onclick="toggleForceSoldOut('${p.id}')">${p.forceSoldOut?'在售':'售罄'}</button>
-        <button class="del" onclick="deleteProduct('${p.id}')">删除</button>
       </div>
     </div>
   `).join('');
   wrap.innerHTML=`
-    <div style="display:flex;justify-content:space-between;align-items:center;margin:10px 0">
-      <div style="font-size:13px;color:#9a8f82">共 ${PRODUCTS.length} 个产品 · 拖拽卡片可调整前台展示顺序</div>
+    <div class="pm-topbar">
+      <div class="pm-batch">
+        <label><input type="checkbox" id="pmSelectAll" onchange="toggleSelectAll()"> 全选</label>
+        <button type="button" id="pmBatchDel" class="del" onclick="batchDelete()" disabled>删除选中产品 (0)</button>
+      </div>
+      <div class="pm-count">共 ${PRODUCTS.length} 个产品 · 拖拽卡片可调整前台展示顺序</div>
       <button class="btn-primary" onclick="newProduct()">+ 新增产品</button>
     </div>
     <div class="pm-grid" id="pmGrid">${itemsHtml}</div>
@@ -1151,25 +1167,15 @@ function applyDescColor(hex){
   t.focus();
   const sel=window.getSelection();
   if(!sel || !sel.rangeCount){ return; }
-  const range=sel.getRangeAt(0);
-  const color = hex || 'inherit';
+  const color = hex || '#000000'; // 空=正常/黑色
   if(!sel.isCollapsed){
-    const span=document.createElement('span');
-    span.style.color=color;
-    try{
-      range.surroundContents(span);
-      sel.removeAllRanges();
-      const r=document.createRange();
-      r.setStartAfter(span); r.collapse(true);
-      sel.addRange(r);
-    }catch(e){
-      // 选区跨多个块元素时 surroundContents 会失败，退回 execCommand
-      try{ document.execCommand('foreColor',false, hex||'#000000'); }catch(_){}
-    }
+    // execCommand('foreColor') 会正确处理嵌套颜色 span，能覆盖已有红色
+    try{ document.execCommand('foreColor',false, color); }catch(_){}
   } else {
-    // 未选中文字：插入一个带颜色（或继承色）的空 span，并把光标放进去，便于直接打字
+    // 未选中文字：插入一个带颜色的空 span，并把光标放进去，便于直接打字
     const span=document.createElement('span');
     span.style.color=color;
+    const range=sel.getRangeAt(0);
     range.insertNode(span);
     const r=document.createRange();
     r.setStart(span,0); r.collapse(true);
@@ -1722,6 +1728,30 @@ async function deleteProduct(id){
   if(!window.confirm('确定删除这个产品？删除后前台不再显示。')) return;
   await fetch('/api/products/'+id,{method:'DELETE'});
   toast('已删除'); load();
+}
+function updateBatchDelete(){
+  const ids=Array.from(document.querySelectorAll('.pm-sel:checked')).map(cb=>cb.value);
+  const btn=document.getElementById('pmBatchDel');
+  const all=document.getElementById('pmSelectAll');
+  if(btn){ btn.textContent='删除选中产品 ('+ids.length+')'; btn.disabled=ids.length===0; }
+  if(all){ all.checked=PRODUCTS.length>0 && ids.length===PRODUCTS.length; }
+}
+function toggleSelectAll(){
+  const all=document.getElementById('pmSelectAll').checked;
+  document.querySelectorAll('.pm-sel').forEach(cb=>cb.checked=all);
+  updateBatchDelete();
+}
+async function batchDelete(){
+  const ids=Array.from(document.querySelectorAll('.pm-sel:checked')).map(cb=>cb.value).filter(Boolean);
+  if(!ids.length){ toast('请先勾选要删除的产品'); return; }
+  const names=ids.map(id=>(PRODUCTS.find(p=>p.id===id)||{}).name).filter(Boolean);
+  if(!window.confirm('确定删除以下 '+ids.length+' 个产品？删除后不可恢复。\n\n'+names.join('\n'))) return;
+  let ok=0;
+  for(const id of ids){
+    try{ const r=await fetch('/api/products/'+id,{method:'DELETE'}); if(r.ok||r.status===404) ok++; }
+    catch(e){ console.error('delete',id,e); }
+  }
+  toast('已删除 '+ok+' / '+ids.length+' 个产品'); load();
 }
 
 // ---------- 图库 ----------
