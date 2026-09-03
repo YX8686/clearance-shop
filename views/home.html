@@ -61,16 +61,16 @@
   .imgwrap .img{width:100%;height:100%;object-fit:cover;display:block}
   .soldout-veil{position:absolute;inset:0;background:rgba(0,0,0,.5)}
   .soldout-stamp{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-18deg);color:#fff;font-size:22px;font-weight:800;letter-spacing:5px;border:3px solid rgba(255,255,255,.9);border-radius:8px;padding:5px 12px;background:rgba(0,0,0,.28);white-space:nowrap}
-  .img-corner{position:absolute;right:6px;bottom:6px;background:rgba(184,116,63,.92);color:#fff;font-size:10px;font-weight:600;padding:4px 8px;border-radius:12px;box-shadow:0 2px 6px rgba(0,0,0,.2);pointer-events:none}
   .card .body{padding:5px 6px 6px;display:flex;flex-direction:column;flex:1}
   .card .name{font-size:13px;font-weight:600;line-height:1.2;cursor:pointer;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
   .card .desc{font-size:11px;color:#9a8f82;margin:1px 0 0;line-height:1.2;flex:0 0 auto;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
-  .card .price{color:#c0392b;font-weight:700;font-size:14px;margin-top:1px;flex:0 0 auto}
+  .card .price{color:#c0392b;font-weight:700;font-size:14px;margin-top:1px;flex:0 0 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:baseline;gap:3px}
   .card .unitline{font-size:11px;color:#7a6f62;margin-top:3px;line-height:1.3;flex:0 0 auto}
-  .card .price small{font-size:10px}
-  .card .orig{color:#bbb;font-size:10px;text-decoration:line-through;margin-left:3px;font-weight:400}
-  .card .tier-tag{display:inline-flex;align-items:center;background:#fff7ef;border:1px solid #f0e6d8;border-radius:10px;padding:1px 6px;font-size:10px;color:#7a5230;margin-left:4px;vertical-align:1px;font-weight:500}
-  .card .add{margin-top:3px;background:#b8743f;color:#fff;border:none;border-radius:22px;padding:9px 0;font-size:14px;font-weight:600;cursor:pointer;flex:0 0 auto}
+  .card .price small{font-size:10px;flex:none}
+  .card .orig{color:#bbb;font-size:10px;text-decoration:line-through;margin-left:3px;font-weight:400;flex:none}
+  .card .tier-line{font-size:11px;color:#7a5230;margin-top:2px;line-height:1.2;flex:0 0 auto;display:flex;flex-wrap:wrap;gap:4px}
+  .card .tier-tag{display:inline-flex;align-items:center;background:#fff7ef;border:1px solid #f0e6d8;border-radius:10px;padding:1px 6px;font-size:10px;color:#7a5230;font-weight:500}
+  .card .add{margin-top:auto;background:#b8743f;color:#fff;border:none;border-radius:22px;padding:9px 0;font-size:14px;font-weight:600;cursor:pointer;flex:0 0 auto}
   .card .add:active{opacity:.8}
   .card .add:disabled{background:#d8ccba;color:#fff;cursor:not-allowed}
   .card .price .from{font-size:10px;font-weight:400;margin-left:2px}
@@ -388,15 +388,17 @@ function isSoldOut(p){
 function productTierTag(p){
   const skus = p.skus||[];
   if(!skus.length) return '';
-  const bottles=[];
+  const units=[];
+  const seen=new Set();
   skus.forEach(s=>{
-    const m=String(s.name||'').match(/(\d+)\s*瓶/);
-    const b = m?Number(m[1]):0;
-    if(b>0 && !bottles.includes(b)) bottles.push(b);
+    const m=String(s.name||'').match(/(\d+)\s*(瓶|盒|片|组)/);
+    if(!m) return;
+    const b=Number(m[1]); const u=m[2];
+    if(b>0){ const key=b+u; if(!seen.has(key)){ seen.add(key); units.push({b,u}); } }
   });
-  if(!bottles.length) return '';
-  bottles.sort((a,b)=>a-b);
-  return `<span class="tier-tag">${bottles.map(b=>b+'瓶').join('/')}特惠</span>`;
+  if(!units.length) return '';
+  units.sort((a,b)=>a.b-b.b);
+  return `<span class="tier-tag">${units.map(x=>x.b+x.u).join('/')}特惠</span>`;
 }
 function renderGrid(){
   const g = $('#grid'); g.innerHTML='';
@@ -417,11 +419,9 @@ function renderGrid(){
            <img class="img" src="${p.image||'/assets/product-placeholder.svg'}" loading="lazy" decoding="async">
            <div class="soldout-veil"></div>
            <div class="soldout-stamp">已售罄</div>
-           <div class="img-corner">点击查看</div>
          </div>`
       : `<div class="imgwrap" onclick="goProduct('${p.id}')">
            <img class="img" src="${p.image||'/assets/product-placeholder.svg'}" loading="lazy" decoding="async">
-           <div class="img-corner">点击查看</div>
          </div>`;
     const btnHtml = soldOut
       ? `<button class="add" disabled>已售罄</button>`
@@ -431,7 +431,8 @@ function renderGrid(){
       <div class="body">
         <div class="name" onclick="goProduct('${p.id}')">${p.name}</div>
         <div class="desc"></div>
-        <div class="price">${priceLabel}${unitLabel}${tierTag}${orig}</div>
+        <div class="price">${priceLabel}${unitLabel}${orig}</div>
+        ${tierTag?'<div class="tier-line">'+tierTag+'</div>':''}
         ${btnHtml}
       </div>`;
     div.querySelector('.desc').textContent = stripTags(p.desc||'');

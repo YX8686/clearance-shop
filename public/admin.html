@@ -390,6 +390,7 @@ let selectedGalUrls=[];
 let currentGalFolder='';
 let pendingIds=new Set(); // 乐观更新尚未被云端确认的订单，15s 轮询时保留本地版本
 let editingSkus=[]; // 当前编辑产品的 SKU 列表
+let configFormFilled=false; // 店铺设置表单是否已回填过，避免轮询覆盖用户输入
 
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',1800); }
 function money(n){ return '¥'+Number(n).toLocaleString('zh-CN'); }
@@ -432,14 +433,18 @@ async function loadOthers(){
     fetch('/api/gallery').then(r=>r.json())
   ]);
   CONFIG=c; GALLERY=g;
-  document.getElementById('sName').value=CONFIG.shopName||'';
-  document.getElementById('sContact').value=CONFIG.contactName||'';
-  document.getElementById('sAnn').value=CONFIG.announcement||'';
-  document.getElementById('sBankName').value=CONFIG.bankName||'';
-  document.getElementById('sBankAccount').value=CONFIG.bankAccount||'';
-  document.getElementById('sBankHolder').value=CONFIG.bankHolder||'';
-  document.getElementById('sStart').value=CONFIG.activityStart||'';
-  document.getElementById('sDeadline').value=CONFIG.activityDeadline||'';
+  // 店铺设置表单只回填一次：后续 15s 轮询不再覆盖用户正在编辑的内容
+  if(!configFormFilled){
+    document.getElementById('sName').value=CONFIG.shopName||'';
+    document.getElementById('sContact').value=CONFIG.contactName||'';
+    document.getElementById('sAnn').value=CONFIG.announcement||'';
+    document.getElementById('sBankName').value=CONFIG.bankName||'';
+    document.getElementById('sBankAccount').value=CONFIG.bankAccount||'';
+    document.getElementById('sBankHolder').value=CONFIG.bankHolder||'';
+    document.getElementById('sStart').value=CONFIG.activityStart||'';
+    document.getElementById('sDeadline').value=CONFIG.activityDeadline||'';
+    configFormFilled=true;
+  }
   const hiddenCats=Array.isArray(CONFIG.hiddenCategories)?CONFIG.hiddenCategories:[];
   document.querySelectorAll('.cat-hide-cb').forEach(cb=>{ cb.checked=hiddenCats.includes(cb.value); });
 

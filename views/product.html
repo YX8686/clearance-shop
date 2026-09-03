@@ -32,9 +32,8 @@
   .panel{background:#fff;padding:16px;border-bottom:1px solid #f0ece4;max-width:480px;margin:0 auto}
   .panel .name{font-size:20px;font-weight:700}
   .panel .price{color:#c0392b;font-weight:700;font-size:24px;margin-top:8px}
-  .subtitle-box{max-width:480px;margin:12px auto 0;background:#f9f6f2;border-radius:10px;padding:14px 16px;font-size:13px;line-height:1.7;color:#5b5147;border:1px solid #ebe5dc;box-sizing:border-box;white-space:pre-wrap}
+  .subtitle-box{max-width:480px;margin:0 auto;background:#f9f6f2;border-radius:10px;padding:14px 16px;font-size:13px;line-height:1.7;color:#5b5147;border:1px solid #ebe5dc;box-sizing:border-box;white-space:pre-wrap}
   .subtitle-box:empty{display:none}
-  .subtitle-box::before{content:"• ";color:#000;font-weight:700}
 
   /* 活动倒计时红条（Style B 修改版：闪动圆点 + 大数字） */
   .cdbar{background:linear-gradient(135deg,#c0392b,#e0563f);color:#fff;padding:9px 14px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;font-weight:700;letter-spacing:.3px}
@@ -48,7 +47,7 @@
   .sku-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 4px}
   .sku-card{border:1px solid #e6ddd1;background:#fff;border-radius:10px;padding:9px 5px 8px;text-align:center;cursor:pointer;position:relative;transition:all .15s}
   .sku-card.on{border-color:#c0392b;box-shadow:0 0 0 2px rgba(192,57,43,.15)}
-  .sku-card .sc-name{font-size:12px;font-weight:700;color:#5b5147;line-height:1.3}
+  .sku-card .sc-name{font-size:12px;font-weight:700;color:#5b5147;line-height:1.3;word-break:keep-all;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sku-card .sc-price{font-size:15px;color:#c0392b;font-weight:800;margin-top:4px}
   .sku-card .sc-per{font-size:10px;color:#9a8f82;margin-top:2px}
   .sku-card .sc-best{position:absolute;top:-9px;left:50%;transform:translateX(-50%);background:#c0392b;color:#fff;font-size:9px;font-weight:700;padding:2px 6px;border-radius:10px;white-space:nowrap;animation:scbest 1s infinite}
@@ -178,8 +177,8 @@
     <div class="stock" id="pStock"></div>
     <div class="sku-cards" id="skuCards" style="display:none"></div>
   </div>
-  <div class="subtitle-box" id="pSubtitle"></div>
-  <div class="desc"><h4>商品说明</h4><div class="body" id="pDesc"></div></div>
+  <div class="desc" style="margin-top:12px;"><h4>产品特点</h4><div class="subtitle-box" id="pSubtitle"></div></div>
+  <div class="desc"><h4>关于这个产品，我想说说真心话</h4><div class="body" id="pDesc"></div></div>
   <div class="bundle" id="bundleBox" style="display:none">
     <h4>该活动链接实际包含：</h4>
     <div id="bundleList"></div>
@@ -350,26 +349,33 @@ function set(){
   }
 }
 
-// 渲染详情页 SKU 卡片（3/行）。「强烈推荐买它！最划算」只在「特惠单品」类目显示，且按单瓶均价最低打标。
+// 渲染详情页 SKU 卡片。「强烈推荐买它！最划算」只在「特惠单品」类目显示，且按单件均价最低打标。
 function perBottlePrice(s){
-  const m=String(s.name||'').match(/(\d+)\s*瓶/);
-  const b=m?Number(m[1]):0;
+  const m=String(s.name||'').match(/(\d+)\s*(瓶|盒|片|组)/);
+  if(!m) return {per:Infinity, unit:'件'};
+  const b=Number(m[1]); const unit=m[2];
   const price=Number(s.price||0);
-  return (b>0 && price>0) ? (price/b) : Infinity;
+  return (b>0 && price>0) ? {per:price/b, unit:unit} : {per:Infinity, unit:unit};
 }
 function renderSkuCards(p){
   const box = document.getElementById('skuCards');
   box.style.display = 'grid';
+  const n = p.skus.length;
+  // 2 个 SKU 时一左一右各占 50%，3 个及以上保持 3 列
+  box.style.gridTemplateColumns = n===2 ? 'repeat(2,1fr)' : 'repeat(3,1fr)';
   const isSingleItem = String(p.category||'').trim() === '特惠单品';
-  const perPrices = p.skus.map(perBottlePrice);
-  const minPer = Math.min(...perPrices);
+  const perInfos = p.skus.map(perBottlePrice);
+  const minPer = Math.min(...perInfos.map(x=>x.per));
   const showBest = isSingleItem && isFinite(minPer);
-  const perBottleHtml = s=>{ const per=perBottlePrice(s); return isFinite(per)?('<span class="sc-per">单瓶约 ¥'+per.toFixed(1)+'</span>'):''; };
-  box.innerHTML = p.skus.map(s=>{
+  const perBottleHtml = s=>{
+    const info=perBottlePrice(s);
+    return isFinite(info.per)?('<span class="sc-per">单'+info.unit+'约 ¥'+info.per.toFixed(1)+'</span>'):'';
+  };
+  box.innerHTML = p.skus.map((s,i)=>{
     const st = skuStockOf(p, s);
     const off = st!=null && st<=0;
-    const per = perBottlePrice(s);
-    const best = (showBest && isFinite(per) && per===minPer) ? '<div class="sc-best">🔥 强烈推荐买它！最划算</div>' : '';
+    const info = perBottlePrice(s);
+    const best = (showBest && isFinite(info.per) && info.per===minPer) ? '<div class="sc-best">🔥 强烈推荐买它！最划算</div>' : '';
     return `<div class="sku-card ${off?'off':''}" ${off?'':`onclick="selectSkuOnPage(P,'${s.id}')"`} data-sku="${s.id}">
       ${best}
       <div class="sc-name">${s.name||'规格'}</div>
@@ -434,10 +440,18 @@ function getCartKey(p, skuId){ return skuId ? (p.id+'#'+skuId) : p.id; }
 function getCartInfo(key){
   const [pid, skuId] = key.split('#');
   const p = PRODUCTS.find(x=>x.id===pid) || {name:'已下架商品'};
-  if(!skuId) return {p, skuId:'', name:p.name, price:p?p.price:0, image:p?p.image||p.images&&p.images[0]:''};
+  if(!skuId){
+    const image = p?p.image||p.images&&p.images[0]:'';
+    return {p, skuId:'', name:p.name, price:p?p.price:0, image, bundleItems:p.bundleItems||[]};
+  }
   const sku = (p.skus||[]).find(s=>String(s.id)===skuId);
-  if(!sku) return {p, skuId, name:p.name, price:p?p.price:0, image:p?p.image||p.images&&p.images[0]:''};
-  return {p, skuId, name: p.name+' · '+sku.name, price: Number(sku.price||p.price||0), image: sku.image||p.image||''};
+  if(!sku){
+    const image = p?p.image||p.images&&p.images[0]:'';
+    return {p, skuId, name:p.name, price:p?p.price:0, image, bundleItems:p.bundleItems||[]};
+  }
+  const image = sku.image||p.image||'';
+  const bundleItems = (sku.bundleItems&&sku.bundleItems.length)?sku.bundleItems:(p.bundleItems||[]);
+  return {p, skuId, name: p.name+' · '+sku.name, price: Number(sku.price||p.price||0), image, bundleItems};
 }
 
 function openSkuModal(p, quickBuy){
@@ -554,10 +568,18 @@ function renderCart(){
   else {
     ids.forEach(id=>{
       const info=getCartInfo(id); if(!info.p || info.name==='已下架商品') return;
+      const skuName = info.skuId ? (info.p.skus||[]).find(s=>String(s.id)===info.skuId)?.name || '' : '';
+      const titleHtml = `<div style="font-weight:600;color:#3a322b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${info.p.name}${skuName?' · '+skuName:''}</div>`;
+      let detailHtml = '';
+      if(info.skuId && info.bundleItems && info.bundleItems.length){
+        detailHtml = `<div style="font-size:11px;color:#7a6f62;margin-top:3px">实发：${info.bundleItems.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${Number(cart[id])>1?' ×'+cart[id]:''}`).join('、')}</div>`;
+      } else if(skuName){
+        detailHtml = `<div style="font-size:11px;color:#7a6f62;margin-top:3px">规格：${skuName}</div>`;
+      }
       const row=document.createElement('div'); row.className='item';
       row.innerHTML=`
         <img src="${info.image||'/assets/product-placeholder.svg'}" loading="lazy" decoding="async">
-        <div class="info"><div class="n">${info.name}</div><div class="p">${money(info.price)}</div></div>
+        <div class="info"><div class="n" style="line-height:1.5">${titleHtml}${detailHtml}</div><div class="p" style="margin-top:4px">${money(info.price)}</div></div>
         <div class="stepper"><button onclick="changeQty('${id}',-1)">−</button><span>${cart[id]}</span><button onclick="changeQty('${id}',1)">+</button></div>`;
       box.appendChild(row);
     });
