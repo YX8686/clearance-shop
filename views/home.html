@@ -64,12 +64,12 @@
   .card .body{padding:5px 6px 6px;display:flex;flex-direction:column;flex:1}
   .card .name{font-size:13px;font-weight:600;line-height:1.2;cursor:pointer;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
   .card .desc{font-size:11px;color:#9a8f82;margin:1px 0 0;line-height:1.2;flex:0 0 auto;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
-  .card .price{color:#c0392b;font-weight:700;font-size:14px;margin-top:1px;flex:0 0 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:baseline;gap:3px}
+  .card .price{color:#c0392b;font-weight:700;font-size:14px;margin-top:1px;flex:0 0 auto;display:flex;align-items:baseline;gap:3px;overflow:hidden}
   .card .unitline{font-size:11px;color:#7a6f62;margin-top:3px;line-height:1.3;flex:0 0 auto}
   .card .price small{font-size:10px;flex:none}
-  .card .orig{color:#bbb;font-size:10px;text-decoration:line-through;margin-left:3px;font-weight:400;flex:none}
+  .card .orig{color:#bbb;font-size:10px;text-decoration:line-through;margin-left:3px;font-weight:400;flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .card .tier-line{font-size:11px;color:#7a5230;margin-top:2px;line-height:1.2;flex:0 0 auto;display:flex;flex-wrap:wrap;gap:4px}
-  .card .tier-tag{display:inline-flex;align-items:center;background:#fff7ef;border:1px solid #f0e6d8;border-radius:10px;padding:1px 6px;font-size:10px;color:#7a5230;font-weight:500}
+  .card .tier-tag{display:inline-flex;align-items:center;background:#fff7ef;border:1px solid #f0e6d8;border-radius:10px;padding:1px 6px;font-size:10px;color:#7a5230;font-weight:500;flex:none}
   .card .add{margin-top:auto;background:#b8743f;color:#fff;border:none;border-radius:22px;padding:9px 0;font-size:14px;font-weight:600;cursor:pointer;flex:0 0 auto}
   .card .add:active{opacity:.8}
   .card .add:disabled{background:#d8ccba;color:#fff;cursor:not-allowed}
@@ -385,20 +385,36 @@ function isSoldOut(p){
   return st!=null && st<=0;
 }
 
+function cn2num(s){
+  if(!s) return 0;
+  if(/^\d+$/.test(s)) return Number(s);
+  const map={一:1,二:2,两:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9,十:10,百:100,千:1000,万:10000,亿:100000000};
+  let n=0, tmp=0;
+  for(let c of s){
+    const v=map[c];
+    if(v==null) continue;
+    if(v>=10){ if(tmp===0) tmp=1; n+=tmp*v; tmp=0; }
+    else { tmp=tmp*10+v; }
+  }
+  return n+tmp;
+}
 function productTierTag(p){
   const skus = p.skus||[];
   if(!skus.length) return '';
   const units=[];
   const seen=new Set();
   skus.forEach(s=>{
-    const m=String(s.name||'').match(/(\d+)\s*(瓶|盒|片|组)/);
+    const m=String(s.name||'').match(/([一二两三四五六七八九十百千万亿\d]+)\s*(大瓶|小瓶|瓶|盒|片|组)/);
     if(!m) return;
-    const b=Number(m[1]); const u=m[2];
-    if(b>0){ const key=b+u; if(!seen.has(key)){ seen.add(key); units.push({b,u}); } }
+    const numStr=m[1]; const u=m[2];
+    const sortVal=cn2num(numStr);
+    if(sortVal<=0) return;
+    const key=numStr+u;
+    if(!seen.has(key)){ seen.add(key); units.push({numStr,u,sortVal}); }
   });
   if(!units.length) return '';
-  units.sort((a,b)=>a.b-b.b);
-  return `<span class="tier-tag">${units.map(x=>x.b+x.u).join('/')}特惠</span>`;
+  units.sort((a,b)=>a.sortVal-b.sortVal);
+  return `<span class="tier-tag">${units.map(x=>cn2num(x.numStr)+x.u).join('/')}特惠</span>`;
 }
 function renderGrid(){
   const g = $('#grid'); g.innerHTML='';
@@ -431,8 +447,7 @@ function renderGrid(){
       <div class="body">
         <div class="name" onclick="goProduct('${p.id}')">${p.name}</div>
         <div class="desc"></div>
-        <div class="price">${priceLabel}${unitLabel}${orig}</div>
-        ${tierTag?'<div class="tier-line">'+tierTag+'</div>':''}
+        <div class="price">${priceLabel}${unitLabel}${orig}${tierTag}</div>
         ${btnHtml}
       </div>`;
     div.querySelector('.desc').textContent = stripTags(p.desc||'');
@@ -574,7 +589,8 @@ function renderCart(){
       const titleHtml = `<div style="font-weight:600;color:#3a322b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${info.p.name}${skuName?' · '+skuName:''}</div>`;
       let detailHtml = '';
       if(info.skuId && info.bundleItems && info.bundleItems.length){
-        detailHtml = `<div style="font-size:11px;color:#7a6f62;margin-top:3px">实发：${info.bundleItems.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${Number(cart[id])>1?' ×'+cart[id]:''}`).join('、')}</div>`;
+        const itemsHtml = info.bundleItems.map(b=>`<div>${b.name} ${b.qty}${b.unit||'件'}${Number(cart[id])>1?' ×'+cart[id]:''}</div>`).join('');
+        detailHtml = `<div style="font-size:11px;color:#7a6f62;margin-top:3px;line-height:1.5">实发：${itemsHtml}</div>`;
       } else if(skuName){
         detailHtml = `<div style="font-size:11px;color:#7a6f62;margin-top:3px">规格：${skuName}</div>`;
       }

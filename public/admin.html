@@ -920,16 +920,19 @@ async function saveSettings(){
   const b64Qr=document.getElementById('sQrPrev').dataset.b64; if(b64Qr) body.paymentQrBase64=b64Qr;
   const b64Wc=document.getElementById('sWcPrev').dataset.b64; if(b64Wc) body.paymentWechatQrBase64=b64Wc;
   const b64Ali=document.getElementById('sAliPrev').dataset.b64; if(b64Ali) body.paymentAlipayQrBase64=b64Ali;
-  let res;
-  try { res = await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
-  catch(e){ toast('网络异常，请重试'); return; }
-  if(!res.ok){
+  // 自动重试一次：Supabase 免费层偶发 fetch failed，避免用户反复点保存
+  let res, lastErr='';
+  for(let i=0;i<2;i++){
+    try { res = await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
+    catch(e){ lastErr=e.message; res=null; }
+    if(res && res.ok) break;
+    if(i===0){ await new Promise(r=>setTimeout(r,600)); continue; }
+  }
+  if(!res || !res.ok){
     let tip='设置保存失败';
-    try { const d=await res.json(); if(d.message) tip += '：'+d.message; } catch(e){}
-    if(res.status>=500 && window.confirm(tip+'\n\n云端同步可能失败，是否重试？')){
-      try { res = await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); } catch(e){ toast('重试仍失败'); return; }
-      if(!res.ok){ toast('重试失败，请稍后再试'); return; }
-    } else if(res.status>=500){ toast(tip); return; }
+    if(lastErr) tip += '：'+lastErr;
+    else { try { const d=await res.json(); if(d.message) tip += '：'+d.message; } catch(e){} }
+    toast(tip); return;
   }
   toast('设置已保存'); load();
 }

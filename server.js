@@ -154,11 +154,12 @@ async function loadKV(key, fallback){
   }
   return readJson(key + '.json', fallback);
 }
-async function saveKV(key, value){
+async function saveKV(key, value, retries){
   if(USE_SUPABASE){
     // 关键修复：失败必须抛错给调用方。之前是 console.error 静默吞掉，
     // 导致前端拿到 {ok:true} 但云端没写入，重启服务后状态回退（症状：商家后台点"确认收款"成功但刷新后订单又回"待处理"）。
-    const { error } = await withRetry(()=>sb.from('shop_data').upsert({ key, value }), 'saveKV:'+key);
+    // retries 可自定义：config 等低频关键配置保存时传入更大重试次数，降低 Supabase 免费层抖动影响。
+    const { error } = await withRetry(()=>sb.from('shop_data').upsert({ key, value }), 'saveKV:'+key, retries);
     if(error) throw new Error('Supabase save error: ' + error.message);
     kvCache.set(key, { ts: Date.now(), value, promise: null }); // 写成功后同步缓存，保证读到自己刚写的数据
     return;
@@ -348,7 +349,7 @@ async function saveOrderRowSync(order){
 // 进程退出前刷盘，防丢单
 process.on('beforeExit', ()=>{ _flushOrderQueue(); flushDirtyProducts().catch(()=>{}); });
 function saveOrders(){ return withLock(()=> saveKV('orders', orders)); } // 仅作整批备份残留，下单/状态变更已改用 saveOrderRow
-function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config)); }
+function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config, 5)); }
 
 // ===== 产品存储加固：每个产品独立存储为 shop_data 的一行（key=product:<id>）=====
 // 旧方案：所有产品塞进 shop_data 的单行(key='products')，产品描述长、数量多后，
