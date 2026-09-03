@@ -61,6 +61,7 @@
   .imgwrap .img{width:100%;height:100%;object-fit:cover;display:block}
   .soldout-veil{position:absolute;inset:0;background:rgba(0,0,0,.5)}
   .soldout-stamp{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-18deg);color:#fff;font-size:22px;font-weight:800;letter-spacing:5px;border:3px solid rgba(255,255,255,.9);border-radius:8px;padding:5px 12px;background:rgba(0,0,0,.28);white-space:nowrap}
+  .img-corner{position:absolute;right:6px;bottom:6px;background:rgba(184,116,63,.92);color:#fff;font-size:10px;font-weight:600;padding:4px 8px;border-radius:12px;box-shadow:0 2px 6px rgba(0,0,0,.2);pointer-events:none}
   .card .body{padding:5px 6px 6px;display:flex;flex-direction:column;flex:1}
   .card .name{font-size:13px;font-weight:600;line-height:1.2;cursor:pointer;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
   .card .desc{font-size:11px;color:#9a8f82;margin:1px 0 0;line-height:1.2;flex:0 0 auto;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
@@ -68,6 +69,7 @@
   .card .unitline{font-size:11px;color:#7a6f62;margin-top:3px;line-height:1.3;flex:0 0 auto}
   .card .price small{font-size:10px}
   .card .orig{color:#bbb;font-size:10px;text-decoration:line-through;margin-left:3px;font-weight:400}
+  .card .tier-tag{display:inline-flex;align-items:center;background:#fff7ef;border:1px solid #f0e6d8;border-radius:10px;padding:1px 6px;font-size:10px;color:#7a5230;margin-left:4px;vertical-align:1px;font-weight:500}
   .card .add{margin-top:3px;background:#b8743f;color:#fff;border:none;border-radius:22px;padding:9px 0;font-size:14px;font-weight:600;cursor:pointer;flex:0 0 auto}
   .card .add:active{opacity:.8}
   .card .add:disabled{background:#d8ccba;color:#fff;cursor:not-allowed}
@@ -383,20 +385,18 @@ function isSoldOut(p){
   return st!=null && st<=0;
 }
 
-function productUnitLine(p){
+function productTierTag(p){
   const skus = p.skus||[];
-  if(!skus.length){ return '单瓶 ¥'+(p.price||0); }
-  let minPer=Infinity; const bottles=[];
+  if(!skus.length) return '';
+  const bottles=[];
   skus.forEach(s=>{
     const m=String(s.name||'').match(/(\d+)\s*瓶/);
     const b = m?Number(m[1]):0;
-    const price=Number(s.price||p.price||0);
-    if(b>0){ minPer=Math.min(minPer, price/b); if(!bottles.includes(b)) bottles.push(b); }
+    if(b>0 && !bottles.includes(b)) bottles.push(b);
   });
-  if(!isFinite(minPer)) return '';
+  if(!bottles.length) return '';
   bottles.sort((a,b)=>a-b);
-  const tiers = bottles.map(b=>b+'瓶').join('/');
-  return '单瓶低至 ¥'+minPer.toFixed(1)+' · '+tiers+'套装';
+  return `<span class="tier-tag">${bottles.map(b=>b+'瓶').join('/')}特惠</span>`;
 }
 function renderGrid(){
   const g = $('#grid'); g.innerHTML='';
@@ -409,6 +409,7 @@ function renderGrid(){
     const minPrice = hasSkus ? Math.min(...p.skus.map(s=>Number(s.price||p.price||0))) : (p.price||0);
     const priceLabel = money(minPrice);
     const unitLabel = hasSkus ? '<small>/起</small>' : '';
+    const tierTag = hasSkus ? productTierTag(p) : '';
     const soldOut = isSoldOut(p);
     // 售罄：主图蒙半透明黑 + 居中斜向右上「已售罄」印章；未售罄保持原图可点进详情
     const imgHtml = soldOut
@@ -416,8 +417,12 @@ function renderGrid(){
            <img class="img" src="${p.image||'/assets/product-placeholder.svg'}" loading="lazy" decoding="async">
            <div class="soldout-veil"></div>
            <div class="soldout-stamp">已售罄</div>
+           <div class="img-corner">点击查看</div>
          </div>`
-      : `<img class="img" src="${p.image||'/assets/product-placeholder.svg'}" loading="lazy" decoding="async" onclick="goProduct('${p.id}')">`;
+      : `<div class="imgwrap" onclick="goProduct('${p.id}')">
+           <img class="img" src="${p.image||'/assets/product-placeholder.svg'}" loading="lazy" decoding="async">
+           <div class="img-corner">点击查看</div>
+         </div>`;
     const btnHtml = soldOut
       ? `<button class="add" disabled>已售罄</button>`
       : `<button class="add" onclick="openSkuModal('${p.id}')">加入购物车</button>`;
@@ -426,8 +431,7 @@ function renderGrid(){
       <div class="body">
         <div class="name" onclick="goProduct('${p.id}')">${p.name}</div>
         <div class="desc"></div>
-        <div class="unitline">${productUnitLine(p)}</div>
-        <div class="price">${priceLabel}${unitLabel}${orig}</div>
+        <div class="price">${priceLabel}${unitLabel}${tierTag}${orig}</div>
         ${btnHtml}
       </div>`;
     div.querySelector('.desc').textContent = stripTags(p.desc||'');
@@ -564,17 +568,19 @@ function renderCart(){
   else {
     ids.forEach(id=>{
       const info=getCartInfo(id); if(!info.p || info.name==='已下架商品') return;
-      // 有 SKU 时直接显示发货明细，不显示产品标题
-      let titleHtml = '';
+      // 标题：产品名 + SKU 规格；明细：实发货物
+      const skuName = info.skuId ? (info.p.skus||[]).find(s=>String(s.id)===info.skuId)?.name || '' : '';
+      const titleHtml = `<div style="font-weight:600;color:#3a322b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${info.p.name}${skuName?' · '+skuName:''}</div>`;
+      let detailHtml = '';
       if(info.skuId && info.bundleItems && info.bundleItems.length){
-        titleHtml = info.bundleItems.map(b=>`<div>${b.name} <span style="color:#b8743f">${b.qty}${b.unit||'件'}${Number(cart[id])>1?' ×'+cart[id]:''}</span></div>`).join('');
-      } else {
-        titleHtml = `<div>${info.name}</div>`;
+        detailHtml = `<div style="font-size:11px;color:#7a6f62;margin-top:3px">实发：${info.bundleItems.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${Number(cart[id])>1?' ×'+cart[id]:''}`).join('、')}</div>`;
+      } else if(skuName){
+        detailHtml = `<div style="font-size:11px;color:#7a6f62;margin-top:3px">规格：${skuName}</div>`;
       }
       const row=document.createElement('div'); row.className='item';
       row.innerHTML=`
         <img src="${info.image||'/assets/product-placeholder.svg'}" loading="lazy" decoding="async">
-        <div class="info"><div class="n" style="line-height:1.6">${titleHtml}</div><div class="p">${money(info.price)}</div></div>
+        <div class="info"><div class="n" style="line-height:1.5">${titleHtml}${detailHtml}</div><div class="p" style="margin-top:4px">${money(info.price)}</div></div>
         <div class="stepper"><button onclick="changeQty('${id}',-1)">−</button><span>${cart[id]}</span><button onclick="changeQty('${id}',1)">+</button></div>`;
       box.appendChild(row);
     });

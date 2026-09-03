@@ -350,22 +350,31 @@ function set(){
   }
 }
 
-// 渲染详情页 SKU 卡片（3/行），标记最便宜卡「强烈推荐买它！最划算」
+// 渲染详情页 SKU 卡片（3/行）。「强烈推荐买它！最划算」只在「特惠单品」类目显示，且按单瓶均价最低打标。
+function perBottlePrice(s){
+  const m=String(s.name||'').match(/(\d+)\s*瓶/);
+  const b=m?Number(m[1]):0;
+  const price=Number(s.price||0);
+  return (b>0 && price>0) ? (price/b) : Infinity;
+}
 function renderSkuCards(p){
   const box = document.getElementById('skuCards');
   box.style.display = 'grid';
-  const prices = p.skus.map(s=>Number(s.price||p.price||0));
-  const minP = Math.min(...prices);
-  const perBottle = s=>{ const m=String(s.name||'').match(/(\d+)\s*瓶/); const b=m?Number(m[1]):0; return b>0?('<span class="sc-per">单瓶约 ¥'+(Number(s.price||0)/b).toFixed(1)+'</span>'):''; };
+  const isSingleItem = String(p.category||'').trim() === '特惠单品';
+  const perPrices = p.skus.map(perBottlePrice);
+  const minPer = Math.min(...perPrices);
+  const showBest = isSingleItem && isFinite(minPer);
+  const perBottleHtml = s=>{ const per=perBottlePrice(s); return isFinite(per)?('<span class="sc-per">单瓶约 ¥'+per.toFixed(1)+'</span>'):''; };
   box.innerHTML = p.skus.map(s=>{
     const st = skuStockOf(p, s);
     const off = st!=null && st<=0;
-    const best = (Number(s.price||0)===minP) ? '<div class="sc-best">🔥 强烈推荐买它！最划算</div>' : '';
+    const per = perBottlePrice(s);
+    const best = (showBest && isFinite(per) && per===minPer) ? '<div class="sc-best">🔥 强烈推荐买它！最划算</div>' : '';
     return `<div class="sku-card ${off?'off':''}" ${off?'':`onclick="selectSkuOnPage(P,'${s.id}')"`} data-sku="${s.id}">
       ${best}
       <div class="sc-name">${s.name||'规格'}</div>
       <div class="sc-price">${money(s.price||p.price||0)}</div>
-      ${perBottle(s)}
+      ${perBottleHtml(s)}
     </div>`;
   }).join('');
 }
