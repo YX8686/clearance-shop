@@ -58,18 +58,16 @@
   .pm-card .pm-acts .sold.on{background:#b8743f;color:#fff}
   .pm-card .pm-acts .hide{background:#f4f1ec;color:#7a6f62;border:1px solid #e0d6c8}
   .pm-card .pm-acts .hide.on{background:#e74c3c;color:#fff;border-color:#e74c3c}
-  .pm-card .pm-acts .del{background:#f4f1ec;color:#7a6f62}
   .pm-card .pm-check{position:absolute;top:8px;left:8px;z-index:2;display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.88);border-radius:6px;padding:3px 6px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.08)}
   .pm-card .pm-check input{width:16px;height:16px;cursor:pointer;margin:0;vertical-align:middle}
   .pm-card .pm-check span{font-size:11px;color:#7a6f62}
   .pm-topbar{display:flex;justify-content:space-between;align-items:center;margin:10px 0;gap:10px;flex-wrap:wrap}
-  .pm-batch{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-  .pm-batch label{display:flex;align-items:center;gap:4px;font-size:13px;color:#7a6f62;cursor:pointer}
-  .pm-batch label input{width:16px;height:16px;cursor:pointer;margin:0}
-  .pm-batch button.del{background:#e74c3c;color:#fff;border:none;border-radius:8px;padding:10px 16px;font-size:14px;cursor:pointer;font-weight:600}
-  .pm-batch button.del:disabled{opacity:.5;cursor:not-allowed}
+  .pm-all{display:flex;align-items:center;gap:6px;font-size:13px;color:#7a6f62;cursor:pointer}
+  .pm-all input{width:16px;height:16px;cursor:pointer;margin:0}
+  .pm-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   .pm-count{font-size:13px;color:#9a8f82;white-space:nowrap}
   .btn-primary{border:none;background:#b8743f;color:#fff;border-radius:8px;padding:10px 16px;font-size:14px;cursor:pointer;font-weight:600}
+  .btn-primary:disabled{opacity:.55;cursor:not-allowed}
 
   /* 图库 */
   .gal-wrap{display:flex;gap:12px;min-height:260px}
@@ -911,12 +909,12 @@ function renderPM(){
   `).join('');
   wrap.innerHTML=`
     <div class="pm-topbar">
-      <div class="pm-batch">
-        <label><input type="checkbox" id="pmSelectAll" onchange="toggleSelectAll()"> 全选</label>
-        <button type="button" id="pmBatchDel" class="del" onclick="batchDelete()" disabled>删除选中产品 (0)</button>
-      </div>
+      <label class="pm-all"><input type="checkbox" id="pmSelectAll" onchange="toggleSelectAll()"> 全选</label>
       <div class="pm-count">共 ${PRODUCTS.length} 个产品 · 拖拽卡片可调整前台展示顺序</div>
-      <button class="btn-primary" onclick="newProduct()">+ 新增产品</button>
+      <div class="pm-actions">
+        <button type="button" id="pmBatchDel" class="btn-primary" onclick="batchDelete()" disabled>删除选中产品 (0)</button>
+        <button class="btn-primary" onclick="newProduct()">+ 新增产品</button>
+      </div>
     </div>
     <div class="pm-grid" id="pmGrid">${itemsHtml}</div>
   `;
