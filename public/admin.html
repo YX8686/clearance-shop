@@ -46,7 +46,8 @@
   /* 产品管理 */
   .pm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
   .pm-card{background:#fff;border-radius:10px;padding:10px;box-shadow:0 1px 4px rgba(0,0,0,.05);cursor:move;position:relative}
-  .pm-card .img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;background:#f0ece4}
+  .pm-card .img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;background:#f0ece4;opacity:0;transition:opacity .35s ease}
+  .pm-card .img.loaded{opacity:1}
   .pm-card .name{font-size:14px;font-weight:700;margin-top:8px;color:#3a322b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pm-card .price{font-size:13px;color:#c0392b;margin-top:2px}
   .pm-card .sub{font-size:12px;color:#9a8f82;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -55,6 +56,8 @@
   .pm-card .pm-acts .edit{background:#b8743f;color:#fff}
   .pm-card .pm-acts .sold{background:#fff;color:#b8743f;border:1px solid #b8743f}
   .pm-card .pm-acts .sold.on{background:#b8743f;color:#fff}
+  .pm-card .pm-acts .hide{background:#f4f1ec;color:#7a6f62;border:1px solid #e0d6c8}
+  .pm-card .pm-acts .hide.on{background:#e74c3c;color:#fff;border-color:#e74c3c}
   .pm-card .pm-acts .del{background:#f4f1ec;color:#7a6f62}
   .btn-primary{border:none;background:#b8743f;color:#fff;border-radius:8px;padding:10px 16px;font-size:14px;cursor:pointer;font-weight:600}
 
@@ -101,6 +104,29 @@
   .gal-toolbar input[type=file]{display:none}
   .gal-toolbar label, .gal-toolbar button{border:none;background:#f4f1ec;color:#3a322b;border-radius:6px;padding:8px 12px;font-size:13px;cursor:pointer}
   .gal-toolbar label.primary, .gal-toolbar button.primary{background:#b8743f;color:#fff}
+  /* 描述编辑器：符号小图标按钮 */
+  .symbtn{border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:4px 9px;font-size:16px;line-height:1;cursor:pointer}
+  .symbtn:hover{background:#fff3e9;border-color:#b8743f}
+  /* 描述编辑器：图片裁剪弹窗 */
+  #cropModal{font-family:inherit}
+  #cropCanvas{display:block;max-width:100%;max-height:60vh;background:#fff}
+  #cropOverlay{position:absolute;border:2px dashed #b8743f;background:rgba(184,116,63,.12);box-sizing:border-box;cursor:move}
+  .crop-handle{position:absolute;width:12px;height:12px;background:#b8743f;border:2px solid #fff;border-radius:50%;z-index:2}
+  /* 描述编辑器：已插入图片的悬停控制（缩放+删除+重新裁剪） */
+  #descImgControls{position:fixed;z-index:9999;pointer-events:none}
+  .img-del-btn{pointer-events:auto;position:absolute;width:22px;height:22px;border:none;border-radius:50%;background:#e74c3c;color:#fff;font-size:14px;line-height:22px;text-align:center;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.25)}
+  .img-crop-btn{pointer-events:auto;position:absolute;width:22px;height:22px;border:none;border-radius:50%;background:#fff;color:#b8743f;font-size:12px;line-height:22px;text-align:center;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.25);border:1px solid #b8743f}
+  .img-resize-handle{pointer-events:auto;position:absolute;width:16px;height:16px;border:none;border-radius:50%;background:#b8743f;border:2px solid #fff;cursor:se-resize;box-shadow:0 1px 4px rgba(0,0,0,.25)}
+  /* 新版：把图片包在 wrapper 里，按钮直接放在 wrapper 中，避免 body 浮动层被遮挡 */
+  .desc-img-wrap{position:relative;display:block;max-width:100%;margin:12px auto;border-radius:8px;box-sizing:border-box}
+  .desc-img-wrap img{display:block;width:100%;height:auto;border-radius:8px}
+  .desc-img-wrap.active{box-shadow:0 0 0 2px #b8743f}
+  .desc-img-wrap .img-del-btn{top:-10px;right:-10px}
+  .desc-img-wrap .img-crop-btn{top:-10px;left:-10px}
+  .desc-img-wrap .img-resize-handle{bottom:-8px;right:-8px}
+  /* 描述编辑器：黄底标题块 */
+  .desc-highlight-title{background:#fff3cd;padding:10px 12px;border-radius:6px;margin:12px 0;display:block;border-left:4px solid #d4a017;line-height:1.6}
+  .desc-highlight-title .dht-box{display:inline-block;width:10px;height:10px;background:#d4a017;border-radius:2px;margin-right:8px;vertical-align:middle}
 
   /* 合并订单 */
   .merge-card{border:2px solid #f0d9c4}
@@ -137,6 +163,17 @@
       <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">银行名称</span><input type="text" id="sBankName" placeholder="如：中国工商银行"></div>
       <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">银行卡号</span><input type="text" id="sBankAccount" placeholder="卡号"></div>
       <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">户名</span><input type="text" id="sBankHolder" placeholder="持卡人姓名"></div>
+      <div class="setrow" style="align-items:flex-start">
+        <span style="font-size:13px;color:#7a6f62;width:80px;flex-shrink:0;padding-top:6px">隐藏分类</span>
+        <div id="catHideBox" style="display:flex;flex-wrap:wrap;gap:10px;flex:1;font-size:13px;color:#5b5147">
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="cat-hide-cb" value="特惠单品"> 特惠单品</label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="cat-hide-cb" value="明星套装"> 明星套装</label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="cat-hide-cb" value="明星组合"> 明星组合</label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="cat-hide-cb" value="高功效私人定制"> 高功效私人定制</label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="cat-hide-cb" value="特殊"> 特殊</label>
+        </div>
+      </div>
+      <div style="font-size:12px;color:#9a8f82;padding:0 0 8px 88px">勾选后，该分类及下属所有产品都不会在手机端买家商城显示。</div>
       <div class="setrow"><button onclick="saveSettings()">保存设置</button></div>
     </details>
 
@@ -200,11 +237,12 @@
             <option value="明星套装">明星套装</option>
             <option value="明星组合">明星组合</option>
             <option value="高功效私人定制">高功效私人定制</option>
+            <option value="特殊">特殊</option>
           </select>
         </div>
       </div>
       <div class="form-row">
-        <label>产品描述（买家看到的完整商品说明，支持从 Word 直接复制粘贴保留加粗/符号，也可「导入Word/文本」）</label>
+        <label>产品描述（买家看到的完整商品说明：支持图文混排——点「🖼 插图」在光标处插图，也可直接把图片粘贴进来）</label>
         <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0 6px">
           <button type="button" onclick="execCmd('bold')" style="min-width:34px;border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 8px;font-size:13px;cursor:pointer"><b>B</b></button>
           <button type="button" onclick="execCmd('italic')" style="min-width:34px;border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 8px;font-size:13px;cursor:pointer"><i>I</i></button>
@@ -213,13 +251,40 @@
           <button type="button" onclick="execCmd('insertOrderedList')" style="border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 8px;font-size:13px;cursor:pointer">1. 编号</button>
           <button type="button" onclick="execCmd('justifyLeft')" style="border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 8px;font-size:13px;cursor:pointer">⬅ 左</button>
           <button type="button" onclick="execCmd('justifyCenter')" style="border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 8px;font-size:13px;cursor:pointer">⬌ 中</button>
+          <button type="button" id="btnRed" onclick="applyDescColor('#e74c3c')" title="把选中的文字标成红色，用于重点句标识" style="min-width:34px;border:1px solid #e74c3c;background:#fff;border-radius:6px;padding:3px 8px;font-size:13px;cursor:pointer;color:#e74c3c;font-weight:700">🔴 红字</button>
+          <button type="button" onclick="applyDescColor('')" title="把选中的红色文字恢复成默认黑色" style="min-width:34px;border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 8px;font-size:13px;cursor:pointer">⬛ 正常</button>
+          <button type="button" onclick="toggleSymPalette()" title="在光标处插入一个特殊符号 / 小图标，放在重点句前做标识" style="border:1px solid #b8743f;background:#fff7ef;color:#b8743f;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer">✨ 符号</button>
+          <button type="button" onclick="insertHighlightTitle()" title="插入黄色底标题块：用于在描述页里区分不同产品的小标题" style="border:1px solid #d4a017;background:#fffbe6;color:#8a6d0b;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer">🟨 黄底标题</button>
+          <button type="button" onclick="document.getElementById('descImgFile').click()" title="在光标处插入一张图片（可多选，实现图文混排）" style="border:1px solid #b8743f;background:#fff7ef;color:#b8743f;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer">🖼 插图</button>
+          <input type="file" id="descImgFile" accept="image/*" multiple style="display:none" onchange="insertDescImages(this)">
           <label style="margin:0;cursor:pointer;font-size:12px;color:#7a5230;border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 10px">
             <input type="file" id="descDocx" accept=".docx,.txt,.md" style="display:none" onchange="importWordDoc(this)">📄 导入Word/文本
           </label>
           <button type="button" onclick="cleanWordStyles()" title="清除 Word 复制带来的 mso 样式、空 span、空段落，保留加粗/列表" style="border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer">🧹 清格式</button>
           <button type="button" onclick="clearDesc()" style="border:1px solid #e0d6c8;background:#fff;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer">清空</button>
         </div>
-        <div id="pDesc" contenteditable="true" style="min-height:200px;max-height:420px;overflow:auto;border:1px solid #ddd;border-radius:6px;padding:10px;font-size:14px;line-height:1.7;background:#fff;white-space:pre-wrap;word-break:break-word"></div>
+        <div id="symPalette" style="display:none;flex-wrap:wrap;gap:4px;margin:4px 0 2px;padding:7px 8px;border:1px dashed #e0d6c8;border-radius:8px;background:#fffdf9;align-items:center">
+          <span style="font-size:12px;color:#9a8f82;margin-right:2px">重点句前标识：</span>
+          <button type="button" class="symbtn" onclick="insertSymbol('⭐')">⭐</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('★')">★</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('🔥')">🔥</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('⚡')">⚡</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('💡')">💡</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('✅')">✅</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('📌')">📌</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('❗')">❗</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('🏆')">🏆</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('💯')">💯</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('💥')">💥</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('▶')">▶</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('❤️')">❤️</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('🔴')">🔴</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('💢')">💢</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('⚠️')">⚠️</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('🎯')">🎯</button>
+          <button type="button" class="symbtn" onclick="insertSymbol('💰')">💰</button>
+        </div>
+        <div id="pDesc" contenteditable="true" onpaste="handleDescPaste(event)" style="min-height:200px;max-height:420px;overflow:auto;border:1px solid #ddd;border-radius:6px;padding:10px;font-size:14px;line-height:1.7;background:#fff;white-space:pre-wrap;word-break:break-word"></div>
         <div style="font-size:12px;color:#b8743f;margin-top:4px">已输入 <span id="descCount">0</span> 字（含格式标记；上限 30000）</div>
       </div>
       <div class="form-row" id="pBundleRow">
@@ -276,6 +341,32 @@
     </div>
   </div>
 
+  <!-- 描述编辑器：图片裁剪弹窗 -->
+  <div id="cropModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10000;align-items:center;justify-content:center;font-family:inherit">
+    <div style="background:#fff;border-radius:14px;padding:18px;max-width:92vw;max-height:92vh;display:flex;flex-direction:column;gap:10px;box-shadow:0 10px 40px rgba(0,0,0,.3)">
+      <div style="font-size:16px;font-weight:700;color:#3a322b">裁剪图片 <span id="cropCount" style="font-size:13px;color:#7a6f62;font-weight:400"></span></div>
+      <div id="cropCanvasWrap" style="position:relative;flex:1;overflow:auto;border:1px solid #e0d6c8;border-radius:8px;background:#f8f6f3;max-width:85vw;max-height:62vh">
+        <canvas id="cropCanvas"></canvas>
+        <div id="cropOverlay" style="display:none">
+          <div data-crop-handle="nw" class="crop-handle" style="left:-6px;top:-6px;cursor:nw-resize"></div>
+          <div data-crop-handle="n"  class="crop-handle" style="left:50%;top:-6px;transform:translateX(-50%);cursor:n-resize"></div>
+          <div data-crop-handle="ne" class="crop-handle" style="right:-6px;top:-6px;cursor:ne-resize"></div>
+          <div data-crop-handle="w"  class="crop-handle" style="left:-6px;top:50%;transform:translateY(-50%);cursor:w-resize"></div>
+          <div data-crop-handle="e"  class="crop-handle" style="right:-6px;top:50%;transform:translateY(-50%);cursor:e-resize"></div>
+          <div data-crop-handle="sw" class="crop-handle" style="left:-6px;bottom:-6px;cursor:sw-resize"></div>
+          <div data-crop-handle="s"  class="crop-handle" style="left:50%;bottom:-6px;transform:translateX(-50%);cursor:s-resize"></div>
+          <div data-crop-handle="se" class="crop-handle" style="right:-6px;bottom:-6px;cursor:se-resize"></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;align-items:center">
+        <span id="cropHint" style="font-size:12px;color:#7a6f62;margin-right:auto">拖动虚线框移动，拖动边角调整裁剪区域</span>
+        <button type="button" onclick="skipCrop()" style="border:1px solid #e0d6c8;background:#fff;color:#3a322b;border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer">跳过这张</button>
+        <button type="button" onclick="confirmCrop()" style="border:none;background:#b8743f;color:#fff;border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer">确认裁剪</button>
+        <button type="button" onclick="cancelCropAll()" style="border:1px solid #e0d6c8;background:#fff;color:#7a6f62;border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer">全部取消</button>
+      </div>
+    </div>
+  </div>
+
 <script>
 let ORDERS=[];
 let CONFIG={};
@@ -283,7 +374,8 @@ let PRODUCTS=[];
 let GALLERY=[];
 let curTab='待确认';
 let editingProdId=null;
-let pickerMode='main'; // 'main' | 'detail'
+let pickerMode='main'; // 'main' | 'detail' | 'sku'
+let galPickSkuIdx=-1; // pickerMode==='sku' 时，正在为哪个 SKU 选主图
 let selectedGalUrls=[];
 let currentGalFolder='';
 let pendingIds=new Set(); // 乐观更新尚未被云端确认的订单，15s 轮询时保留本地版本
@@ -336,6 +428,8 @@ async function loadOthers(){
   document.getElementById('sBankName').value=CONFIG.bankName||'';
   document.getElementById('sBankAccount').value=CONFIG.bankAccount||'';
   document.getElementById('sBankHolder').value=CONFIG.bankHolder||'';
+  const hiddenCats=Array.isArray(CONFIG.hiddenCategories)?CONFIG.hiddenCategories:[];
+  document.querySelectorAll('.cat-hide-cb').forEach(cb=>{ cb.checked=hiddenCats.includes(cb.value); });
   renderPM();
 }
 
@@ -759,13 +853,15 @@ function uploadQr(){ readFileToPrev('sQr','sQrPrev'); }
 function uploadWechat(){ readFileToPrev('sWc','sWcPrev'); }
 function uploadAlipay(){ readFileToPrev('sAli','sAliPrev'); }
 async function saveSettings(){
+  const hiddenCats=Array.from(document.querySelectorAll('.cat-hide-cb:checked')).map(cb=>cb.value);
   const body={
     shopName:document.getElementById('sName').value,
     contactName:document.getElementById('sContact').value,
     announcement:document.getElementById('sAnn').value,
     bankName:document.getElementById('sBankName').value,
     bankAccount:document.getElementById('sBankAccount').value,
-    bankHolder:document.getElementById('sBankHolder').value
+    bankHolder:document.getElementById('sBankHolder').value,
+    hiddenCategories:hiddenCats
   };
   const b64Qr=document.getElementById('sQrPrev').dataset.b64; if(b64Qr) body.paymentQrBase64=b64Qr;
   const b64Wc=document.getElementById('sWcPrev').dataset.b64; if(b64Wc) body.paymentWechatQrBase64=b64Wc;
@@ -789,12 +885,13 @@ function renderPM(){
   const wrap=document.getElementById('pmWrap');
   const itemsHtml=PRODUCTS.map((p,idx)=>`
     <div class="pm-card" draggable="true" data-id="${p.id}" data-idx="${idx}">
-      <img class="img" src="${p.image||'/assets/products/default.svg'}" onerror="this.src='/assets/products/default.svg'">
+      <img class="img" src="${p.image||'/assets/products/default.svg'}" ${idx>=6?'loading="lazy"':''} decoding="async" onload="this.classList.add('loaded')" onerror="this.src='/assets/products/default.svg';this.classList.add('loaded')">
       <div class="name">${p.name||'未命名'}</div>
       <div class="price">${money(p.price||0)} <span style="color:#bbb;text-decoration:line-through;font-size:12px">${p.originalPrice?money(p.originalPrice):''}</span></div>
       <div class="sub">${stripTags(p.subtitle||p.desc||'无副标题')}</div>
       <div class="pm-acts">
         <button class="edit" onclick="editProduct('${p.id}')">编辑</button>
+        <button class="hide ${p.hidden?'on':''}" onclick="toggleHidden('${p.id}')">${p.hidden?'上架':'隐藏'}</button>
         <button class="sold ${p.forceSoldOut?'on':''}" onclick="toggleForceSoldOut('${p.id}')">${p.forceSoldOut?'在售':'售罄'}</button>
         <button class="del" onclick="deleteProduct('${p.id}')">删除</button>
       </div>
@@ -840,6 +937,16 @@ async function toggleForceSoldOut(id){
     toast('切换失败：'+(data.message||data.error||''));
   }
 }
+async function toggleHidden(id){
+  const res = await fetch('/api/products/'+id+'/toggle-hidden',{method:'POST'});
+  const data = await res.json();
+  if(res.ok && data.ok){
+    toast(data.hidden?'🙈 已隐藏，买家端不可见':'👁 已上架，买家端可见');
+    await load(); renderPM();
+  } else {
+    toast('切换失败：'+(data.message||data.error||''));
+  }
+}
 
 function newProduct(){ editingProdId=null; openProdModal({}); }
 function editProduct(id){ editingProdId=id; openProdModal(PRODUCTS.find(p=>p.id===id)||{}); }
@@ -862,6 +969,7 @@ function openProdModal(p){
     name: s.name||'',
     price: s.price!=null?s.price:'',
     stock: s.stock!=null?s.stock:'',
+    image: s.image||'',           // 集合链接：每个 SKU 可有自己一张主图
     bundleItems: Array.isArray(s.bundleItems)?s.bundleItems:[]
   }));
   document.getElementById('pMainImg').value=p.image||'';
@@ -869,6 +977,8 @@ function openProdModal(p){
   renderDetailImgs(p.detailImages||[]);
   renderSkuList();
   document.getElementById('prodModal').classList.add('show');
+  // 把描述里已存在的裸 img 包装成可交互 wrapper（删除/缩放/重新裁剪）
+  wrapDescImages(pDescEl);
 }
 function closeProdModal(){ document.getElementById('prodModal').classList.remove('show'); }
 
@@ -927,16 +1037,53 @@ function renderSkuList(){
         <input type="number" placeholder="库存" value="${s.stock!==''?s.stock:''}" onchange="updateSku(${idx},'stock',this.value)" style="width:80px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px">
         <button type="button" onclick="removeSkuRow(${idx})" style="border:none;background:#e74c3c;color:#fff;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer">删除</button>
       </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <img id="skuImgPrev${idx}" src="${escapeHtml(s.image||'/assets/products/default.svg')}" onerror="this.src='/assets/products/default.svg'" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid #e0d6c8;background:#fff;flex:none;cursor:pointer" onclick="pickSkuImage(${idx})" title="点击从图库选择该SKU主图">
+        <button type="button" onclick="uploadSkuImage(${idx})" style="border:1px solid #e0d6c8;background:#fff;border-radius:8px;padding:7px 10px;font-size:12px;cursor:pointer;white-space:nowrap">📷 上传主图</button>
+        <input type="text" placeholder="SKU 独立主图（留空则用产品主图）" value="${escapeHtml(s.image||'')}" onchange="updateSku(${idx},'image',this.value)" style="flex:1;min-width:150px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:12px">
+        <span id="skuImgStatus${idx}" style="font-size:12px;color:#b8743f;white-space:nowrap"></span>
+      </div>
+      <input type="file" id="skuImgFile${idx}" accept="image/*" style="display:none" onchange="handleSkuImageUpload(this,${idx})">
       <textarea class="sku-bundle-text" rows="2" placeholder="该SKU对应的发货明细（每行：产品名 数量 单位）。必须填写，否则商城不会显示该SKU的发货内容。" onchange="updateSku(${idx},'bundle',this.value)" style="width:100%;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px;resize:vertical">${(s.bundleItems||[]).map(b=>`${b.name} ${b.qty} ${b.unit}`).join('\n')}</textarea>
     </div>
   `).join('');
 }
+// ---- SKU 独立主图（集合链接）：上传 / 从图库选 ----
+function uploadSkuImage(idx){ const el=document.getElementById('skuImgFile'+idx); if(el) el.click(); }
+async function handleSkuImageUpload(input, idx){
+  const statusEl=document.getElementById('skuImgStatus'+idx);
+  try{
+    const files=Array.from(input.files); if(!files.length) return;
+    if(statusEl) statusEl.textContent='正在压缩并上传...';
+    if(!currentGalFolder && GALLERY.length) currentGalFolder=GALLERY[0].name;
+    if(!currentGalFolder) currentGalFolder='默认图库';
+    const f=files[0];
+    const b64=await fileToBase64(f, true);
+    const res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name})});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||('服务器错误 '+res.status));
+    if(data.error) throw new Error(data.error);
+    if(!data.url) throw new Error('服务器未返回图片地址');
+    updateSku(idx,'image',data.url);
+    renderSkuList();
+    if(statusEl) statusEl.textContent='上传成功';
+    await refreshGallery();
+  }catch(err){
+    console.error('sku image upload error', err);
+    alert('SKU 主图上传失败：'+err.message);
+    if(statusEl) statusEl.textContent='上传失败';
+  }finally{
+    input.value='';
+    setTimeout(()=>{ if(statusEl) statusEl.textContent=''; }, 3000);
+  }
+}
+function pickSkuImage(idx){ galPickSkuIdx=idx; openGalPicker('sku'); }
 function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function stripTags(s){ return String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').trim(); }
 function clearDesc(){ const t=document.getElementById('pDesc'); t.innerHTML=''; updateDescCount(); try{ t.focus(); }catch(e){} }
 function cleanWordStyles(){
   const t=document.getElementById('pDesc'); if(!t) return;
-  const allowed=new Set(['P','BR','STRONG','B','I','EM','U','UL','OL','LI','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','HR']);
+  const allowed=new Set(['P','BR','STRONG','B','I','EM','U','UL','OL','LI','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','HR','IMG']);
   const cleanNode=(node)=>{
     let i=node.childNodes.length;
     while(i--){
@@ -949,6 +1096,17 @@ function cleanWordStyles(){
         // 不在白名单的标签：拆包保留文本/子元素
         while(c.firstChild) node.insertBefore(c.firstChild, c);
         c.remove(); continue;
+      }
+      // IMG：清格式不能把插图清掉。保留 src/alt 与自适应 style，只清危险属性
+      if(tag==='IMG'){
+        for(let a=c.attributes.length-1;a>=0;a--){
+          const n=c.attributes[a].name.toLowerCase();
+          if(n.startsWith('on')||n.startsWith('data-')||n==='class'||n==='id'||n==='srcset'){
+            c.removeAttribute(c.attributes[a].name);
+          }
+        }
+        if(!c.getAttribute('style')) c.setAttribute('style','max-width:100%;height:auto;display:block;margin:12px auto;border-radius:8px');
+        continue;
       }
       // 在白名单内：清理 Word 带来的属性
       for(let a=c.attributes.length-1;a>=0;a--){
@@ -980,11 +1138,466 @@ function cleanWordStyles(){
       if(!el.textContent.trim() && !el.querySelector('img,br')){ el.remove(); changed=true; }
     });
   }
+  wrapDescImages(t);
   updateDescCount();
   toast('已清除 Word 格式，段间距已恢复（列表符号请用上方「项目」按钮重新点）');
 }
 function updateDescCount(){ const t=document.getElementById('pDesc'); const c=document.getElementById('descCount'); if(c) c.textContent=((t.innerText||t.textContent||'').length); }
 function execCmd(cmd){ const t=document.getElementById('pDesc'); t.focus(); try{ document.execCommand(cmd,false,null); }catch(e){} updateDescCount(); }
+
+// ---------- 描述编辑器增强：红字颜色 + 符号小图标 ----------
+function applyDescColor(hex){
+  const t=document.getElementById('pDesc');
+  t.focus();
+  const sel=window.getSelection();
+  if(!sel || !sel.rangeCount){ return; }
+  const range=sel.getRangeAt(0);
+  const color = hex || 'inherit';
+  if(!sel.isCollapsed){
+    const span=document.createElement('span');
+    span.style.color=color;
+    try{
+      range.surroundContents(span);
+      sel.removeAllRanges();
+      const r=document.createRange();
+      r.setStartAfter(span); r.collapse(true);
+      sel.addRange(r);
+    }catch(e){
+      // 选区跨多个块元素时 surroundContents 会失败，退回 execCommand
+      try{ document.execCommand('foreColor',false, hex||'#000000'); }catch(_){}
+    }
+  } else {
+    // 未选中文字：插入一个带颜色（或继承色）的空 span，并把光标放进去，便于直接打字
+    const span=document.createElement('span');
+    span.style.color=color;
+    range.insertNode(span);
+    const r=document.createRange();
+    r.setStart(span,0); r.collapse(true);
+    sel.removeAllRanges(); sel.addRange(r);
+  }
+  updateDescCount();
+}
+
+function toggleSymPalette(force){
+  const p=document.getElementById('symPalette');
+  if(force!==undefined){ p.style.display = force ? 'flex' : 'none'; }
+  else { p.style.display = (p.style.display==='flex') ? 'none' : 'flex'; }
+}
+
+function insertSymbol(ch){
+  const t=document.getElementById('pDesc');
+  t.focus();
+  const sel=window.getSelection();
+  if(sel && sel.rangeCount){
+    const r=sel.getRangeAt(0);
+    r.deleteContents();
+    const node=document.createTextNode(ch+' ');
+    r.insertNode(node);
+    r.setStartAfter(node); r.collapse(true);
+    sel.removeAllRanges(); sel.addRange(r);
+  }
+  updateDescCount();
+}
+
+function insertHighlightTitle(){
+  const t=document.getElementById('pDesc');
+  t.focus();
+  const sel=window.getSelection();
+  if(!sel || !sel.rangeCount) return;
+  const r=sel.getRangeAt(0);
+  const div=document.createElement('div');
+  div.className='desc-highlight-title';
+  const box=document.createElement('span');
+  box.className='dht-box';
+  box.contentEditable=false;
+  div.appendChild(box);
+  if(!sel.isCollapsed && t.contains(r.commonAncestorContainer)){
+    // 有选中文字：用黄底 div 包裹
+    const frag=r.extractContents();
+    div.appendChild(frag);
+    r.insertNode(div);
+  } else {
+    // 无选中：在当前光标处插入一个空的黄底标题块
+    const txt=document.createTextNode('');
+    div.appendChild(txt);
+    r.deleteContents();
+    r.insertNode(div);
+    const p=document.createElement('p'); p.innerHTML='<br>';
+    if(div.parentNode) div.parentNode.insertBefore(p, div.nextSibling);
+  }
+  const after=document.createRange();
+  after.setStartAfter(div); after.collapse(true);
+  sel.removeAllRanges(); sel.addRange(after);
+  updateDescCount();
+}
+
+
+// ---------- 描述页图文混排：插图（上传 + 粘贴） ----------
+// 复用图库上传通道（自动压缩），返回可访问的图片 URL
+async function uploadDescImage(file){
+  if(!currentGalFolder && GALLERY.length) currentGalFolder=GALLERY[0].name;
+  if(!currentGalFolder) currentGalFolder='默认图库';
+  const b64=await fileToBase64(file, true);
+  const res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:file.name})});
+  const data=await res.json();
+  if(!res.ok) throw new Error(data.error||('服务器错误 '+res.status));
+  if(data.error) throw new Error(data.error);
+  if(!data.url) throw new Error('服务器未返回图片地址');
+  return data.url;
+}
+function createDescImgWrapper(url){
+  const wrap=document.createElement('div');
+  wrap.className='desc-img-wrap';
+  wrap.contentEditable=false;
+  wrap.dataset.descImgWrap='1';
+  wrap.innerHTML='<img src="'+url+'" data-desc-img="1" style="display:block;width:100%;height:auto;border-radius:8px">';
+  return wrap;
+}
+function insertImageHtmlAtCursor(url){
+  const t=document.getElementById('pDesc');
+  t.focus();
+  const wrap=createDescImgWrapper(url);
+  const sel=window.getSelection();
+  if(sel && sel.rangeCount){
+    const range=sel.getRangeAt(0);
+    if(t.contains(range.commonAncestorContainer)){
+      range.deleteContents();
+      range.insertNode(wrap);
+      // 图后补一个空段落，方便继续接着打字
+      const p=document.createElement('p'); p.innerHTML='<br>';
+      if(wrap.parentNode) wrap.parentNode.insertBefore(p, wrap.nextSibling);
+      const after=document.createRange(); after.setStartAfter(p); after.collapse(true);
+      sel.removeAllRanges(); sel.addRange(after);
+      activateDescImgWrap(wrap);
+      updateDescCount();
+      return;
+    }
+  }
+  t.appendChild(wrap);
+  activateDescImgWrap(wrap);
+  updateDescCount();
+}
+async function insertDescImages(input){
+  const files=Array.from(input.files||[]);
+  if(!files.length) return;
+  // 先进入裁剪队列（裁剪后自动上传+插入）
+  openCropModal(files);
+  input.value='';
+}
+// 直接 Ctrl+V 粘贴图片（截图/复制的图片）也进入裁剪
+function handleDescPaste(e){
+  const items=(e.clipboardData&&e.clipboardData.items)||[];
+  const imgFiles=[];
+  for(let i=0;i<items.length;i++){
+    const it=items[i];
+    if(it && it.kind==='file' && it.type && it.type.indexOf('image/')===0){
+      const f=it.getAsFile(); if(f) imgFiles.push(f);
+    }
+  }
+  if(!imgFiles.length) return; // 纯文字/富文本粘贴交给浏览器默认处理
+  e.preventDefault();
+  openCropModal(imgFiles);
+}
+
+// ---------- 图片裁剪弹窗 ----------
+let cropQueue=[], cropCurrent=null, cropObjectUrl=null, cropConfirming=false;
+const cropState={img:null,nw:0,nh:0,dispW:0,dispH:0,rect:{x:0,y:0,w:0,h:0},drag:null};
+
+function openCropModal(files){
+  cropQueue=files.map(f=>({file:f}));
+  if(!cropQueue.length) return;
+  document.getElementById('cropModal').style.display='flex';
+  nextCrop();
+}
+function nextCrop(){
+  if(cropObjectUrl){ URL.revokeObjectURL(cropObjectUrl); cropObjectUrl=null; }
+  if(!cropQueue.length){ cancelCropAll(); return; }
+  cropCurrent=cropQueue.shift();
+  document.getElementById('cropCount').textContent=cropQueue.length?`（还剩 ${cropQueue.length} 张）`:'';
+  cropObjectUrl=URL.createObjectURL(cropCurrent.file);
+  const img=new Image();
+  img.onload=()=>initCropCanvas(img);
+  img.src=cropObjectUrl;
+}
+function initCropCanvas(img){
+  cropState.img=img;
+  cropState.nw=img.naturalWidth||img.width||1;
+  cropState.nh=img.naturalHeight||img.height||1;
+  const maxW=Math.min(window.innerWidth*0.82, 860);
+  const maxH=Math.min(window.innerHeight*0.55, 560);
+  const scale=Math.min(1, maxW/cropState.nw, maxH/cropState.nh);
+  cropState.dispW=Math.round(cropState.nw*scale)||maxW;
+  cropState.dispH=Math.round(cropState.nh*scale)||maxH;
+  const c=document.getElementById('cropCanvas');
+  c.width=cropState.dispW; c.height=cropState.dispH;
+  const ctx=c.getContext('2d');
+  ctx.clearRect(0,0,cropState.dispW,cropState.dispH);
+  ctx.drawImage(img,0,0,cropState.dispW,cropState.dispH);
+  // 初始裁剪框：整张图，用户可自由拖/拉
+  cropState.rect={x:0,y:0,w:cropState.dispW,h:cropState.dispH};
+  updateCropOverlay();
+  document.getElementById('cropOverlay').style.display='block';
+}
+function updateCropOverlay(){
+  const o=document.getElementById('cropOverlay');
+  const r=cropState.rect;
+  o.style.left=r.x+'px'; o.style.top=r.y+'px';
+  o.style.width=r.w+'px'; o.style.height=r.h+'px';
+}
+function onCropMouseDown(e){
+  const handle=e.target && e.target.dataset ? e.target.dataset.cropHandle : null;
+  if(!handle && e.target.id!=='cropOverlay') return;
+  cropState.drag={mode:handle||'move', startX:e.clientX, startY:e.clientY, startRect:{...cropState.rect}};
+  e.preventDefault(); e.stopPropagation();
+}
+function onCropMouseMove(e){
+  if(!cropState.drag) return;
+  const d=cropState.drag, s=d.startRect, cs=cropState;
+  const dx=e.clientX-d.startX, dy=e.clientY-d.startY;
+  const min=30, W=cs.dispW, H=cs.dispH;
+  let r={...s};
+  if(d.mode==='move'){
+    r.x=Math.max(0, Math.min(W-s.w, s.x+dx));
+    r.y=Math.max(0, Math.min(H-s.h, s.y+dy));
+  } else {
+    if(d.mode.indexOf('e')>=0) r.w=Math.max(min, Math.min(W-s.x, s.w+dx));
+    if(d.mode.indexOf('s')>=0) r.h=Math.max(min, Math.min(H-s.y, s.h+dy));
+    if(d.mode.indexOf('w')>=0){
+      const nw=Math.max(min, Math.min(s.x+s.w, s.w-dx));
+      r.x=s.x+s.w-nw; r.w=nw;
+    }
+    if(d.mode.indexOf('n')>=0){
+      const nh=Math.max(min, Math.min(s.y+s.h, s.h-dy));
+      r.y=s.y+s.h-nh; r.h=nh;
+    }
+  }
+  if(r.x<0) r.x=0; if(r.y<0) r.y=0;
+  if(r.x+r.w>W) r.w=W-r.x; if(r.y+r.h>H) r.h=H-r.y;
+  if(r.w<min) r.w=min; if(r.h<min) r.h=min;
+  cs.rect=r; updateCropOverlay();
+  e.preventDefault();
+}
+function onCropMouseUp(e){ cropState.drag=null; }
+function skipCrop(){
+  if(!cropCurrent || cropConfirming) return;
+  cropConfirming=true;
+  (async()=>{
+    try{ const url=await uploadDescImage(cropCurrent.file); insertImageHtmlAtCursor(url); }
+    catch(err){ alert('图片上传失败：'+err.message); }
+    cropConfirming=false;
+    nextCrop();
+  })();
+}
+function confirmCrop(){
+  if(cropConfirming) return; // 防止用户多次点击重复插入
+  cropConfirming=true;
+  const cs=cropState;
+  if(!cs.img){ cropConfirming=false; nextCrop(); return; }
+  const scale=cs.nw/cs.dispW;
+  const sx=Math.max(0, Math.round(cs.rect.x*scale));
+  const sy=Math.max(0, Math.round(cs.rect.y*scale));
+  const sw=Math.max(1, Math.round(cs.rect.w*scale));
+  const sh=Math.max(1, Math.round(cs.rect.h*scale));
+  const canvas=document.createElement('canvas');
+  canvas.width=sw; canvas.height=sh;
+  const ctx=canvas.getContext('2d');
+  ctx.drawImage(cs.img,sx,sy,sw,sh,0,0,sw,sh);
+  // 立即关闭弹窗，避免用户觉得没反应而重复点击
+  const hadReplaceTarget=!!(cropReplaceTarget && cropReplaceTarget.img);
+  const replaceImg=hadReplaceTarget ? cropReplaceTarget.img : null;
+  const replaceWrap=hadReplaceTarget ? cropReplaceTarget.wrap : null;
+  cropReplaceTarget=null;
+  cropConfirming=false; // 释放锁，允许下一张继续操作
+  nextCrop(); // 先切到下一张或关闭弹窗
+  canvas.toBlob(async blob=>{
+    if(!blob){ alert('裁剪失败：无法生成图片'); return; }
+    const file=new File([blob],'cropped.jpg',{type:'image/jpeg'});
+    try{
+      const url=await uploadDescImage(file);
+      if(replaceImg){
+        replaceImg.src=url;
+        replaceImg.style.width='100%';
+        replaceImg.style.height='auto';
+        if(replaceWrap) replaceWrap.style.width='100%';
+        await refreshGallery();
+        toast('已重新裁剪并替换原图');
+      } else {
+        insertImageHtmlAtCursor(url);
+        await refreshGallery();
+      }
+    }catch(err){ alert('裁剪图上传失败：'+err.message); }
+  },'image/jpeg',0.92);
+}
+function cancelCropAll(){
+  if(cropObjectUrl){ URL.revokeObjectURL(cropObjectUrl); cropObjectUrl=null; }
+  cropQueue=[]; cropCurrent=null;
+  cropReplaceTarget=null; cropConfirming=false;
+  document.getElementById('cropModal').style.display='none';
+  document.getElementById('cropOverlay').style.display='none';
+}
+
+// ---------- 描述编辑器内图片：包装 + 激活 + 缩放 + 删除 + 重新裁剪 ----------
+let activeDescWrap=null, resizeState=null, cropReplaceTarget=null;
+
+function wrapDescImages(t){
+  if(!t) return;
+  // 把 pDesc 中所有未包装的裸 img 包进 wrapper
+  const imgs=Array.from(t.querySelectorAll('img:not(.desc-img-wrap img)'));
+  imgs.forEach(img=>{
+    if(img.closest('.desc-img-wrap')) return;
+    const wrap=createDescImgWrapper(img.src);
+    wrap.style.width=(img.style.width||'100%');
+    wrap.style.maxWidth='100%';
+    wrap.style.margin=img.style.margin||'12px auto';
+    if(img.parentNode) img.parentNode.replaceChild(wrap, img);
+    const newImg=wrap.querySelector('img');
+    if(img.style.width) newImg.style.width=img.style.width;
+    if(img.style.height) newImg.style.height=img.style.height;
+    if(img.style.display) newImg.style.display=img.style.display;
+  });
+}
+
+function unwrapDescImages(t){
+  // 保存前：把 wrapper 还原成裸 img，避免数据库里存 div/button
+  if(!t) return;
+  t.querySelectorAll('.desc-img-wrap').forEach(wrap=>{
+    const img=wrap.querySelector('img[data-desc-img="1"]');
+    if(!img){ wrap.remove(); return; }
+    wrap.querySelectorAll('.img-del-btn,.img-crop-btn,.img-resize-handle').forEach(b=>b.remove());
+    img.removeAttribute('data-desc-img');
+    img.style.display=img.style.display||'block';
+    img.style.margin=wrap.style.margin||img.style.margin||'12px auto';
+    img.style.maxWidth='100%';
+    if(wrap.style.width && wrap.style.width!=='100%' && wrap.style.width!=='auto'){
+      img.style.width=wrap.style.width;
+    }
+    if(wrap.parentNode) wrap.parentNode.replaceChild(img, wrap);
+  });
+  activeDescWrap=null;
+}
+
+function activateDescImgWrap(wrap){
+  if(!wrap || wrap===activeDescWrap) return;
+  deactivateAllDescImgWraps();
+  activeDescWrap=wrap;
+  wrap.classList.add('active');
+  if(!wrap.querySelector('.img-del-btn')){
+    const del=document.createElement('button');
+    del.type='button'; del.className='img-del-btn'; del.title='删除图片'; del.innerHTML='×';
+    del.addEventListener('click',onDelDescImg);
+    const crop=document.createElement('button');
+    crop.type='button'; crop.className='img-crop-btn'; crop.title='重新裁剪'; crop.innerHTML='✂️';
+    crop.addEventListener('click',onCropDescImg);
+    const handle=document.createElement('div');
+    handle.className='img-resize-handle'; handle.title='拖动缩放';
+    handle.addEventListener('mousedown',startImgResize,{passive:false});
+    wrap.appendChild(del); wrap.appendChild(crop); wrap.appendChild(handle);
+  }
+}
+
+function deactivateAllDescImgWraps(){
+  if(activeDescWrap){
+    activeDescWrap.classList.remove('active');
+    activeDescWrap=null;
+  }
+  const t=document.getElementById('pDesc');
+  if(!t) return;
+  t.querySelectorAll('.desc-img-wrap .img-del-btn,.desc-img-wrap .img-crop-btn,.desc-img-wrap .img-resize-handle').forEach(b=>b.remove());
+}
+
+function onDelDescImg(e){
+  e.preventDefault(); e.stopPropagation();
+  const wrap=(e.currentTarget && e.currentTarget.closest)? e.currentTarget.closest('.desc-img-wrap') : null;
+  if(wrap){ wrap.remove(); activeDescWrap=null; updateDescCount(); }
+}
+
+function onCropDescImg(e){
+  e.preventDefault(); e.stopPropagation();
+  const wrap=(e.currentTarget && e.currentTarget.closest)? e.currentTarget.closest('.desc-img-wrap') : null;
+  const img=wrap?wrap.querySelector('img[data-desc-img="1"]:not(.img-crop-btn img)'):null;
+  if(!img) return;
+  recropDescImg(img, wrap);
+}
+
+async function recropDescImg(img, wrap){
+  if(!img || !img.src) return;
+  try{
+    toast('正在加载原图…');
+    const res=await fetch(img.src, {mode:'cors'});
+    if(!res.ok) throw new Error('无法读取原图（'+res.status+'）');
+    const blob=await res.blob();
+    const file=new File([blob], 'recrop.jpg', {type:blob.type||'image/jpeg'});
+    cropReplaceTarget={img, wrap};
+    openCropModal([file]);
+  }catch(err){
+    console.error(err);
+    alert('重新裁剪失败：'+err.message);
+    cropReplaceTarget=null;
+  }
+}
+
+function startImgResize(e){
+  e.preventDefault(); e.stopPropagation();
+  const handle=e.currentTarget;
+  const wrap=handle && handle.closest ? handle.closest('.desc-img-wrap') : null;
+  const img=wrap?wrap.querySelector('img[data-desc-img="1"]:not(.img-crop-btn img)'):null;
+  if(!wrap || !img) return;
+  activeDescWrap=wrap;
+  const rect=img.getBoundingClientRect();
+  resizeState={wrap, img, startX:e.clientX, startY:e.clientY, startW:rect.width, startH:rect.height, ratio:(rect.width/rect.height)||1};
+  document.addEventListener('mousemove',onImgResize,{passive:false});
+  document.addEventListener('mouseup',endImgResize,{once:true});
+}
+function onImgResize(e){
+  if(!resizeState) return;
+  e.preventDefault();
+  const rs=resizeState;
+  const dx=e.clientX-rs.startX;
+  const editor=document.getElementById('pDesc').getBoundingClientRect();
+  let nw=Math.max(40, rs.startW+dx);
+  let nh=Math.round(nw/rs.ratio);
+  if(nw>editor.width-20){ nw=editor.width-20; nh=Math.round(nw/rs.ratio); }
+  rs.img.style.width=nw+'px';
+  rs.img.style.height=nh+'px';
+  rs.wrap.style.width=nw+'px';
+}
+function endImgResize(){
+  resizeState=null;
+  document.removeEventListener('mousemove',onImgResize);
+}
+
+function setupDescImgInteractions(){
+  const t=document.getElementById('pDesc');
+  if(!t) return;
+  t.addEventListener('click',function(e){
+    const wrap=e.target.closest ? e.target.closest('.desc-img-wrap') : null;
+    const btn=e.target.closest ? e.target.closest('.img-del-btn, .img-crop-btn, .img-resize-handle') : null;
+    if(btn) return; // 按钮有自己的监听器
+    if(wrap && t.contains(wrap)){
+      activateDescImgWrap(wrap);
+      e.stopPropagation();
+    } else {
+      deactivateAllDescImgWraps();
+    }
+  });
+  t.addEventListener('scroll',deactivateAllDescImgWraps,{passive:true});
+  window.addEventListener('resize',deactivateAllDescImgWraps,{passive:true});
+  document.addEventListener('click',function(e){
+    const t2=document.getElementById('pDesc');
+    if(!t2) return;
+    const wrap=e.target.closest ? e.target.closest('.desc-img-wrap') : null;
+    if(wrap && t2.contains(wrap)) return;
+    deactivateAllDescImgWraps();
+  });
+  const cwrap=document.getElementById('cropCanvasWrap');
+  if(cwrap){
+    cwrap.addEventListener('mousedown',onCropMouseDown);
+    window.addEventListener('mousemove',onCropMouseMove);
+    window.addEventListener('mouseup',onCropMouseUp);
+  }
+}
+
+setupDescImgInteractions();
 function importWordDoc(input){
   const file=input.files && input.files[0];
   input.value='';
@@ -997,6 +1610,7 @@ function importWordDoc(input){
       if(typeof mammoth==='undefined'){ alert('Word 解析组件未加载，请刷新后台页面后重试，或改用「直接复制粘贴」'); return; }
       mammoth.convertToHtml({arrayBuffer:e.target.result}).then(res=>{
         t.innerHTML=res.value||'';
+        wrapDescImages(t);
         updateDescCount();
         toast('已导入 Word：'+file.name);
         try{ const r=document.createRange(); r.selectNodeContents(t); const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(r); t.focus(); }catch(err){}
@@ -1012,13 +1626,14 @@ function importWordDoc(input){
   reader.onerror=()=>toast('文件读取失败，请重试');
   if(name.endsWith('.docx')) reader.readAsArrayBuffer(file); else reader.readAsText(file,'UTF-8');
 }
-function addSkuRow(){ editingSkus.push({id:generateSkuId(),name:'',price:'',stock:'',bundleItems:[]}); renderSkuList(); }
+function addSkuRow(){ editingSkus.push({id:generateSkuId(),name:'',price:'',stock:'',image:'',bundleItems:[]}); renderSkuList(); }
 function removeSkuRow(idx){ editingSkus.splice(idx,1); renderSkuList(); }
 function updateSku(idx, field, value){
   const s=editingSkus[idx];
   if(field==='name') s.name=value.trim();
   if(field==='price') s.price=value===''?'':Math.max(0,Number(value)||0);
   if(field==='stock') s.stock=value===''?'':Math.max(0,Math.floor(Number(value)||0));
+  if(field==='image') s.image=String(value||'').trim();
   if(field==='bundle') s.bundleItems=parseBundleText(value);
 }
 function collectSkus(){
@@ -1027,12 +1642,15 @@ function collectSkus(){
     name: String(s.name).trim(),
     price: s.price===''?0:Number(s.price),
     stock: s.stock===''?0:Number(s.stock),
+    image: String(s.image||'').trim(),   // 集合链接：SKU 独立主图
     bundleItems: s.bundleItems||[]
   }));
 }
 
 async function saveProduct(){
   const btn = document.querySelector('#prodModal button.ok');
+  // 防止用户连点或上一次保存还没结束
+  if(btn && btn.disabled) return;
   if(btn){ btn.disabled=true; btn.dataset.oldText=btn.textContent; btn.textContent='保存中…'; }
   try{
     flushSkuBundleTextareas(); // 先强制收集当前 textarea 内容，避免 onchange 未触发
@@ -1044,9 +1662,14 @@ async function saveProduct(){
       price = Math.min(...validSkus.map(s=>Number(s.price)||0));
       stock = validSkus.reduce((sum,s)=>sum+(Number(s.stock)||0),0);
     }
+    // 保存前把描述的交互 wrapper 还原成裸 img，避免数据库里存 button/div
+    unwrapDescImages(document.getElementById('pDesc'));
     const descBefore = document.getElementById('pDesc').innerHTML;
+    // 幂等键：每次保存唯一，后端据此去重，防止网络抖动/超时重试导致重复产品
+    const clientSaveId = (editingProdId || 'new') + '_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
     const body={
       id: editingProdId,
+      clientSaveId: clientSaveId,
       name: document.getElementById('pName').value,
       subtitle: document.getElementById('pSubtitle').value,
       price: price,
@@ -1060,47 +1683,37 @@ async function saveProduct(){
       detailImages: selectedGalUrls
     };
 
-    // 前端自动重试：Supabase 免费层偶发 fetch failed，点一次保存自动重试 2 次，提升成功率
-    let lastErr, lastData, lastRes;
-    for(let attempt=0; attempt<3; attempt++){
-      try{
-        const res=await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-        const data=await res.json();
-        lastRes=res; lastData=data;
-        if(res.ok && data.ok){
-          const savedDesc = (data.product && data.product.desc) || '';
-          const stripTags = (s)=>String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').trim();
-          const beforeText = stripTags(descBefore);
-          const savedText = stripTags(savedDesc);
-          if(beforeText.length>0 && savedText.length < beforeText.length*0.95){
-            toast('⚠️ 保存后文字比提交时少 '+(beforeText.length-savedText.length)+' 字，可能是 Word 文本框/艺术字未识别，已保存，请到买家端检查');
-          } else {
-            toast('产品已保存（共 '+ savedText.length +' 字）');
-          }
-          closeProdModal(); load(); return;
-        }
-        // 业务错误直接抛出，不再重试
-        throw new Error(data.message || '保存失败');
-      }catch(e){
-        lastErr=e;
-        console.error('saveProduct attempt', attempt, e);
-        if(attempt < 2){
-          if(e.message && e.message.includes('fetch failed')){
-            toast('云端连接抖动，正在自动重试…' + (attempt+1) + '/2');
-          } else {
-            toast('保存失败，正在自动重试…');
-          }
-          await new Promise(r=>setTimeout(r, 800*(attempt+1)));
-        }
-      }
+    // 前端不再自动重试：自动重试会在"请求已到达服务端但响应丢失"时造成重复产品。
+    // 改为单次请求 + 15 秒超时，失败时提示用户手动再点一次保存。
+    const controller = new AbortController();
+    const timeoutId = setTimeout(()=>controller.abort(), 15000);
+    let res, data;
+    try{
+      res = await fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal});
+      clearTimeout(timeoutId);
+      data = await res.json();
+    }catch(e){
+      clearTimeout(timeoutId);
+      throw e;
     }
-
-    // 三次都失败才弹最终错误，保留弹窗让用户可以再点保存
-    const msg = (lastData && lastData.message) || (lastErr && lastErr.message) || '网络错误';
-    toast('保存失败：' + msg + '。可再次点击「保存产品」重试');
+    if(res.ok && data.ok){
+      const savedDesc = (data.product && data.product.desc) || '';
+      const stripTags = (s)=>String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').trim();
+      const beforeText = stripTags(descBefore);
+      const savedText = stripTags(savedDesc);
+      if(beforeText.length>0 && savedText.length < beforeText.length*0.95){
+        toast('⚠️ 保存后文字比提交时少 '+(beforeText.length-savedText.length)+' 字，可能是 Word 文本框/艺术字未识别，已保存，请到买家端检查');
+      } else {
+        toast('产品已保存（共 '+ savedText.length +' 字）' + (data.cached ? '（幂等：已跳过重复写入）' : ''));
+      }
+      closeProdModal(); load(); return;
+    }
+    // 业务错误
+    throw new Error(data.message || '保存失败');
   }catch(e){
     console.error('saveProduct error', e);
-    toast('保存出错：'+e.message);
+    const tip = e.name === 'AbortError' ? '保存超时，请检查网络后再点「保存产品」重试' : ('保存失败：' + e.message + '。可再次点击「保存产品」重试');
+    toast(tip);
   }finally{
     if(btn){ btn.disabled=false; btn.textContent=btn.dataset.oldText||'保存产品'; }
   }
@@ -1114,7 +1727,9 @@ async function deleteProduct(id){
 // ---------- 图库 ----------
 function openGalPicker(mode){
   pickerMode=mode;
-  document.getElementById('galModalTitle').textContent=mode==='main'?'选择主图':'选择详情页图（可多选）';
+  const titles={main:'选择主图', detail:'选择详情页图（可多选）', sku:'选择该 SKU 的独立主图'};
+  document.getElementById('galModalTitle').textContent=titles[mode]||'选择图片';
+  if(mode==='sku') selectedGalUrls=[(editingSkus[galPickSkuIdx]||{}).image||''].filter(Boolean);
   document.getElementById('galModal').classList.add('show');
   if(!currentGalFolder && GALLERY.length) currentGalFolder=GALLERY[0].name;
   renderGal();
@@ -1135,7 +1750,7 @@ function renderGal(){
 }
 function switchGalFolder(name){ currentGalFolder=name; renderGal(); }
 function toggleGalPic(url){
-  if(pickerMode==='main'){ selectedGalUrls=[url]; renderGal(); }
+  if(pickerMode==='main' || pickerMode==='sku'){ selectedGalUrls=[url]; renderGal(); }
   else {
     const idx=selectedGalUrls.indexOf(url);
     if(idx===-1) selectedGalUrls.push(url); else selectedGalUrls.splice(idx,1);
@@ -1147,6 +1762,11 @@ function confirmGalPicker(){
     const url=selectedGalUrls[0]||'';
     document.getElementById('pMainImg').value=url;
     document.getElementById('pMainImgPreview').src=url||'/assets/products/default.svg';
+  } else if(pickerMode==='sku'){
+    const url=selectedGalUrls[0]||'';
+    if(galPickSkuIdx>=0 && editingSkus[galPickSkuIdx]) editingSkus[galPickSkuIdx].image=url;
+    renderSkuList();
+    galPickSkuIdx=-1;
   } else {
     renderDetailImgs(selectedGalUrls);
   }

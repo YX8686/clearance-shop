@@ -314,19 +314,29 @@ function queryTracking(no){
   setTimeout(()=>{ window.open(c.url, '_blank'); }, 200);
 }
 
-// 活动分类
-const CATEGORIES = ['全部','特惠单品','明星套装','明星组合','高功效私人定制'];
+// 活动分类（与商家后台下拉框保持一致；CONFIG.hiddenCategories 中的分类会被隐藏）
+const CATEGORIES = ['全部','特惠单品','明星套装','明星组合','高功效私人定制','特殊'];
 let currentCat = '全部';
+function hiddenCategories(){ return (CONFIG && Array.isArray(CONFIG.hiddenCategories))?CONFIG.hiddenCategories:[]; }
+function isProductHidden(p){
+  if(!p) return true;
+  if(p.hidden) return true;
+  const cat = String(p.category||'').trim();
+  return cat && hiddenCategories().includes(cat);
+}
 
 function renderCats(){
   const box = $('#catinner'); box.innerHTML = '';
-  CATEGORIES.forEach(c=>{
+  const hideSet = new Set(hiddenCategories());
+  CATEGORIES.filter(c=>c==='全部' || !hideSet.has(c)).forEach(c=>{
     const btn = document.createElement('button');
     btn.className = 'cattab ' + (c===currentCat?'on':'');
     btn.textContent = c;
     btn.onclick = ()=>{ currentCat = c; renderCats(); renderGrid(); };
     box.appendChild(btn);
   });
+  // 如果当前选中的分类被隐藏了，自动切回「全部」
+  if(currentCat!=='全部' && hideSet.has(currentCat)){ currentCat='全部'; renderGrid(); }
 }
 
 // ===== 库存 / 售罄判断 =====
@@ -348,7 +358,8 @@ function isSoldOut(p){
 
 function renderGrid(){
   const g = $('#grid'); g.innerHTML='';
-  const list = currentCat==='全部' ? PRODUCTS : PRODUCTS.filter(p=>String(p.category||'').trim()===currentCat);
+  const visible = PRODUCTS.filter(p=>!isProductHidden(p));
+  const list = currentCat==='全部' ? visible : visible.filter(p=>String(p.category||'').trim()===currentCat);
   list.forEach(p=>{
     const div=document.createElement('div'); div.className='card';
     const orig = (p.originalPrice && p.originalPrice>p.price) ? '<span class="orig">'+money(p.originalPrice)+'</span>' : '';

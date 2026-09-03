@@ -38,6 +38,9 @@
   .desc{background:#fff;padding:16px;font-size:14px;line-height:1.8;color:#5b5147;max-width:480px;margin:0 auto}
   .desc h4{margin:0 0 8px;font-size:14px;color:#7a5230}
   .desc .body{white-space:pre-wrap;word-break:break-word}
+  /* 描述页图文混排：插图手机端自适应、居中、圆角 */
+  .desc .body img{max-width:100%;height:auto;display:block;margin:12px auto;border-radius:8px}
+  .desc .body p{margin:0 0 10px}
   .detail-images{background:#fff;padding:16px;max-width:480px;margin:0 auto;border-bottom:1px solid #f0ece4}
   .detail-images h4{margin:0 0 12px;font-size:14px;color:#7a5230}
   .detail-images img{width:100%;border-radius:10px;margin-bottom:12px;display:block;background:#eee}
@@ -244,6 +247,11 @@ const $ = s=>document.querySelector(s);
 function money(n){ return '¥'+Number(n).toLocaleString('zh-CN'); }
 
 function set(){
+  const hiddenCats = (CONFIG && Array.isArray(CONFIG.hiddenCategories))?CONFIG.hiddenCategories:[];
+  if(P.hidden || (P.category && hiddenCats.includes(P.category))){
+    document.body.innerHTML = '<div style="text-align:center;padding:80px 20px;color:#7a6f62"><h2 style="font-size:20px;margin-bottom:10px">商品不存在或已下架</h2><p style="font-size:14px">该商品暂不可见，去看看其他宝贝吧～</p><button onclick="location.href=\'/\'" style="margin-top:24px;border:none;background:#b8743f;color:#fff;border-radius:24px;padding:12px 28px;font-size:15px;cursor:pointer">返回商城</button></div>';
+    return;
+  }
   document.title = P.name;
   document.querySelector('meta[property="og:title"]').setAttribute('content', P.name);
   document.getElementById('hero').src = P.image||'/assets/product-placeholder.svg';
@@ -361,6 +369,12 @@ function selectSku(p, skuId){
   curSkuId = skuId; curSkuQty = Math.max(1, curSkuQty);
   renderSkuOptions(p);
   const sku = p.skus.find(s=>String(s.id)===skuId) || {};
+  // 集合链接：每个 SKU 可配一张自己的主图，选中时弹窗图与主图同步切换
+  const skuImgUrl = sku.image || p.image || '/assets/product-placeholder.svg';
+  const skuImgEl = document.getElementById('skuImg');
+  if(skuImgEl) skuImgEl.src = skuImgUrl;
+  const heroEl = document.getElementById('hero');
+  if(heroEl) heroEl.src = skuImgUrl;
   document.getElementById('skuPrice').textContent = money(sku.price||p.price||0);
   document.getElementById('skuPicked').textContent = sku.name ? ('已选：'+sku.name) : '请选择型号';
   const st = skuStockOf(p, sku);

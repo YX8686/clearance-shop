@@ -83,18 +83,41 @@ const KV_TTL_MS = 3000;
 const kvCache = new Map(); // key -> { ts, value, promise }
 
 // 云端调用重试：覆盖 Supabase 免费层间歇 fetch failed / 冷启动抖动
-// 默认 5 次指数退避（400/800/1600/3200/6400ms ≈ 12.4s），把偶发断网的保存失败率降到最低
-async function withRetry(fn, label, retries=5){
+// 默认 2 次快速重试（失败后立即再试 1 次，间隔 600ms）。
+// 以前默认 5 次指数退避（最长 6.4s）导致保存明显变慢，且前端超时重试会造成重复产品。
+async function withRetry(fn, label, retries=2){
   let lastErr;
   for(let i=0;i<retries;i++){
     try{ return await fn(); }
     catch(e){
       lastErr=e;
       console.error(`[${label}] 云端第${i+1}/${retries}次调用失败:`, e.message);
-      if(i<retries-1) await new Promise(r=>setTimeout(r, 400*Math.pow(2,i)));
+      if(i<retries-1) await new Promise(r=>setTimeout(r, 600));
     }
   }
   throw lastErr;
+}
+
+// ---------- 幂等保存：防止前端重试/网络抖动导致同一操作被多次执行 ----------
+// 前端每次保存会带一个 clientSaveId，后端记录最近处理过的 ID，重复请求直接返回上次结果
+const recentSaveIds = new Map(); // clientSaveId -> { product, ts }
+const SAVE_ID_TTL_MS = 60000;
+function cleanupRecentSaveIds(){
+  const now = Date.now();
+  for(const [k,v] of recentSaveIds){
+    if(now - v.ts > SAVE_ID_TTL_MS) recentSaveIds.delete(k);
+  }
+}
+function recordSaveId(id, product){
+  if(!id) return;
+  cleanupRecentSaveIds();
+  recentSaveIds.set(id, { product, ts: Date.now() });
+}
+function getSavedById(id){
+  if(!id) return null;
+  cleanupRecentSaveIds();
+  const hit = recentSaveIds.get(id);
+  return hit ? hit.product : null;
 }
 
 async function loadKV(key, fallback){
@@ -199,7 +222,8 @@ const DEFAULT_CONFIG = {
   bankAccount: '',
   bankHolder: '',
   announcement: '',
-  shareImage: ''
+  shareImage: '',
+  hiddenCategories: []
 };
 
 let products = [];
@@ -218,12 +242,13 @@ async function boot(){
   const seedProducts = readJson('products.json', []);
   const seedConfig = readJson('config.json', DEFAULT_CONFIG);
   const seedOrders = readJson('orders.json', []);
-  // boot 阶段优雅降级：loadKV 失败时使用本地 data/*.json 种子，保证服务不挂；
-  // 首次写入成功后 kvCache 会被覆盖，自动切到云端。
-  try { products = await loadKV('products', seedProducts); }
+  // boot 阶段优雅降级：从云端 product:* 独立行聚合；失败时使用本地 data/*.json 种子
+  try { products = await loadProductsFromRows(seedProducts); }
   catch(e){ console.error('[boot] products 加载失败，使用本地种子：', e.message); products = seedProducts; }
   try { config = await loadKV('config', seedConfig); }
   catch(e){ console.error('[boot] config 加载失败，使用本地种子：', e.message); config = seedConfig; }
+  // 合并默认值：后续新增字段（如 hiddenCategories）不会在老配置里缺失
+  config = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config ? config : {}) };
   // 订单载入：优先从独立行 order:* 聚合（新方案，并发安全）；若无则回退旧 orders 大数组行并拆分迁移
   try {
     if(USE_SUPABASE){
@@ -319,31 +344,125 @@ async function saveOrderRowSync(order){
   if(idx>=0) orders[idx]=order; else orders.push(order);
 }
 // 进程退出前刷盘，防丢单
-process.on('beforeExit', _flushOrderQueue);
+process.on('beforeExit', ()=>{ _flushOrderQueue(); flushDirtyProducts().catch(()=>{}); });
 function saveOrders(){ return withLock(()=> saveKV('orders', orders)); } // 仅作整批备份残留，下单/状态变更已改用 saveOrderRow
 function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config)); }
-function saveProducts(){ clearHtmlCache(); return withLock(()=> saveKV('products', products)); }
-// 防抖产品保存：200 并发下单时，多单库存扣减合并为 1 次写入（500ms 窗口内），
-// 避免每单 await saveProducts() 串行锁 200 次导致超时。内存即权威，落盘只做持久化保险。
+
+// ===== 产品存储加固：每个产品独立存储为 shop_data 的一行（key=product:<id>）=====
+// 旧方案：所有产品塞进 shop_data 的单行(key='products')，产品描述长、数量多后，
+// 每次编辑都要 upsert 整个大 JSON，导致保存变慢、Supabase 免费层容易超时/失败。
+// 新方案：每个产品 upsert 独立行，单行数据小、写入快，回到秒级保存；排序单独存 product_order。
+const dirtyProductIds = new Set();
+function markProductDirty(id){ if(id) dirtyProductIds.add(id); }
+// ⚠️ 关键：supabase-js 的查询遇到网络/权限错误**不抛异常**，而是把错误放进返回对象的 error 字段。
+// 早期改成分行存储时，新写的 upsert 只套了 withRetry 却没检查 error 字段 —— 一旦 Supabase 免费层
+// 抖动（fetch failed）或 RLS 拦截，写入其实没成功，却被当成成功并清掉了 dirtyProductIds，
+// 症状正是「后台提示保存成功，一刷新又变回旧数据」。统一封装：解析 error 并抛错，交给重试兜底。
+async function sbRun(fn, label){
+  const r = await withRetry(fn, label);
+  if(r && r.error) throw new Error((label||'supabase')+' 失败: '+(r.error.message||JSON.stringify(r.error)));
+  return r;
+}
+async function flushDirtyProducts(){
+  if(!dirtyProductIds.size) return;
+  const ids = Array.from(dirtyProductIds);
+  dirtyProductIds.clear();
+  clearHtmlCache();
+  if(!USE_SUPABASE){
+    // 本地模式仍整盘写入 products.json
+    await withLock(()=> writeJsonAtomic('products.json', products));
+    return;
+  }
+  // 云端模式：逐行 upsert；失败的 id 重新加入 dirty 待下次窗口重试
+  const failed = [];
+  for(const id of ids){
+    const p = products.find(x=>x.id===id);
+    if(!p) continue;
+    try {
+      await sbRun(()=>sb.from('shop_data').upsert({ key:'product:'+id, value:p }), 'saveProductRow:'+id);
+    } catch(e) {
+      console.error('[saveProductRow] 失败:', id, e.message);
+      failed.push(id);
+    }
+  }
+  failed.forEach(id=>dirtyProductIds.add(id));
+  // 同步排序 key（排序变更较少，有脏行时顺便写）
+  await saveProductOrder().catch(e=>console.error('[saveProductOrder]', e.message));
+}
+async function saveProductOrder(){
+  if(!USE_SUPABASE) return;
+  const order = products.map(p=>p.id);
+  // 关键修复：必须检查 error 字段，否则排序写入失败会被静默吞掉（supabase-js 不抛异常）
+  await sbRun(()=>sb.from('shop_data').upsert({ key:'product_order', value:order }), 'saveProductOrder');
+}
+async function loadProductsFromRows(fallback=[]){
+  if(!USE_SUPABASE) return readJson('products.json', fallback);
+  // 1) 读取所有 product:* 独立行
+  const { data, error } = await sb.from('shop_data').select('key,value').like('key','product:%');
+  if(error) throw error;
+  let rows = [];
+  if(data) rows = data.map(r=>r.value).filter(Boolean);
+  // 2) 尚无独立行：迁移旧 products 大数组
+  if(!rows.length){
+    const old = await loadKV('products', fallback);
+    const arr = Array.isArray(old) ? old : fallback;
+    if(arr.length){
+      console.log('[migrate] 拆分旧 products 大数组为', arr.length, '条独立行');
+      for(const p of arr){
+        if(!p || !p.id) continue;
+        // 关键修复：迁移旧大数组时也检查 error 字段
+        await sbRun(()=>sb.from('shop_data').upsert({ key:'product:'+p.id, value:p }), 'migrateProduct:'+p.id);
+      }
+      rows = arr.slice();
+      await saveProductOrder();
+    }
+  }
+  // 3) 读取排序
+  let order = [];
+  try {
+    const { data: orderData, error: orderErr } = await sb.from('shop_data').select('value').eq('key','product_order').maybeSingle();
+    if(!orderErr && orderData && Array.isArray(orderData.value)) order = orderData.value;
+  } catch(e){ console.error('[loadProductsFromRows] 读排序失败', e.message); }
+  // 4) 按 order 排序，不在 order 中的排后面
+  const map = new Map(rows.map(p=>[p.id, p]));
+  const result = [];
+  order.forEach(id=>{ if(map.has(id)){ result.push(map.get(id)); map.delete(id); } });
+  map.forEach(p=>result.push(p));
+  return result;
+}
+async function deleteProductRow(id){
+  if(!USE_SUPABASE){ await withLock(()=> writeJsonAtomic('products', products)); return; }
+  await withRetry(()=>sb.from('shop_data').delete().eq('key','product:'+id), 'deleteProductRow:'+id).catch(e=>console.error('[deleteProductRow]', id, e.message));
+  await saveProductOrder().catch(e=>console.error('[saveProductOrder:delete]', e.message));
+}
+// 兼容旧 saveProducts：本地模式整盘写；云端模式 flush 所有脏行
+function saveProducts(){ clearHtmlCache(); return withLock(async()=>{ products.forEach(p=>markProductDirty(p.id)); return flushDirtyProducts(); }); }
+// 防抖产品保存：把多个库存扣减合并到一个 500ms 窗口，再批量逐行落盘
 let _prodSaveTimer = null;
 function saveProductsDebounced(){
-  if(_prodSaveTimer) return; // 已有等待中的写入，复用同一窗口
-  _prodSaveTimer = setTimeout(()=>{
+  if(_prodSaveTimer) return;
+  _prodSaveTimer = setTimeout(async()=>{
     _prodSaveTimer = null;
-    saveProducts().catch(e=>console.error('[saveProductsDebounced]', e.message));
+    await flushDirtyProducts().catch(e=>console.error('[saveProductsDebounced]', e.message));
   }, 500);
 }
-
-// 产品读取：云端模式下每次从 Supabase 取最新，防止 Render 实例内存与本地后台不同步
-// 读失败时不抛错（避免商城一片空白），降级使用内存副本
+// 产品读取：内存即权威，但保留云端回源能力（顾客端 Render 副本来之，需看到后台改动）
+// 关键修复：若存在"尚未落云的脏编辑"（dirtyProductIds 非空），直接返回内存版本，
+// 绝不用云端旧值覆盖，避免"保存成功但刷新后变回旧数据"的假象（Supabase 抖动导致单行 flush 偶败时尤甚）。
+// 无脏行时回源云端读取（含 product_order 排序），保证顾客端最多延迟一次轮询即可看到最新。
 async function getProducts(){
   if(!USE_SUPABASE) return products;
-  try {
-    kvCache.delete('products'); // 强制实时读取，避免 3 秒缓存导致不同步
-    return await loadKV('products', products);
-  }
+  if(dirtyProductIds.size) return products;
+  try { return await loadProductsFromRows(products); }
   catch(e){ console.error('[getProducts] 读云端失败，使用内存副本：', e.message); return products; }
 }
+// 后台重试：Supabase 免费层偶发 fetch failed 时，单行 flush 可能失败；每 5s 把残留脏行再刷一次，
+// 确保最终一致，且管理员界面因 getProducts 优先返回内存脏行而不受影响。
+setInterval(async ()=>{
+  if(USE_SUPABASE && dirtyProductIds.size){
+    await flushDirtyProducts().catch(e=>console.error('[bg flush] 残留脏行重试失败：', e.message));
+  }
+}, 5000);
 
 // 订单读取：内存副本即权威（下单/状态变更实时更新内存，启动已从 order:* 独立行聚合载入），
 // 后台即时看到最新订单，无需再读旧 orders 大数组行（已废弃）。
@@ -369,10 +488,8 @@ async function syncOrders(){
 // 产品写入前同步：下单扣库存必须基于云端最新数据，防止 Render 内存副本过期把库存扣错
 async function syncProducts(){
   if(!USE_SUPABASE) return products;
-  try {
-    kvCache.delete('products'); // 强制实时读取
-    products = await loadKV('products', products);
-  } catch(e){ console.error('[syncProducts] 同步云端失败，继续使用内存副本：', e.message); }
+  try { products = await loadProductsFromRows(products); }
+  catch(e){ console.error('[syncProducts] 同步云端失败：', e.message); }
   return products;
 }
 
@@ -480,7 +597,8 @@ const server = http.createServer(async (req, res)=>{
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(list)); return;
       }
       if(method==='GET' && pathname==='/api/config'){
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(config)); return;
+        const out = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config && !Array.isArray(config) ? config : {}) };
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(out)); return;
       }
       if(method==='GET' && pathname==='/api/orders'){
         // 关键：让 /api/orders 始终反映云端最新状态（外部进程如 buchu-ship-cloud
@@ -584,9 +702,9 @@ const server = http.createServer(async (req, res)=>{
           const needQty = needMap[k];
           if(skuId){
             const sku = (p.skus||[]).find(s=>String(s.id)===skuId);
-            if(sku && sku.stock!=null){ sku.stock = Math.max(0, Math.floor(Number(sku.stock)) - needQty); stockDeducted = true; }
+            if(sku && sku.stock!=null){ sku.stock = Math.max(0, Math.floor(Number(sku.stock)) - needQty); stockDeducted = true; markProductDirty(pid); }
           } else if(p.stock!=null){
-            p.stock = Math.max(0, Math.floor(Number(p.stock)) - needQty); stockDeducted = true;
+            p.stock = Math.max(0, Math.floor(Number(p.stock)) - needQty); stockDeducted = true; markProductDirty(pid);
           }
         }
 
@@ -695,9 +813,9 @@ const server = http.createServer(async (req, res)=>{
             const qty = Number(it.qty)||0;
             if(it.skuId){
               const sku = (p.skus||[]).find(s=>String(s.id)===it.skuId);
-              if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) + qty; stockRestored = true; }
+              if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) + qty; stockRestored = true; markProductDirty(it.id); }
             } else if(p.stock!=null){
-              p.stock = Math.floor(Number(p.stock)) + qty; stockRestored = true;
+              p.stock = Math.floor(Number(p.stock)) + qty; stockRestored = true; markProductDirty(it.id);
             }
           });
         }
@@ -715,6 +833,10 @@ const server = http.createServer(async (req, res)=>{
         if(body.bankName!=null) config.bankName=String(body.bankName).slice(0,50);
         if(body.bankAccount!=null) config.bankAccount=String(body.bankAccount).slice(0,60);
         if(body.bankHolder!=null) config.bankHolder=String(body.bankHolder).slice(0,20);
+        if(body.hiddenCategories!=null){
+          const arr=Array.isArray(body.hiddenCategories)?body.hiddenCategories:[];
+          config.hiddenCategories=arr.map(x=>String(x).trim().slice(0,50)).filter(Boolean);
+        }
         if(body.paymentQrBase64){ const url=await saveImage(body.paymentQrBase64,'payment-qr'); if(url) config.paymentQr=url; }
         if(body.paymentWechatQrBase64){ const url=await saveImage(body.paymentWechatQrBase64,'payment-wechat'); if(url) config.paymentWechatQr=url; }
         if(body.paymentAlipayQrBase64){ const url=await saveImage(body.paymentAlipayQrBase64,'payment-alipay'); if(url) config.paymentAlipayQr=url; }
@@ -822,6 +944,15 @@ const server = http.createServer(async (req, res)=>{
       if(method==='POST' && pathname==='/api/products'){
         let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
         const p=body;
+        const clientSaveId = String(p.clientSaveId || '').trim();
+        // 幂等：同一 clientSaveId 已处理过，直接返回上次结果，不再写库
+        if(clientSaveId){
+          const cached = getSavedById(clientSaveId);
+          if(cached){
+            console.log('[POST /api/products] 幂等命中:', clientSaveId);
+            res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, product:cached, cached:true})); return;
+          }
+        }
         const id=String(p.id||'').trim();
         const isNew=!id || !products.find(x=>x.id===id);
         const newId=id || crypto.randomBytes(4).toString('hex').toUpperCase();
@@ -839,6 +970,7 @@ const server = http.createServer(async (req, res)=>{
           originalPrice: p.originalPrice!==undefined?Math.max(0, Number(p.originalPrice)||0):(existing.originalPrice||0),
           stock: p.stock!==undefined?Math.max(0, Number(p.stock)||0):(existing.stock||0),
           forceSoldOut: p.forceSoldOut!==undefined?!!p.forceSoldOut:(existing.forceSoldOut||false), // 后台弹窗没提供该字段，必须与旧数据合并，防止被清空
+          hidden: p.hidden!==undefined?!!p.hidden:(existing.hidden||false),
           category: String(p.category!==undefined?p.category:(existing.category||'')).trim().slice(0,50),
           desc: p.desc!==undefined?sanitizeHtml(String(p.desc).trim()).slice(0,30000):(existing.desc||''),
           image: String(p.image!==undefined?p.image:(existing.image||'/assets/products/default.svg')).trim(),
@@ -863,7 +995,10 @@ const server = http.createServer(async (req, res)=>{
         }
         if(isNew){ item.createdAt=item.updatedAt; products.push(item); }
         else { const idx=products.findIndex(x=>x.id===id); item.createdAt=products[idx].createdAt||item.updatedAt; products[idx]=item; }
-        await saveProducts();
+        // 产品改为独立行存储：只 upsert 当前产品，回到秒级保存
+        markProductDirty(item.id);
+        await flushDirtyProducts();
+        recordSaveId(clientSaveId, item);
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, product:item})); return;
       }
       // 产品管理：删
@@ -871,8 +1006,9 @@ const server = http.createServer(async (req, res)=>{
       if(method==='DELETE' && mDelProd){
         const idx=products.findIndex(x=>x.id===mDelProd[1]);
         if(idx===-1){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return; }
+        const delId = mDelProd[1];
         products.splice(idx,1);
-        await saveProducts();
+        await deleteProductRow(delId);
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true})); return;
       }
       // 产品管理：排序
@@ -884,7 +1020,9 @@ const server = http.createServer(async (req, res)=>{
         ids.forEach(id=>{ const p=map.get(id); if(p){ next.push(p); map.delete(id); } });
         map.forEach(p=>next.push(p));
         products=next;
-        await saveProducts();
+        await saveProductOrder();
+        // 排序变更不大，整盘同步一次本地 seed；云端模式下只写 order key 即可
+        if(!USE_SUPABASE) await withLock(()=> writeJsonAtomic('products.json', products));
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true})); return;
       }
       // 商家后台：快速切换「强制售罄」开关（不需打开编辑弹窗，列表卡片直接点）
@@ -892,9 +1030,22 @@ const server = http.createServer(async (req, res)=>{
       if(method==='POST' && mToggleFSO){
         const idx = products.findIndex(x=>x.id===mToggleFSO[1]);
         if(idx===-1){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return; }
+        const pid = mToggleFSO[1];
         products[idx].forceSoldOut = !products[idx].forceSoldOut;
-        await saveProducts();
+        markProductDirty(pid);
+        await flushDirtyProducts();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, forceSoldOut: products[idx].forceSoldOut})); return;
+      }
+      // 商家后台：快速切换「隐藏/上架」开关（隐藏后买家端完全不可见）
+      const mToggleHidden = pathname.match(/^\/api\/products\/([\w-]+)\/toggle-hidden$/);
+      if(method==='POST' && mToggleHidden){
+        const idx = products.findIndex(x=>x.id===mToggleHidden[1]);
+        if(idx===-1){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return; }
+        const pid = mToggleHidden[1];
+        products[idx].hidden = !products[idx].hidden;
+        markProductDirty(pid);
+        await flushDirtyProducts();
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, hidden: products[idx].hidden})); return;
       }
 
       res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return;
@@ -906,40 +1057,47 @@ const server = http.createServer(async (req, res)=>{
       if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':cached); return; }
       const list = await getProducts();
       const ogImage = pickShopShareImage(list);
+      const safeConfig = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config && !Array.isArray(config) ? config : {}) };
       let html = renderTemplate('home.html', {
-        SHOP_NAME: htmlEscape(config.shopName),
-        OG_TITLE: htmlEscape(config.shopName),
-        OG_DESC: htmlEscape(config.announcement || '不初限时狂欢商城 · 全场超低价回馈老客户'),
+        SHOP_NAME: htmlEscape(safeConfig.shopName),
+        OG_TITLE: htmlEscape(safeConfig.shopName),
+        OG_DESC: htmlEscape(safeConfig.announcement || '不初限时狂欢商城 · 全场超低价回馈老客户'),
         OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
         OG_URL: htmlEscape(BASE + '/'),
         PRODUCTS_JSON: jsonForScript(list),
-        CONFIG_JSON: jsonForScript(config)
+        CONFIG_JSON: jsonForScript(safeConfig)
       });
       html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
       setCachedHtml('home', html);
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;
     }
 
-    const mProd = pathname.match(/^\/product\/([\w-]+)$/);
-    if((method==='GET'||method==='HEAD') && mProd){
-      const pkey = 'product:'+mProd[1];
-      const cached = getCachedHtml(pkey);
-      if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':cached); return; }
-      const list = await getProducts();
-      const p = list.find(p=>p.id===mProd[1]);
-      if(!p){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
-      const ogImage = inferShareImage(p) || pickShopShareImage(list);
-      let html = renderTemplate('product.html', {
-        SHOP_NAME: htmlEscape(config.shopName),
-        OG_TITLE: htmlEscape(p.name),
-        OG_DESC: htmlEscape(String(p.desc||'').replace(/<[^>]+>/g,'').slice(0,200) || config.shopName),
-        OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
-        OG_URL: htmlEscape(BASE + '/product/'+p.id),
-        OG_PRICE: htmlEscape(p.price || ''),
-        PRODUCT_JSON: jsonForScript(p),
-        PRODUCTS_JSON: jsonForScript(list),
-        CONFIG_JSON: jsonForScript(config)
-      });
+      const mProd = pathname.match(/^\/product\/([\w-]+)$/);
+      if((method==='GET'||method==='HEAD') && mProd){
+        const pkey = 'product:'+mProd[1];
+        const cached = getCachedHtml(pkey);
+        if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':cached); return; }
+        const list = await getProducts();
+        const p = list.find(p=>p.id===mProd[1]);
+        if(!p){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
+        // 隐藏产品或被隐藏分类下的产品：买家端详情页直接返回不存在
+        const hiddenCats = Array.isArray(config.hiddenCategories)?config.hiddenCategories:[];
+        if(p.hidden || (p.category && hiddenCats.includes(p.category))){
+          res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return;
+        }
+        const ogImage = inferShareImage(p) || pickShopShareImage(list);
+        const safeConfig = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config && !Array.isArray(config) ? config : {}) };
+        let html = renderTemplate('product.html', {
+          SHOP_NAME: htmlEscape(safeConfig.shopName),
+          OG_TITLE: htmlEscape(p.name),
+          OG_DESC: htmlEscape(String(p.desc||'').replace(/<[^>]+>/g,'').slice(0,200) || safeConfig.shopName),
+          OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
+          OG_URL: htmlEscape(BASE + '/product/'+p.id),
+          OG_PRICE: htmlEscape(p.price || ''),
+          PRODUCT_JSON: jsonForScript(p),
+          PRODUCTS_JSON: jsonForScript(list),
+          CONFIG_JSON: jsonForScript(safeConfig)
+        });
       html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
       setCachedHtml(pkey, html);
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;
