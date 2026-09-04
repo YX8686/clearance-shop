@@ -1184,9 +1184,31 @@ function pickSkuImage(idx){ galPickSkuIdx=idx; openGalPicker('sku'); }
 function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function stripTags(s){ return String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').trim(); }
 function clearDesc(){ const t=document.getElementById('pDesc'); t.innerHTML=''; updateDescCount(); try{ t.focus(); }catch(e){} }
-function cleanWordStyles(){
-  const t=document.getElementById('pDesc'); if(!t) return;
+// 彻底清除 Word/网页复制带来的脏东西：
+// 1) 整块删除 <style>/<script>/<link>/<meta> 及 o:/w:/v:/m: 等 Office 命名空间标签（含其内部文本），
+//    避免 CSS / XML 被“拆包”后漏成编辑器里可见的“代码”
+// 2) 删除注释节点
+// 3) 非白名单标签拆包、白名单标签清掉 class/style/lang 等属性
+// 4) 规整空白、清掉空标签
+// 注意：编辑器自身结构（黄底标题 desc-highlight-title / 勾选框 dht-box / 插图包装 desc-img-wrap）原样保留，不被误清。
+function purgeOfficeJunk(root){
+  if(!root) return;
+  const kill=new Set(['SCRIPT','STYLE','LINK','META','HEAD','TITLE','BASE','NOSCRIPT','TEMPLATE']);
+  const walk=document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_COMMENT, null, false);
+  const toRemove=[];
+  let n;
+  while((n=walk.nextNode())){
+    if(n.nodeType===8){ toRemove.push(n); continue; } // 注释
+    const tag=n.tagName;
+    if(kill.has(tag) || tag.indexOf(':')>=0){ toRemove.push(n); } // 样式/脚本/Office 命名空间
+  }
+  toRemove.forEach(el=>{ if(el.parentNode) el.parentNode.removeChild(el); });
+}
+function cleanDescNode(root){
+  if(!root) return;
+  purgeOfficeJunk(root);
   const allowed=new Set(['P','BR','STRONG','B','I','EM','U','UL','OL','LI','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','HR','IMG']);
+  const keepStruct=(el)=> el.classList && (el.classList.contains('desc-highlight-title')||el.classList.contains('desc-img-wrap')||el.classList.contains('dht-box'));
   const cleanNode=(node)=>{
     let i=node.childNodes.length;
     while(i--){
@@ -1195,6 +1217,17 @@ function cleanWordStyles(){
       if(c.nodeType===8){ c.remove(); continue; } // 移除注释
       if(c.nodeType!==1){ c.remove(); continue; } // 移除其他非元素
       const tag=c.tagName.toUpperCase();
+      // 编辑器自身结构：保留，只清危险属性（保留 class/contenteditable/style）
+      if(keepStruct(c)){
+        for(let a=c.attributes.length-1;a>=0;a--){
+          const nm=c.attributes[a].name.toLowerCase();
+          if(nm.startsWith('on')||nm.startsWith('data-')||nm.startsWith('xmlns')||nm.startsWith('xml:')||nm==='id'||nm==='lang'||nm==='dir'||nm==='role'||nm==='face'||nm==='size'||nm==='color'){
+            c.removeAttribute(c.attributes[a].name);
+          }
+        }
+        cleanNode(c);
+        continue;
+      }
       if(!allowed.has(tag)){
         // 不在白名单的标签：拆包保留文本/子元素
         while(c.firstChild) node.insertBefore(c.firstChild, c);
@@ -1203,8 +1236,8 @@ function cleanWordStyles(){
       // IMG：清格式不能把插图清掉。保留 src/alt 与自适应 style，只清危险属性
       if(tag==='IMG'){
         for(let a=c.attributes.length-1;a>=0;a--){
-          const n=c.attributes[a].name.toLowerCase();
-          if(n.startsWith('on')||n.startsWith('data-')||n==='class'||n==='id'||n==='srcset'){
+          const nm=c.attributes[a].name.toLowerCase();
+          if(nm.startsWith('on')||nm.startsWith('data-')||nm==='class'||nm==='id'||nm==='srcset'){
             c.removeAttribute(c.attributes[a].name);
           }
         }
@@ -1213,8 +1246,8 @@ function cleanWordStyles(){
       }
       // 在白名单内：清理 Word 带来的属性
       for(let a=c.attributes.length-1;a>=0;a--){
-        const n=c.attributes[a].name.toLowerCase();
-        if(n==='style'||n==='class'||n.startsWith('data-')||n.startsWith('on')||n.startsWith('xmlns')||n.startsWith('xml:')||n==='id'||n==='lang'||n==='dir'||n==='role'||n==='face'||n==='size'||n==='color'){
+        const nm=c.attributes[a].name.toLowerCase();
+        if(nm==='style'||nm==='class'||nm.startsWith('data-')||nm.startsWith('on')||nm.startsWith('xmlns')||nm.startsWith('xml:')||nm==='id'||nm==='lang'||nm==='dir'||nm==='role'||nm==='face'||nm==='size'||nm==='color'){
           c.removeAttribute(c.attributes[a].name);
         }
       }
@@ -1222,10 +1255,10 @@ function cleanWordStyles(){
       if(!c.textContent.trim() && !c.querySelector('img,br')) c.remove();
     }
   };
-  cleanNode(t);
+  cleanNode(root);
   // 关键：清理文本节点里的换行符。Word 粘贴后，</p> 与 <p> 之间常残留 \n\n，
   // 而 #pDesc 有 white-space:pre-wrap，这些换行会被渲染成大段空白。
-  const tw=document.createTreeWalker(t, NodeFilter.SHOW_TEXT, null, false);
+  const tw=document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
   const textNodes=[];
   while(tw.nextNode()) textNodes.push(tw.currentNode);
   textNodes.forEach(n=>{
@@ -1237,10 +1270,14 @@ function cleanWordStyles(){
   let changed=true;
   while(changed){
     changed=false;
-    Array.from(t.children).forEach(el=>{
+    Array.from(root.children).forEach(el=>{
       if(!el.textContent.trim() && !el.querySelector('img,br')){ el.remove(); changed=true; }
     });
   }
+}
+function cleanWordStyles(){
+  const t=document.getElementById('pDesc'); if(!t) return;
+  cleanDescNode(t);
   wrapDescImages(t);
   updateDescCount();
   toast('已清除 Word 格式，段间距已恢复（列表符号请用上方「项目」按钮重新点）');
@@ -1426,7 +1463,7 @@ function handleDescPaste(e){
   const t=document.getElementById('pDesc'); t.focus();
   if(html){
     const tmp=document.createElement('div'); tmp.innerHTML=html;
-    stripFontStyles(tmp);
+    cleanDescNode(tmp); // 粘贴即彻底清洗 Word 脏样式/命名空间，避免“变形”与漏出 CSS“代码”
     const frag=document.createDocumentFragment();
     while(tmp.firstChild) frag.appendChild(tmp.firstChild);
     const sel=window.getSelection();
