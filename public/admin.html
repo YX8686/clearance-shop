@@ -136,7 +136,8 @@
   .desc-img-wrap .img-crop-btn{top:-10px;left:-10px}
   .desc-img-wrap .img-resize-handle{bottom:-8px;right:-8px}
   /* 描述编辑器：黄底标题块 */
-  .desc-highlight-title{background:#fff3cd;padding:10px 12px;border-radius:6px;margin:12px 0;display:block;border-left:4px solid #d4a017;line-height:1.6}
+  .desc-highlight-title{background:#fff3cd;padding:10px 12px;border-radius:6px;margin:12px 0;display:block;border-left:4px solid #d4a017;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"PingFang SC","Microsoft YaHei",sans-serif !important;font-size:14px !important;color:#5d4a0d !important}
+  .desc-highlight-title *{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"PingFang SC","Microsoft YaHei",sans-serif !important;font-size:14px !important}
   .desc-highlight-title .dht-box{display:inline-block;width:10px;height:10px;background:#d4a017;border-radius:2px;margin-right:8px;vertical-align:middle}
 
   /* 合并订单 */
@@ -1289,6 +1290,34 @@ function insertSymbol(ch){
   updateDescCount();
 }
 
+// 粘贴/黄底标题时统一清除外部字体污染（font标签、face/size属性、style中的font-family/font-size）
+function stripFontStyles(root){
+  if(!root) return root;
+  const walker=document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null, false);
+  const toUnwrap=[];
+  let el;
+  while((el=walker.nextNode())){
+    const tag=el.tagName.toLowerCase();
+    if(tag==='font'){ toUnwrap.push(el); continue; }
+    el.removeAttribute('face');
+    el.removeAttribute('size');
+    if(el.style){
+      el.style.fontFamily='';
+      el.style.fontSize='';
+      el.style.font='';
+    }
+    const st=el.getAttribute('style');
+    if(st && !st.replace(/\s/g,'')) el.removeAttribute('style');
+  }
+  toUnwrap.forEach(function(el){
+    const parent=el.parentNode;
+    if(!parent) return;
+    while(el.firstChild) parent.insertBefore(el.firstChild, el);
+    parent.removeChild(el);
+  });
+  return root;
+}
+
 function insertHighlightTitle(){
   const t=document.getElementById('pDesc');
   t.focus();
@@ -1302,8 +1331,9 @@ function insertHighlightTitle(){
   box.contentEditable=false;
   div.appendChild(box);
   if(!sel.isCollapsed && t.contains(r.commonAncestorContainer)){
-    // 有选中文字：用黄底 div 包裹
+    // 有选中文字：用黄底 div 包裹，并清除可能带入的外部字体样式
     const frag=r.extractContents();
+    stripFontStyles(frag);
     div.appendChild(frag);
     r.insertNode(div);
   } else {
@@ -1384,9 +1414,27 @@ function handleDescPaste(e){
       const f=it.getAsFile(); if(f) imgFiles.push(f);
     }
   }
-  if(!imgFiles.length) return; // 纯文字/富文本粘贴交给浏览器默认处理
+  if(imgFiles.length){ e.preventDefault(); openCropModal(imgFiles); return; }
+  // 纯文字/富文本粘贴：清除外部字体样式，避免粘贴后出现多种字体
+  const cd=e.clipboardData;
+  const html=cd && cd.getData('text/html');
+  const text=cd && cd.getData('text/plain');
+  if(!html && !text) return;
   e.preventDefault();
-  openCropModal(imgFiles);
+  const t=document.getElementById('pDesc'); t.focus();
+  if(html){
+    const tmp=document.createElement('div'); tmp.innerHTML=html;
+    stripFontStyles(tmp);
+    const frag=document.createDocumentFragment();
+    while(tmp.firstChild) frag.appendChild(tmp.firstChild);
+    const sel=window.getSelection();
+    if(sel && sel.rangeCount){
+      const r=sel.getRangeAt(0); r.deleteContents(); r.insertNode(frag);
+    }
+  } else if(text){
+    document.execCommand('insertText', false, text);
+  }
+  updateDescCount();
 }
 
 // ---------- 图片裁剪弹窗 ----------
