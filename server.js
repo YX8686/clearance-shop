@@ -1118,11 +1118,20 @@ const server = http.createServer(async (req, res)=>{
         else { const idx=products.findIndex(x=>x.id===id); item.createdAt=products[idx].createdAt||item.updatedAt; products[idx]=item; }
         // 产品改为独立行存储：只 upsert 当前产品，回到秒级保存
         markProductDirty(item.id);
-        try {
-          await flushDirtyProducts();
-        } catch(e) {
-          console.error('[POST /api/products] flushDirtyProducts 失败:', e.message);
-          res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'云端保存失败：'+e.message})); return;
+        // 路由层加重试：withRetry 默认 2 次仍偶发被 supabase 免费层瞬时抖动打挂，
+        // 这里再包 2 次重试（间隔 1.5s），总计最多 3 次尝试，把抖动吞掉不再让前端看到失败 banner。
+        // 内存已是最新的（products[idx]=item 在前），重试只重做云端 upsert，安全幂等。
+        let saved=false, lastErr;
+        for(let attempt=0; attempt<3; attempt++){
+          try { await flushDirtyProducts(); saved=true; break; }
+          catch(e){
+            lastErr=e;
+            console.error(`[POST /api/products] flushDirtyProducts 第${attempt+1}/3次失败:`, e.message);
+            if(attempt<2) await new Promise(r=>setTimeout(r, 1500));
+          }
+        }
+        if(!saved){
+          res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'云端保存失败：'+lastErr.message})); return;
         }
         recordSaveId(clientSaveId, item);
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, product:item})); return;
