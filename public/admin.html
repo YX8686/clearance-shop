@@ -228,6 +228,32 @@
       </div>
     </div>
 
+    <!-- 买家消费统计：按微信号统计，支持自选时间范围 -->
+    <div class="card" style="padding:12px 14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+        <div style="font-size:14px;font-weight:700;color:#3a322b">👥 买家消费统计（按微信号）</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn-primary" style="padding:6px 10px;font-size:12px" onclick="setStatRange(1)">今日</button>
+          <button class="btn-primary" style="padding:6px 10px;font-size:12px" onclick="setStatRange(7)">近7天</button>
+          <button class="btn-primary" style="padding:6px 10px;font-size:12px" onclick="setStatRange(30)">近30天</button>
+          <button class="btn-primary" style="padding:6px 10px;font-size:12px" onclick="setStatRange(0)">全部</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px;color:#7a6f62">
+        <span>时间范围</span>
+        <input type="date" id="statFrom" onchange="renderBuyerStats()" style="border:1px solid #e0d6c8;border-radius:8px;padding:6px 8px;font-size:12px">
+        <span>至</span>
+        <input type="date" id="statTo" onchange="renderBuyerStats()" style="border:1px solid #e0d6c8;border-radius:8px;padding:6px 8px;font-size:12px">
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="statIncludePending" onchange="renderBuyerStats()"> 含待付款</label>
+        <span style="margin-left:auto">共 <b id="bsOrderCount">0</b> 单 · <b id="bsBuyerCount">0</b> 个微信号 · 合计 <b id="bsTotal" style="color:#b8743f">¥0</b></span>
+        <button class="btn-copy" style="padding:6px 10px;font-size:12px" onclick="copyBuyerStats()">📋 复制统计</button>
+      </div>
+      <div style="font-size:13px;font-weight:700;margin:14px 0 4px;color:#3a322b">① 按微信号汇总（同一微信号累计消费）</div>
+      <div id="bsSummary"></div>
+      <div style="font-size:13px;font-weight:700;margin:16px 0 4px;color:#3a322b">② 逐单明细（按时间倒序，同号多单依次列出）</div>
+      <div id="bsDetail"></div>
+    </div>
+
     <div class="tabs">
       <button class="on" data-s="待确认" onclick="switchTab(this)">待处理 <span id="cWait">0</span></button>
       <button data-s="待发货" onclick="switchTab(this)">待发货 <span id="cShip">0</span></button>
@@ -547,8 +573,119 @@ function clearSalesCache(){
   renderSalesSummary();
   toast('金额统计已刷新');
 }
+
+// ---------- 买家消费统计（按微信号） ----------
+// 说明：只做读取与汇总，绝不改动任何订单数据
+let statInited=false;
+function ymdStr(d){ const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
+function fmtMD(ts){ const d=new Date(ts); return (d.getMonth()+1)+'月'+d.getDate()+'日'; }
+function fmtHM(ts){ const d=new Date(ts); const p=n=>String(n).padStart(2,'0'); return p(d.getHours())+':'+p(d.getMinutes()); }
+function setStatRange(days){
+  const f=document.getElementById('statFrom'), t=document.getElementById('statTo');
+  if(!days){ f.value=''; t.value=''; }
+  else {
+    const s=new Date(); s.setHours(0,0,0,0); s.setDate(s.getDate()-(days-1));
+    f.value=ymdStr(s); t.value=ymdStr(new Date());
+  }
+  renderBuyerStats();
+}
+// 统计口径：默认排除「已取消」和「待付款」（未真正成交），可勾选「含待付款」纳入待付款订单
+function statRows(){
+  const f=document.getElementById('statFrom').value;
+  const t=document.getElementById('statTo').value;
+  const from = f ? new Date(f+'T00:00:00').getTime() : null;
+  const to   = t ? new Date(t+'T23:59:59').getTime() : null;
+  const includePending=document.getElementById('statIncludePending').checked;
+  return ORDERS.filter(o=>{
+    if(o.status==='已取消') return false;
+    if(!includePending && o.status==='待付款') return false;
+    if(from!=null && (o.createdAt||0) < from) return false;
+    if(to!=null && (o.createdAt||0) > to) return false;
+    return true;
+  }).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+}
+function wechatLabel(o){ return (o.wechat && String(o.wechat).trim()) ? String(o.wechat).trim() : '（未填微信）'; }
+function renderBuyerStats(){
+  const fEl=document.getElementById('statFrom'), tEl=document.getElementById('statTo');
+  if(!fEl||!tEl) return;
+  // 首次进入默认「近7天」，之后尊重用户选择
+  if(!statInited && !fEl.value && !tEl.value){
+    const s=new Date(); s.setHours(0,0,0,0); s.setDate(s.getDate()-6);
+    fEl.value=ymdStr(s); tEl.value=ymdStr(new Date());
+    statInited=true;
+  }
+  const rows=statRows();
+  // 按微信号汇总
+  const map={};
+  rows.forEach(o=>{
+    const wx=wechatLabel(o);
+    const key=(o.wechat && String(o.wechat).trim()) ? String(o.wechat).trim() : ('未填微信·'+(o.name||'')+'·'+(o.phone||''));
+    const g=map[key] || (map[key]={wechat:wx, name:o.name||'', phone:o.phone||'', count:0, total:0, lastAt:0});
+    g.count++; g.total+=Number(o.total)||0;
+    if((o.createdAt||0)>g.lastAt){ g.lastAt=o.createdAt||0; g.name=o.name||g.name; g.phone=o.phone||g.phone; }
+  });
+  const groups=Object.values(map).sort((a,b)=>b.total-a.total);
+  const sumTotal=rows.reduce((s,o)=>s+(Number(o.total)||0),0);
+  document.getElementById('bsOrderCount').textContent=rows.length;
+  document.getElementById('bsBuyerCount').textContent=groups.length;
+  document.getElementById('bsTotal').textContent=money(sumTotal);
+  // ① 汇总
+  const sumBox=document.getElementById('bsSummary');
+  if(!groups.length){ sumBox.innerHTML='<div class="empty" style="padding:10px">该时间范围内没有成交订单</div>'; }
+  else{
+    sumBox.innerHTML=groups.map((g,i)=>`
+      <div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px dashed #eee;font-size:13px">
+        <div style="width:24px;text-align:center;color:#b8743f;font-weight:700">${i+1}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;word-break:break-all">${escapeHtml(g.wechat)}</div>
+          <div style="font-size:12px;color:#9a8f82;margin-top:2px">${escapeHtml(g.name)} ${escapeHtml(g.phone)}</div>
+        </div>
+        <div style="width:52px;text-align:center;font-size:12px;color:#9a8f82">${g.count}单</div>
+        <div style="width:92px;text-align:right;font-weight:700;color:#b8743f">${money(g.total)}</div>
+      </div>`).join('');
+  }
+  // ② 明细
+  const detBox=document.getElementById('bsDetail');
+  if(!rows.length){ detBox.innerHTML='<div class="empty" style="padding:10px">暂无明细</div>'; }
+  else{
+    detBox.innerHTML=rows.map(o=>`
+      <div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px dashed #eee;font-size:13px">
+        <div style="width:80px;color:#7a6f62;font-size:12px">${fmtMD(o.createdAt)} ${fmtHM(o.createdAt)}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;word-break:break-all">${escapeHtml(wechatLabel(o))}</div>
+          <div style="font-size:12px;color:#9a8f82;margin-top:2px">${escapeHtml(o.name||'')} ${escapeHtml(o.phone||'')}</div>
+        </div>
+        <div style="width:56px;text-align:center;font-size:11px;color:#9a8f82">${escapeHtml(o.status||'')}</div>
+        <div style="width:92px;text-align:right;font-weight:700">${money(o.total)}</div>
+      </div>`).join('');
+  }
+}
+function buildStatsText(){
+  const rows=statRows();
+  const f=document.getElementById('statFrom').value||'不限';
+  const t=document.getElementById('statTo').value||'不限';
+  const map={};
+  rows.forEach(o=>{
+    const wx=wechatLabel(o);
+    const key=(o.wechat && String(o.wechat).trim()) ? String(o.wechat).trim() : ('未填微信·'+(o.name||'')+'·'+(o.phone||''));
+    const g=map[key] || (map[key]={wechat:wx, name:o.name||'', phone:o.phone||'', count:0, total:0});
+    g.count++; g.total+=Number(o.total)||0;
+  });
+  const groups=Object.values(map).sort((a,b)=>b.total-a.total);
+  let s=`买家消费统计（${f} ~ ${t}）\n\n【按微信号汇总】\n`;
+  groups.forEach((g,i)=>{ s+=`${i+1}. ${g.wechat}（${g.name} ${g.phone}） ${g.count}单 合计 ¥${g.total}\n`; });
+  s+=`\n合计：${rows.length} 单 ¥${rows.reduce((x,o)=>x+(Number(o.total)||0),0)}\n\n【逐单明细】\n`;
+  rows.forEach(o=>{ s+=`${fmtMD(o.createdAt)} ${fmtHM(o.createdAt)}  ${wechatLabel(o)}（${o.name} ${o.phone}）  ¥${o.total}  ${o.status}\n`; });
+  return s;
+}
+function copyBuyerStats(){
+  const text=buildStatsText();
+  if(navigator.clipboard){ navigator.clipboard.writeText(text).then(()=>toast('统计已复制，可直接粘贴到微信')).catch(()=>window.prompt('长按复制：',text)); }
+  else window.prompt('长按复制：',text);
+}
 function render(){
   renderSalesSummary();
+  renderBuyerStats();
   const waits=ORDERS.filter(o=>o.status==='待确认').length;
   const ships=ORDERS.filter(o=>o.status==='待发货').length;
   const dones=ORDERS.filter(o=>o.status==='已发货').length;
@@ -585,9 +722,9 @@ function render(){
     div.innerHTML=`
       <div class="h"><span class="oid">${o.id}</span><span class="st ${cls}">${lab}</span></div>
       <div class="line"><span class="k">下单时间</span>${fmtTime(o.createdAt)}</div>
-      <div class="line"><span class="k">姓名</span>${o.name}</div>
-      ${o.wechat ? `<div class="line"><span class="k">微信</span>${o.wechat}</div>` : ''}
-      <div class="line"><span class="k">电话</span>${o.phone}</div>
+      <div class="line"><span class="k">姓名</span>${escapeHtml(o.name||'')}</div>
+      <div class="line"><span class="k">微信号</span>${o.wechat?`<b style="color:#b8743f">${escapeHtml(o.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">电话</span>${escapeHtml(o.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${o.address}</div>
       ${payLine}
       <div class="items">${items}<div style="border-top:1px dashed #e0d6c8;margin-top:6px;padding-top:6px;font-weight:700">合计 ${money(o.total)}</div></div>
@@ -661,9 +798,9 @@ function renderMergedShip(){
           <input type="checkbox" id="gap-${ids.join('-')}" ${groupChecked} ${groupIndeterminate?'data-indeterminate="1"':''} onchange="toggleAllowPullGroup(['${ids.join("','")}'], this.checked)"> 允许发货管家采集
         </label>
       </div>
-      <div class="line"><span class="k">姓名</span>${first.name}</div>
-      ${first.wechat ? `<div class="line"><span class="k">微信</span>${first.wechat}</div>` : ''}
-      <div class="line"><span class="k">电话</span>${first.phone}</div>
+      <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
+      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       ${orderBlocks}
       <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-ship" onclick="shipGroup(['${ids.join("','")}'])">填写单号发货</button></div>`;
@@ -719,9 +856,9 @@ function renderTodayShip(){
     const div=document.createElement('div'); div.className='card merge-card';
     div.innerHTML=`
       <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-ship">今日可发</span></div>
-      <div class="line"><span class="k">姓名</span>${first.name}</div>
-      ${first.wechat?`<div class="line"><span class="k">微信</span>${first.wechat}</div>`:''}
-      <div class="line"><span class="k">电话</span>${first.phone}</div>
+      <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
+      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       <div class="items">${itemsHtml}</div>
       <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button></div>`;
