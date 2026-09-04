@@ -852,7 +852,7 @@ function renderTodayShip(){
     <span>📦 今日可发 <b style="color:${today.length?'#1f9d55':'#888'}">${today.length}</b> 单
       <span style="color:#9a8f82;font-weight:400">（在「待发货」勾选「允许发货管家采集」即进入此处）</span></span>
     <button onclick="downloadShipSheet()" style="border:1px solid #1f9d55;background:#1f9d55;color:#fff">📥 确认现在生成商城发货单</button>
-    <button onclick="exportTodayOrders()">📤 全部导出到发货管家</button>`;
+    <button onclick="exportTodayOrders()">📤 全部导出到发货管家＋下载发货单</button>`;
   list.appendChild(topBar);
   if(!today.length){
     const empty=document.createElement('div'); empty.className='empty';
@@ -939,12 +939,14 @@ function toExportOrder(o){
 async function exportTodayOrders(){
   const list=ORDERS.filter(o=>o.status==='待发货' && o.allowPull);
   if(!list.length){ toast('没有已允许待发货的订单'); return; }
-  if(!window.confirm(`确认把 ${list.length} 单「今日可发」订单导出到发货管家？\n（发货员会在发货管家的「今日可发货」里看到这份「商城今日订单总表」）`)) return;
+  if(!window.confirm(`确认把 ${list.length} 单「今日可发」订单导出到发货管家，并同时下载一份商城发货单 Excel？\n（到发货管家「今日配货单」自动出现；Excel 下载后转给快递员打单即可）`)) return;
   try{
     const r=await fetch('/api/mall-today-export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:new Date().toISOString().slice(0,10), orders:list.map(toExportOrder)})});
     const d=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(d.message||('HTTP '+r.status));
-    toast(`已导出 ${d.count} 单到发货管家「今日可发货」`);
+    toast(`已导出 ${d.count} 单到发货管家「今日配货单」`);
+    // 顺带下载商城发货单 Excel，方便转给快递员打单
+    downloadShipSheet();
   }catch(e){ toast('导出失败：'+e.message); console.error('[mall-export]',e); }
 }
 // 「确认现在生成商城发货单」：把当前今日可发订单直接生成打单用 Excel 并下载到电脑
