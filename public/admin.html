@@ -569,8 +569,9 @@ function render(){
     const [cls,lab]=stMap[o.status]||['st-wait',o.status];
     const items=o.items.map(i=>{
       let h=`<div class="it-line"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
-      if(i.bundleItems && i.bundleItems.length){
-        h+=`<div class="bundle-inline">${i.bundleItems.map(b=>`• ${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('　')}</div>`;
+      const bi=getBundleItems(i);
+      if(bi && bi.length){
+        h+=`<div class="bundle-inline">实发为：${bi.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('、')}</div>`;
       }
       return h;
     }).join('');
@@ -641,8 +642,9 @@ function renderMergedShip(){
         </div>
         ${o.items.map(i=>{
           let h=`<div class="so-item"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
-          if(i.bundleItems && i.bundleItems.length){
-            h+=`<div class="bundle-inline">实发为：${i.bundleItems.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('、')}</div>`;
+          const bi=getBundleItems(i);
+          if(bi && bi.length){
+            h+=`<div class="bundle-inline">实发为：${bi.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('、')}</div>`;
           }
           return h;
         }).join('')}

@@ -505,6 +505,26 @@ setInterval(async ()=>{
 // 订单读取：内存副本即权威（下单/状态变更实时更新内存，启动已从 order:* 独立行聚合载入），
 // 后台即时看到最新订单，无需再读旧 orders 大数组行（已废弃）。
 function getOrders(){ return orders; }
+// 订单发货明细兜底：历史订单下单时 SKU 未配 bundleItems 会存成空数组，
+// 返回给前端时按 产品/SKU 反查当前配置补齐（只补响应，不回写云端存储的原始订单）
+function enrichOrderBundles(o){
+  if(!o || !Array.isArray(o.items)) return o;
+  const items = o.items.map(i=>{
+    if(!i || (Array.isArray(i.bundleItems) && i.bundleItems.length)) return i;
+    const p = products.find(p=>p.id===i.id);
+    if(!p) return i;
+    let bi = Array.isArray(p.bundleItems) ? p.bundleItems.slice() : [];
+    if(Array.isArray(p.skus) && p.skus.length){
+      const sku = (i.skuId && p.skus.find(s=>String(s.id)===String(i.skuId)))
+        || p.skus.find(s=>i.skuName && s.name===i.skuName)
+        || p.skus.find(s=>i.name && s.name && i.name.includes(s.name))
+        || p.skus[0];
+      if(sku && Array.isArray(sku.bundleItems) && sku.bundleItems.length) bi = sku.bundleItems.slice();
+    }
+    return bi.length ? { ...i, bundleItems: bi } : i;
+  });
+  return { ...o, items };
+}
 // 后台/管理端想强制从云端复核时调用：重新聚合 order:* 独立行（不阻塞常规读路径）
 async function refreshOrdersFromCloud(){
   if(!USE_SUPABASE) return orders;
@@ -643,7 +663,7 @@ const server = http.createServer(async (req, res)=>{
         // 也会写 order:<id> 单行，仅靠内存副本会看不到）
         await refreshOrdersFromCloud();
         const list = await getOrders();
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(list)); return;
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(list.map(enrichOrderBundles))); return;
       }
       // 按姓名/手机号查询订单
       if(method==='GET' && pathname==='/api/orders/lookup'){
@@ -659,7 +679,7 @@ const server = http.createServer(async (req, res)=>{
           const phoneMatch = (o.phone||'').includes(key);
           return nameMatch || phoneMatch;
         }).sort((a,b)=>b.createdAt-a.createdAt);
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(found)); return;
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(found.map(enrichOrderBundles))); return;
       }
       // 单个订单（供前端恢复「待付款」订单）
       const mOrderApi = pathname.match(/^\/api\/orders\/([\w-]+)$/);
@@ -668,7 +688,7 @@ const server = http.createServer(async (req, res)=>{
         await refreshOrdersFromCloud();
         const list = await getOrders();
         const o = list.find(o=>o.id===mOrderApi[1]) || null;
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(o)); return;
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(o?enrichOrderBundles(o):o)); return;
       }
       // 创建订单
       if(method==='POST' && pathname==='/api/orders'){
@@ -1250,7 +1270,7 @@ const server = http.createServer(async (req, res)=>{
       const o = list.find(o=>o.id===mOrder[1]) || null;
       const html = renderTemplate('order.html', {
         SHOP_NAME: htmlEscape(config.shopName),
-        ORDER_JSON: jsonForScript(o),
+        ORDER_JSON: jsonForScript(o?enrichOrderBundles(o):o),
         CONFIG_JSON: jsonForScript(config)
       });
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':html); return;
