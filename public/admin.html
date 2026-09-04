@@ -31,6 +31,9 @@
   .btn-copy{background:#3a322b;color:#fff}
   .btn-ship{background:#2f6fd0;color:#fff}
   .btn-danger{background:#e74c3c;color:#fff}
+  .btn-cancel{background:#e8e0d0;color:#8b6f47;border:1px solid #c8b89a}
+  .btn-restore{background:#5b3a1f;color:#fff}
+  .st-cancel{background:#d4c8b8;color:#7a6f55}
   .shiprow{display:flex;gap:8px;margin-top:8px}
   .shiprow input{flex:1;border:1px solid #e0d6c8;border-radius:8px;padding:9px;font-size:13px}
   .empty{text-align:center;color:#bbb;padding:50px 0}
@@ -214,6 +217,7 @@
       <button data-s="待发货" onclick="switchTab(this)">待发货 <span id="cShip">0</span></button>
       <button data-s="今日可发订单" onclick="switchTab(this)">今日可发 <span id="cToday">0</span></button>
       <button data-s="已发货" onclick="switchTab(this)">已发货 <span id="cDone">0</span></button>
+      <button data-s="已取消" onclick="switchTab(this)">已取消 <span id="cCancel">0</span></button>
     </div>
     <div id="list"></div>
   </div>
@@ -518,18 +522,20 @@ function render(){
   const waits=ORDERS.filter(o=>o.status==='待确认').length;
   const ships=ORDERS.filter(o=>o.status==='待发货').length;
   const dones=ORDERS.filter(o=>o.status==='已发货').length;
+  const cancels=ORDERS.filter(o=>o.status==='已取消').length;
   document.getElementById('cWait').textContent=waits;
   document.getElementById('cShip').textContent=ships;
   document.getElementById('cDone').textContent=dones;
+  document.getElementById('cCancel').textContent=cancels;
   document.getElementById('cToday').textContent=ORDERS.filter(o=>o.status==='待发货' && o.allowPull).length;
-  document.getElementById('stat').textContent='共 '+ORDERS.length+' 单 · 待处理'+waits+' / 待发'+ships+' / 今日可发'+ORDERS.filter(o=>o.status==='待发货' && o.allowPull).length+' / 已发'+dones;
+  document.getElementById('stat').textContent='共 '+ORDERS.length+' 单 · 待处理'+waits+' / 待发'+ships+' / 今日可发'+ORDERS.filter(o=>o.status==='待发货' && o.allowPull).length+' / 已发'+dones+' / 已取消'+cancels;
   const list=document.getElementById('list'); list.innerHTML='';
   if(curTab==='待发货'){ renderMergedShip(); return; }
   if(curTab==='今日可发订单'){ renderTodayShip(); return; }
   const rows=ORDERS.filter(o=>curTab==='待确认'?o.status==='待确认':o.status===curTab).sort((a,b)=>b.createdAt-a.createdAt);
   if(!rows.length){ list.innerHTML='<div class="empty">暂无订单</div>'; return; }
   rows.forEach(o=>{
-    const stMap={'待付款':['st-wait','待付款'],'待确认':['st-wait','待确认'],'待发货':['st-ship','待发货'],'已发货':['st-done','已发货']};
+    const stMap={'待付款':['st-wait','待付款'],'待确认':['st-wait','待确认'],'待发货':['st-ship','待发货'],'已发货':['st-done','已发货'],'已取消':['st-cancel','已取消']};
     const [cls,lab]=stMap[o.status]||['st-wait',o.status];
     const items=o.items.map(i=>{
       let h=`<div class="it-line"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
@@ -539,7 +545,8 @@ function render(){
       return h;
     }).join('');
     let acts='';
-    if(o.status==='待确认') acts=`<button class="btn-confirm" onclick="confirmPaid('${o.id}')">客户已发截图，确认收款</button>`;
+    if(o.status==='待确认') acts=`<button class="btn-confirm" onclick="confirmPaid('${o.id}')">客户已发截图，确认收款</button><button class="btn-cancel" onclick="markNotPaid('${o.id}')">未收到该款项</button>`;
+    if(o.status==='已取消') acts=`<button class="btn-restore" onclick="restoreOrder('${o.id}')">核实重新成立，进入待发货</button>`;
     if(o.status==='已发货') acts=`<button class="btn-copy" onclick="copyShip('${o.id}')">复制发货信息</button>`;
     const div=document.createElement('div'); div.className='card';
     const showPayTime = o.status==='待确认' || o.status==='待发货' || o.status==='已发货';
@@ -843,6 +850,32 @@ async function confirmPaid(id){
   render();
   toast('已确认收款，已转入待发货');
   await syncOrder(id, '/confirm', {}, prev);
+}
+// 商家后台：待确认订单标记「未收到该款项」→ 已取消（退回库存）
+function markNotPaid(id){
+  const o=ORDERS.find(x=>x.id===id); if(!o) return;
+  if(!window.confirm('确认该订单「未收到该款项」？\n订单 '+id+' 将标记为已取消，并退回库存。')) return;
+  fetch('/api/orders/'+id+'/cancel',{method:'POST'})
+    .then(r=>r.json()).then(d=>{
+      if(d.error){ toast('操作失败：'+d.error); return; }
+      o.status='已取消'; o.cancelledAt=Date.now();
+      curTab='已取消';
+      document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='已取消'));
+      render(); toast('已标记未收到该款项，订单转入已取消');
+    }).catch(()=>toast('操作失败，请稍后重试'));
+}
+// 商家后台：已取消订单「核实重新成立，进入待发货」→ 待发货（再次扣除库存）
+function restoreOrder(id){
+  const o=ORDERS.find(x=>x.id===id); if(!o) return;
+  if(!window.confirm('确认「核实重新成立，进入待发货」？\n订单 '+id+' 将恢复为待发货状态，并再次扣除库存。')) return;
+  fetch('/api/orders/'+id+'/restore',{method:'POST'})
+    .then(r=>r.json()).then(d=>{
+      if(d.error){ toast('操作失败：'+d.error); return; }
+      o.status='待发货'; o.restoredAt=Date.now();
+      curTab='待发货';
+      document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='待发货'));
+      render(); toast('已重新成立，订单转入待发货');
+    }).catch(()=>toast('操作失败，请稍后重试'));
 }
 // 通用后台同步：成功用服务端返回订单覆盖，失败回滚到 prev（含一次可选重试）
 async function syncOrder(id, action, body, prev){
@@ -1765,7 +1798,12 @@ async function saveProduct(){
     throw new Error(data.message || '保存失败');
   }catch(e){
     console.error('saveProduct error', e);
-    const tip = e.name === 'AbortError' ? '保存超时，请检查网络后再点「保存产品」重试' : ('保存失败：' + e.message + '。可再次点击「保存产品」重试');
+    let tip;
+    if(e.name === 'AbortError' || e.message && e.message.indexOf('timeout')>=0){
+      tip = '⏱ 保存超时：Supabase 免费层网络抖动，请直接再点一次「保存产品」重试（弹窗未关闭，内容都在）';
+    } else {
+      tip = '❌ 保存失败：' + e.message + '。云端写入未完成，请不要关闭弹窗，直接再点一次「保存产品」重试';
+    }
     toast(tip);
   }finally{
     if(btn){ btn.disabled=false; btn.textContent=btn.dataset.oldText||'保存产品'; }

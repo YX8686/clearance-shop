@@ -18,6 +18,7 @@
   .s-confirm{background:#f3e8ff;color:#7c3aed}
   .s-ship{background:#e8f1ff;color:#2f6fd0}
   .s-done{background:#e6f7ec;color:#1f9d55}
+  .s-cancel{background:#d4c8b8;color:#5b3a1f}
   .donebtn{width:100%;background:#b8743f;color:#fff;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;margin-top:14px;cursor:pointer}
   .row{padding:9px 0;border-bottom:1px solid #f3efe8;font-size:14px}
   .row:last-child{border-bottom:none}
@@ -53,6 +54,7 @@
   .oCard .st-confirm{background:#f3e8ff;color:#7c3aed}
   .oCard .st-ship{background:#e8f1ff;color:#2f6fd0}
   .oCard .st-done{background:#e6f7ec;color:#1f9d55}
+  .oCard .st-cancel{background:#d4c8b8;color:#7a6f55}
   .oCard .sect{margin-bottom:10px}
   .oCard .sect:last-child{margin-bottom:0}
   .oCard .sect-title{font-size:12px;color:#9a8f82;margin-bottom:6px;font-weight:600}
@@ -178,7 +180,7 @@ function savePage(){
   }
 }
 function buildOrderCard(o){
-  const stClass = {'待付款':'st-wait','待确认':'st-confirm','待发货':'st-ship','已发货':'st-done'}[o.status] || 'st-wait';
+  const stClass = {'待付款':'st-wait','待确认':'st-confirm','待发货':'st-ship','已发货':'st-done','已取消':'st-cancel'}[o.status] || 'st-wait';
   const stLabel = o.status==='已发货' ? '发货中' : o.status;
   const itemsHtml = o.items.map(i=>{
     let h=`<div class="item-line"><span class="item-name">${i.name}</span><span class="item-price">${money(i.price)} × ${i.qty}</span></div>`;
@@ -346,7 +348,7 @@ function closeReminderModal(){
 if(!O){
   app.innerHTML='<div class="gone">订单不存在<br>请检查订单号是否正确</div>';
 } else {
-  const statusMap={'待付款':['s-wait','① 待付款 · 请扫码支付'],'待确认':['s-confirm','② 已发截图 · 等待核对'],'待发货':['s-ship','③ 已确认收款 · 打包中'],'已发货':['s-done','④ 发货中 · 物流运输中']};
+  const statusMap={'待付款':['s-wait','① 待付款 · 请扫码支付'],'待确认':['s-confirm','② 已发截图 · 等待核对'],'待发货':['s-ship','③ 已确认收款 · 打包中'],'已发货':['s-done','④ 发货中 · 物流运输中'],'已取消':['s-cancel','订单已取消']};
   const [cls,label]=statusMap[O.status]||['s-wait',O.status];
   let html=`
     <div class="wrap">
@@ -379,7 +381,7 @@ if(!O){
   html+=`<div class="total">合计 ${money(O.total)}</div></div>`;
 
   // 进度条：三个节点，当前高亮
-  const stepIdx = O.status==='待付款'?0:(O.status==='待确认'?1:(O.status==='待发货'?1:2));
+  const stepIdx = O.status==='待付款'?0:(O.status==='待确认'?1:(O.status==='待发货'?1:(O.status==='已取消'?0:2)));
   const steps=[
     {t:'① 提交订单',d:'核对商品与收货信息'},
     {t:'② 付款并截图',d:'支付后把成功页面截图发给夏天老师本人'},
@@ -444,6 +446,16 @@ if(!O){
         </div>` : ''}
       </div>
       <div style="font-size:12px;color:#9a8f82;margin-top:12px;line-height:1.6">有任何疑问可以联系商家本人<br>微信号：<b style="color:#b8743f">buchu2018</b> / <b style="color:#b8743f">buchu2021</b></div>
+    </div>`;
+  }
+  } else if(O.status==='已取消'){
+    html+=`<div class="box" style="border:1px solid #d4c8b8;background:#faf7f2">
+      <div style="background:#d4c8b8;color:#5b3a1f;font-weight:700;font-size:15px;text-align:center;padding:12px;border-radius:8px">⚠️ 订单已取消</div>
+      <div style="font-size:13px;color:#5b5147;line-height:1.9;margin-top:12px;text-align:left">
+        商家反馈未收到该款，订单已取消。<br>
+        如有疑问，请联系夏天老师本人核实，微信：<b style="color:#b8743f">buchu2018</b> / <b style="color:#b8743f">buchu2021</b>。<br>
+        如果确已付款，别着急，请双方核实后会补成手工订单发货。
+      </div>
     </div>`;
   }
   app.innerHTML=html;

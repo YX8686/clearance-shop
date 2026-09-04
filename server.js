@@ -390,7 +390,18 @@ async function flushDirtyProducts(){
   }
   failed.forEach(id=>dirtyProductIds.add(id));
   // 同步排序 key（排序变更较少，有脏行时顺便写）
-  await saveProductOrder().catch(e=>console.error('[saveProductOrder]', e.message));
+  try {
+    await saveProductOrder();
+  } catch(e) {
+    console.error('[saveProductOrder]', e.message);
+    failed.push('product_order');
+  }
+  // 关键修复：云端写入失败必须让前端知道。同时把当前内存整盘写一份本地 products.json 作为备份，
+  // 避免"前端显示成功但重启后数据丢失"。
+  if(failed.length){
+    await withLock(()=> writeJsonAtomic('products.json', products)).catch(err=>console.error('[local backup] 失败:', err.message));
+    throw new Error('云端保存失败（' + failed.join(', ') + '），已写本地备份，请检查网络后重试');
+  }
 }
 async function saveProductOrder(){
   if(!USE_SUPABASE) return;
@@ -800,12 +811,13 @@ const server = http.createServer(async (req, res)=>{
         catch(e){ res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'save_failed', message:e.message})); return; }
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, sessionId:session.sessionId, ts:session.ts, count:orders.length, totalSessions:(await loadKV('mall_sessions',[])).length})); return;
       }
-      // 取消订单（仅允许待付款状态）
+      // 取消订单（允许待付款 / 待确认 状态，含商家端「未收到该款项」）
       const mCancel = pathname.match(/^\/api\/orders\/([\w-]+)\/cancel$/);
       if(method==='POST' && mCancel){
         const o = orders.find(o=>o.id===mCancel[1]);
         if(!o){ res.writeHead(404); res.end(JSON.stringify({error:'no'})); return; }
-        if(o.status!=='待付款'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_pending_can_cancel'})); return; }
+        if(o.status!=='待付款' && o.status!=='待确认'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_pending_or_confirm_can_cancel'})); return; }
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
         // 恢复库存：仅本功能上线后下单（stockDeducted 标记）的订单才恢复，历史订单不回溯
         let stockRestored = false;
         if(o.stockDeducted){
@@ -822,8 +834,38 @@ const server = http.createServer(async (req, res)=>{
             }
           });
         }
-        o.status='已取消'; o.cancelledAt=Date.now(); await saveOrderRowSync(o);
+        o.status='已取消';
+        o.cancelledAt=Date.now();
+        await saveOrderRowSync(o);
         if(stockRestored) saveProductsDebounced();
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+      }
+      // 恢复已取消订单：商家核实后重新成立，进入待发货（库存恢复后再次扣除）
+      const mRestore = pathname.match(/^\/api\/orders\/([\w-]+)\/restore$/);
+      if(method==='POST' && mRestore){
+        const o = orders.find(o=>o.id===mRestore[1]);
+        if(!o){ res.writeHead(404); res.end(JSON.stringify({error:'no'})); return; }
+        if(o.status!=='已取消'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_cancelled_can_restore'})); return; }
+        // 重新扣减库存：仅本功能上线后下单（stockDeducted 标记）的订单才扣，历史订单不回溯
+        let stockRededucted = false;
+        if(o.stockDeducted){
+          (o.items||[]).forEach(it=>{
+            const p = products.find(p=>p.id===it.id);
+            if(!p) return;
+            const qty = Number(it.qty)||0;
+            if(it.skuId){
+              const sku = (p.skus||[]).find(s=>String(s.id)===it.skuId);
+              if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) - qty; stockRededucted = true; markProductDirty(it.id); }
+            } else if(p.stock!=null){
+              p.stock = Math.floor(Number(p.stock)) - qty; stockRededucted = true; markProductDirty(it.id);
+            }
+          });
+        }
+        o.status='待发货';
+        o.restoredAt=Date.now();
+        o.restoredCount=(o.restoredCount||0)+1;
+        await saveOrderRowSync(o);
+        if(stockRededucted) saveProductsDebounced();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
       // 更新配置（店铺名/联系人/公告/收款码）
@@ -1002,7 +1044,12 @@ const server = http.createServer(async (req, res)=>{
         else { const idx=products.findIndex(x=>x.id===id); item.createdAt=products[idx].createdAt||item.updatedAt; products[idx]=item; }
         // 产品改为独立行存储：只 upsert 当前产品，回到秒级保存
         markProductDirty(item.id);
-        await flushDirtyProducts();
+        try {
+          await flushDirtyProducts();
+        } catch(e) {
+          console.error('[POST /api/products] flushDirtyProducts 失败:', e.message);
+          res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'云端保存失败：'+e.message})); return;
+        }
         recordSaveId(clientSaveId, item);
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, product:item})); return;
       }
