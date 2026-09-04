@@ -1285,6 +1285,7 @@ const server = http.createServer(async (req, res)=>{
     }
 
     if(method==='GET' && pathname==='/business_rules.js'){ sendFile(res, path.join(PUBLIC,'business_rules.js')); return; }
+    if(method==='GET' && pathname==='/xlsx.full.min.js'){ sendFile(res, path.join(PUBLIC,'xlsx.full.min.js')); return; }
 
     if(method==='GET' && pathname.startsWith('/assets/')){
       const rel = path.normalize(pathname.slice(1));
