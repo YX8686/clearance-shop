@@ -858,6 +858,9 @@ const server = http.createServer(async (req, res)=>{
           const list = Array.isArray(arr) ? arr : [];
           list.push(session);
           await saveKV('mall_sessions', list);
+          // 关键：先刷新内存订单副本。Render 冷启动/内存可能过期或为空，直接 find 会找不到订单，
+          // 导致「标记为待回传」这一步空转、防重复失效。refreshOrdersFromCloud() 正是 /api/orders 用的那份权威数据源。
+          await refreshOrdersFromCloud().catch(e=>console.error('[mall-export refresh]', e.message));
           // 防重复：把已导出的「待发货」订单标记为「待回传」，使其离开「今日可发」、进入「等待回传区」
           const byId = new Map(exported.map(o=>[o.id, o]));
           const dirty = [];

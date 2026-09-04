@@ -996,26 +996,29 @@ async function exportTodayOrders(){
     load();                    // 拉取云端最新状态：今日可发清空、进入等待回传区
   }catch(e){ toast('导出失败：'+e.message); console.error('[mall-export]',e); }
 }
-// 生成打单用的「商城发货单」：每单一块（收件人/手机/地址）+ 空行 + 发货明细竖排，输出可读 Word
+// 生成打单用的「商城发货单」：每单一块，去掉标签词，像「生成发货文本」那样一目了然
+// 首行：姓名 手机；次行：地址；空一行；发货明细每个货品×数量独占一行竖排
 function downloadShipSheet(ordersParam){
   const list = (Array.isArray(ordersParam) && ordersParam.length) ? ordersParam : ORDERS.filter(o=>o.status==='待发货' && o.allowPull);
   if(!list.length){ toast('没有已允许待发货的订单，先去「待发货」勾选'); return; }
   const dateStr=new Date().toISOString().slice(0,10);
   const blocks=list.map((o,idx)=>{
+    // 首行：姓名 + 手机（空格分隔，便于复制）
+    const head=escapeHtml(`${o.name||''} ${o.phone||''}`.replace(/\s+/g,' ').trim());
+    const addr=escapeHtml(o.address||'');
+    // 发货明细：每个货品×数量独占一行（竖排，不用「・」不用标签词）
     const textLines=[];
     (o.items||[]).forEach(i=>{
       const bi=getBundleItems(i);
-      if(bi.length){ bi.forEach(b=>textLines.push(`・${b.name||''} ${b.qty||''}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`)); }
-      else textLines.push(`・${i.name||''}${i.qty>1?' ×'+i.qty:''}`);
+      if(bi.length){ bi.forEach(b=>textLines.push(`${b.name||''} ${b.qty||''}${b.unit||''}${i.qty>1?' ×'+i.qty:''}`)); }
+      else textLines.push(`${i.name||''}${i.qty>1?' ×'+i.qty:''}`);
     });
-    const lines=textLines.map(x=>`<div style="margin-left:12px">${escapeHtml(x)}</div>`).join('');
+    const itemsHtml=textLines.map(x=>`<div style="margin-left:12px;line-height:1.5">${escapeHtml(x)}</div>`).join('');
     return `<div style="margin:0 0 26px 0;padding-bottom:14px;border-bottom:2px dashed #c8c8c8">
-      <div style="font-size:16px;font-weight:bold">【第 ${idx+1} 单】　单号：${escapeHtml(o.id)}</div>
-      <div style="margin-top:6px;font-size:14px">收件人：${escapeHtml(o.name||'')}</div>
-      <div style="font-size:14px">手机：${escapeHtml(o.phone||'')}</div>
-      <div style="font-size:14px">地址：${escapeHtml(o.address||'')}</div>
-      <div style="margin-top:10px;font-size:14px;font-weight:bold">发货明细：</div>
-      ${lines}
+      <div style="font-size:16px;font-weight:bold">【第 ${idx+1} 单】　订单号：${escapeHtml(o.id)}</div>
+      <div style="margin-top:14px;font-size:14px">${head}</div>
+      <div style="font-size:14px">${addr}</div>
+      <div style="margin-top:14px;font-size:14px">${itemsHtml}</div>
     </div>`;
   }).join('');
   const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>商城发货单 ${dateStr}</title></head><body style="font-family:'宋体',SimSun,serif;font-size:14px;line-height:1.9;color:#222">
