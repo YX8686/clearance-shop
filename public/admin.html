@@ -278,6 +278,7 @@
       <button class="on" data-s="待确认" onclick="switchTab(this)">待处理 <span id="cWait">0</span></button>
       <button data-s="待发货" onclick="switchTab(this)">待发货 <span id="cShip">0</span></button>
       <button data-s="今日可发订单" onclick="switchTab(this)">今日可发 <span id="cToday">0</span></button>
+      <button data-s="回传区" onclick="switchTab(this)">等待回传区 <span id="cReturn">0</span></button>
       <button data-s="已发货" onclick="switchTab(this)">已发货 <span id="cDone">0</span></button>
       <button data-s="已取消" onclick="switchTab(this)">已取消 <span id="cCancel">0</span></button>
     </div>
@@ -721,21 +722,24 @@ function render(){
   renderBuyerStats();
   const waits=ORDERS.filter(o=>o.status==='待确认').length;
   const ships=ORDERS.filter(o=>o.status==='待发货').length;
+  const returns=ORDERS.filter(o=>o.status==='待回传').length;
   const dones=ORDERS.filter(o=>o.status==='已发货').length;
   const cancels=ORDERS.filter(o=>o.status==='已取消').length;
   document.getElementById('cWait').textContent=waits;
   document.getElementById('cShip').textContent=ships;
+  document.getElementById('cReturn').textContent=returns;
   document.getElementById('cDone').textContent=dones;
   document.getElementById('cCancel').textContent=cancels;
   document.getElementById('cToday').textContent=ORDERS.filter(o=>o.status==='待发货' && o.allowPull).length;
-  document.getElementById('stat').textContent='共 '+ORDERS.length+' 单 · 待处理'+waits+' / 待发'+ships+' / 今日可发'+ORDERS.filter(o=>o.status==='待发货' && o.allowPull).length+' / 已发'+dones+' / 已取消'+cancels;
+  document.getElementById('stat').textContent='共 '+ORDERS.length+' 单 · 待处理'+waits+' / 待发'+ships+' / 今日可发'+ORDERS.filter(o=>o.status==='待发货' && o.allowPull).length+' / 回传区'+returns+' / 已发'+dones+' / 已取消'+cancels;
   const list=document.getElementById('list'); list.innerHTML='';
   if(curTab==='待发货'){ renderMergedShip(); return; }
+  if(curTab==='回传区'){ renderReturnZone(); return; }
   if(curTab==='今日可发订单'){ renderTodayShip(); return; }
   const rows=ORDERS.filter(o=>curTab==='待确认'?o.status==='待确认':o.status===curTab).sort((a,b)=>b.createdAt-a.createdAt);
   if(!rows.length){ list.innerHTML='<div class="empty">暂无订单</div>'; return; }
   rows.forEach(o=>{
-    const stMap={'待付款':['st-wait','待付款'],'待确认':['st-wait','待确认'],'待发货':['st-ship','待发货'],'已发货':['st-done','已发货'],'已取消':['st-cancel','已取消']};
+    const stMap={'待付款':['st-wait','待付款'],'待确认':['st-wait','待确认'],'待发货':['st-ship','待发货'],'待回传':['st-ship','等待回传'],'已发货':['st-done','已发货'],'已取消':['st-cancel','已取消']};
     const [cls,lab]=stMap[o.status]||['st-wait',o.status];
     const items=o.items.map(i=>{
       let h=`<div class="it-line"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
@@ -750,7 +754,7 @@ function render(){
     if(o.status==='已取消') acts=`<button class="btn-restore" onclick="restoreOrder('${o.id}')">核实重新成立，进入待发货</button>`;
     if(o.status==='已发货') acts=`<button class="btn-copy" onclick="copyShip('${o.id}')">复制发货信息</button>`;
     const div=document.createElement('div'); div.className='card';
-    const showPayTime = o.status==='待确认' || o.status==='待发货' || o.status==='已发货';
+    const showPayTime = o.status==='待确认' || o.status==='待发货' || o.status==='待回传' || o.status==='已发货';
     const payLine=showPayTime?`<div class="line"><span class="k">付款时间</span>${fmtTime(o.paidAt)}</div>`:'';
     div.innerHTML=`
       <div class="h"><span class="oid">${o.id}</span><span class="st ${cls}">${lab}</span></div>
@@ -850,8 +854,7 @@ function renderTodayShip(){
   topBar.className='allow-pull-top';
   topBar.innerHTML=`
     <span>📦 今日可发 <b style="color:${today.length?'#1f9d55':'#888'}">${today.length}</b> 单
-      <span style="color:#9a8f82;font-weight:400">（在「待发货」勾选「允许发货管家采集」即进入此处）</span></span>
-    <button onclick="downloadShipSheet()" style="border:1px solid #1f9d55;background:#1f9d55;color:#fff">📥 确认现在生成商城发货单</button>
+      <span style="color:#9a8f82;font-weight:400">（在「待发货」勾选「允许发货管家采集」即进入此处；点「全部导出」后订单会移入「等待回传区」，不会重复）</span></span>
     <button onclick="exportTodayOrders()">📤 全部导出到发货管家＋下载发货单</button>`;
   list.appendChild(topBar);
   if(!today.length){
@@ -890,6 +893,50 @@ function renderTodayShip(){
     const div=document.createElement('div'); div.className='card merge-card';
     div.innerHTML=`
       <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-ship">今日可发</span></div>
+      <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
+      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
+      <div class="line"><span class="k">地址</span>${first.address}</div>
+      <div class="items">${itemsHtml}</div>
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button></div>`;
+    list.appendChild(div);
+  });
+}
+// 「等待回传区」栏目：已导出到发货管家、等待快递回传单号的订单。
+// 发货管家「一键回传单号」后会自动写入单号并把这批订单改成「已发货」，这里随即清空、流入「已发货」。
+function renderReturnZone(){
+  const list=document.getElementById('list');
+  const waiting=ORDERS.filter(o=>o.status==='待回传');
+  const topBar=document.createElement('div');
+  topBar.className='allow-pull-top';
+  topBar.innerHTML=`
+    <span>📮 等待回传 <b style="color:${waiting.length?'#1f9d55':'#888'}">${waiting.length}</b> 单
+      <span style="color:#9a8f82;font-weight:400">（这里就是「今日可发」导出后进入的订单；快递回传单号后，在发货管家点「一键回传单号」，这里自动清空、订单流入「已发货」）</span></span>`;
+  list.appendChild(topBar);
+  if(!waiting.length){
+    const empty=document.createElement('div'); empty.className='empty';
+    empty.innerHTML='还没有待在回传的订单。<br><br><span style="font-size:13px;color:#999">把「今日可发」的订单点「📤 全部导出到发货管家＋下载发货单」，导出成功的订单会自动出现在这里。</span>';
+    list.appendChild(empty);
+    return;
+  }
+  const groups={};
+  waiting.forEach(o=>{ const key=BUSINESS_RULES.merge.makeKey(o); (groups[key]=groups[key]||[]).push(o); });
+  Object.values(groups).forEach(group=>{
+    group.sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
+    const ids=group.map(o=>o.id);
+    const first=group[0];
+    const itemsHtml=group.map(o=>o.items.map(i=>{
+      const bi = i.bundleItems || [];
+      if(bi.length){
+        const lines = bi.map(b=>`• ${b.name} ${b.qty}${b.unit||'件'}`).join('<br>');
+        return `<div class="so-item"><span>${escapeHtml(i.name)}</span><span>${money(i.price)} × ${i.qty}</span></div>`+
+               `<div class="bundle-inline" style="white-space:pre-line">${lines}<br>× ${i.qty}</div>`;
+      }
+      return `<div class="so-item"><span>${escapeHtml(i.name)}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
+    }).join('')).join('');
+    const div=document.createElement('div'); div.className='card merge-card';
+    div.innerHTML=`
+      <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-ship">等待回传</span></div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
       <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
@@ -939,36 +986,49 @@ function toExportOrder(o){
 async function exportTodayOrders(){
   const list=ORDERS.filter(o=>o.status==='待发货' && o.allowPull);
   if(!list.length){ toast('没有已允许待发货的订单'); return; }
-  if(!window.confirm(`确认把 ${list.length} 单「今日可发」订单导出到发货管家，并同时下载一份商城发货单 Excel？\n（到发货管家「今日配货单」自动出现；Excel 下载后转给快递员打单即可）`)) return;
+  if(!window.confirm(`确认把 ${list.length} 单「今日可发」订单导出到发货管家「今日配货单」，并同时下载一份商城发货单？\n（导出后这些订单会从「今日可发」移入「等待回传区」；下载的打单文件转给快递员即可）`)) return;
   try{
     const r=await fetch('/api/mall-today-export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:new Date().toISOString().slice(0,10), orders:list.map(toExportOrder)})});
     const d=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(d.message||('HTTP '+r.status));
-    toast(`已导出 ${d.count} 单到发货管家「今日配货单」`);
-    // 顺带下载商城发货单 Excel，方便转给快递员打单
-    downloadShipSheet();
+    toast(`已导出 ${d.count} 单到发货管家「今日配货单」，已移入「等待回传区」`);
+    downloadShipSheet(list);   // 导出成功即下载可读的商城发货单（转快递员打单）
+    load();                    // 拉取云端最新状态：今日可发清空、进入等待回传区
   }catch(e){ toast('导出失败：'+e.message); console.error('[mall-export]',e); }
 }
-// 「确认现在生成商城发货单」：把当前今日可发订单直接生成打单用 Excel 并下载到电脑
-function downloadShipSheet(){
-  const list=ORDERS.filter(o=>o.status==='待发货' && o.allowPull);
+// 生成打单用的「商城发货单」：每单一块（收件人/手机/地址）+ 空行 + 发货明细竖排，输出可读 Word
+function downloadShipSheet(ordersParam){
+  const list = (Array.isArray(ordersParam) && ordersParam.length) ? ordersParam : ORDERS.filter(o=>o.status==='待发货' && o.allowPull);
   if(!list.length){ toast('没有已允许待发货的订单，先去「待发货」勾选'); return; }
-  if(typeof XLSX==='undefined'){ toast('Excel 组件加载失败，请刷新重试'); return; }
-  const rows=list.map((o,idx)=>toExportOrder(o));
-  const data=[['序号','收件人','手机号','收货地址','发货明细','快递单号']];
-  rows.forEach((o,idx)=>{
-    const detail=(o.items||[]).map(i=>i.shipDetail.replace(/\n/g,' / ')).join('  ｜  ');
-    data.push([String(idx+1), o.name||'', o.phone||'', o.address||'', detail, '']);
-  });
-  const ws=XLSX.utils.aoa_to_sheet(data);
-  // 列宽自适应，方便打单软件读取
-  const w=[6,14,16,42,52,18];
-  ws['!cols']=w.map(wpx=>({wpx}));
-  const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '商城发货单');
   const dateStr=new Date().toISOString().slice(0,10);
-  XLSX.writeFile(wb, `商城发货单_${dateStr}.xlsx`);
-  toast(`已生成 ${list.length} 单的商城发货单 Excel，正在下载`);
+  const blocks=list.map((o,idx)=>{
+    const textLines=[];
+    (o.items||[]).forEach(i=>{
+      const bi=getBundleItems(i);
+      if(bi.length){ bi.forEach(b=>textLines.push(`・${b.name||''} ${b.qty||''}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`)); }
+      else textLines.push(`・${i.name||''}${i.qty>1?' ×'+i.qty:''}`);
+    });
+    const lines=textLines.map(x=>`<div style="margin-left:12px">${escapeHtml(x)}</div>`).join('');
+    return `<div style="margin:0 0 26px 0;padding-bottom:14px;border-bottom:2px dashed #c8c8c8">
+      <div style="font-size:16px;font-weight:bold">【第 ${idx+1} 单】　单号：${escapeHtml(o.id)}</div>
+      <div style="margin-top:6px;font-size:14px">收件人：${escapeHtml(o.name||'')}</div>
+      <div style="font-size:14px">手机：${escapeHtml(o.phone||'')}</div>
+      <div style="font-size:14px">地址：${escapeHtml(o.address||'')}</div>
+      <div style="margin-top:10px;font-size:14px;font-weight:bold">发货明细：</div>
+      ${lines}
+    </div>`;
+  }).join('');
+  const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>商城发货单 ${dateStr}</title></head><body style="font-family:'宋体',SimSun,serif;font-size:14px;line-height:1.9;color:#222">
+    <div style="text-align:center;font-size:22px;font-weight:bold;margin:0 0 4px 0">不初商城 · 发货单</div>
+    <div style="text-align:center;color:#777;font-size:13px;margin-bottom:22px">${dateStr}　共 ${list.length} 单</div>
+    ${blocks}
+    </body></html>`;
+  const blob=new Blob(['\ufeff'+html],{type:'application/msword'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download=`商城发货单_${dateStr}.doc`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 3000);
+  toast(`已生成 ${list.length} 单的商城发货单（可读 Word），正在下载`);
 }
 // 勾选确认：单笔待发货订单允许/禁止发货管家采集
 async function toggleAllowPull(id, allow){

@@ -842,23 +842,31 @@ const server = http.createServer(async (req, res)=>{
       }
       // 商家后台「今日可发订单」→ 全部导出：把当前允许采集的待发货订单形成一个「商城本次汇总单」，
       // 追加到 mall_sessions 数组（一天可多次汇总）。发货管家 /shipper 读取 sessions 列表。
+      // 导出成功后把每笔订单标记为 status='待回传'（离开「今日可发」、进入「等待回传区」），防止重复导出。
       const mMallExport = pathname.match(/^\/api\/mall-today-export$/);
       if(method==='POST' && mMallExport){
         let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
         const date = String(body.date||new Date().toISOString().slice(0,10));
-        const orders = Array.isArray(body.orders) ? body.orders.filter(o=>o && o.id && o.phone) : [];
+        const exported = Array.isArray(body.orders) ? body.orders.filter(o=>o && o.id && o.phone) : [];
         const session = {
           sessionId: 'M'+Date.now().toString(36)+Math.random().toString(36).slice(2,4),
-          ts: Date.now(), date, orders
+          ts: Date.now(), date, orders: exported
         };
+        let savedIds = [];
         try {
           const arr = await loadKV('mall_sessions', []);
           const list = Array.isArray(arr) ? arr : [];
           list.push(session);
           await saveKV('mall_sessions', list);
+          // 防重复：把已导出的「待发货」订单标记为「待回传」，使其离开「今日可发」、进入「等待回传区」
+          const byId = new Map(exported.map(o=>[o.id, o]));
+          const dirty = [];
+          orders.forEach(o=>{ if(byId.has(o.id) && o.status==='待发货'){ o.status='待回传'; o.exportedAt=Date.now(); dirty.push(o); } });
+          await Promise.all(dirty.map(o=>saveOrderRowSync(o).catch(e=>console.error('[mall-export markReturn]', o.id, e.message))));
+          savedIds = dirty.map(o=>o.id);
         }
         catch(e){ res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'save_failed', message:e.message})); return; }
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, sessionId:session.sessionId, ts:session.ts, count:orders.length, totalSessions:(await loadKV('mall_sessions',[])).length})); return;
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, sessionId:session.sessionId, ts:session.ts, count:exported.length, totalSessions:(await loadKV('mall_sessions',[])).length, returnedIds:savedIds})); return;
       }
       // 取消订单（允许待付款 / 待确认 状态，含商家端「未收到该款项」）
       const mCancel = pathname.match(/^\/api\/orders\/([\w-]+)\/cancel$/);
