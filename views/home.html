@@ -170,10 +170,12 @@
   .oCard .info-line{font-size:13px;color:#3a322b;line-height:1.8;padding:3px 0;border-bottom:1px dashed #f0ece4}
   .oCard .info-line:last-child{border-bottom:none}
   .oCard .info-line .lbl{color:#9a8f82;display:inline-block;width:52px}
-  .oCard .item-line{display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:8px 0;border-bottom:1px dashed #f0ece4}
+  .oCard .item-line{display:flex;flex-direction:column;align-items:flex-start;font-size:13px;padding:8px 0;border-bottom:1px dashed #f0ece4}
   .oCard .item-line:last-child{border-bottom:none}
+  .oCard .item-main{display:flex;justify-content:space-between;width:100%;align-items:center}
   .oCard .item-name{color:#3a322b;flex:1;padding-right:10px}
   .oCard .item-price{color:#9a8f82;white-space:nowrap}
+  .oCard .ship-detail{font-size:12px;color:#9a8f82;margin-top:4px;line-height:1.6}
   .oCard .total{text-align:right;font-size:15px;font-weight:700;color:#c0392b;margin-top:8px;padding-top:8px;border-top:1px solid #f0ece4}
   .oCard .tracking{margin-top:10px;background:#f6f3ee;border-radius:8px;padding:10px}
   .oCard .tracking .tt{font-size:12px;color:#9a8f82;margin-bottom:2px}
@@ -734,6 +736,21 @@ function savePage(){
     alert('请按以下方式收藏本商城：\n• 微信内：点击右上角「⋮」→「收藏」\n• 浏览器：按 Ctrl+D（或 Cmd+D）加入书签\n收藏后下次可从微信收藏夹直接打开，方便查订单。');
   }
 }
+// 获取订单项对应的 bundleItems（发货明细）：优先用订单自带，其次按产品/SKU 反查
+function getBundleItems(i){
+  let bi = i.bundleItems || [];
+  if(!bi.length){
+    const prod = PRODUCTS.find(p=>p.id===i.id);
+    if(prod && Array.isArray(prod.skus) && prod.skus.length){
+      const sku = prod.skus.find(s=>s.name===i.name)
+               || prod.skus.find(s=>(s.name||'').includes((i.name||'').slice(0,8)))
+               || prod.skus[0];
+      if(sku && Array.isArray(sku.bundleItems)) bi = sku.bundleItems;
+    }
+  }
+  return bi;
+}
+
 function lookupOrder(){
   const key=$('#lookupKey').value.trim();
   if(!key){ alert('请输入收货人姓名或手机号'); return; }
@@ -748,7 +765,16 @@ function lookupOrder(){
           div.onclick=()=>location.href='/order/'+o.id;
           const stClass = {'待付款':'st-wait','待确认':'st-confirm','待发货':'st-ship','已发货':'st-done','已取消':'st-cancel'}[o.status] || 'st-wait';
           const stLabel = o.status==='已发货' ? '发货中' : o.status;
-          const itemsHtml = o.items.map(i=>`<div class="item-line"><span class="item-name">${i.name}</span><span class="item-price">${money(i.price)} × ${i.qty}</span></div>`).join('');
+          const itemsHtml = o.items.map(i=>{
+            const bi = getBundleItems(i);
+            const shipLine = bi.length
+              ? `<div class="ship-detail">${bi.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('　')}</div>`
+              : '';
+            return `<div class="item-line">
+              <div class="item-main"><span class="item-name">${i.name}</span><span class="item-price">${money(i.price)} × ${i.qty}</span></div>
+              ${shipLine}
+            </div>`;
+          }).join('');
           let trackingHtml = '';
           if(o.status==='已发货' && o.tracking){
             const c=detectCourier(o.tracking);

@@ -698,24 +698,35 @@ function renderTodayShip(){
     list.appendChild(div);
   });
 }
+// 获取订单项对应的 bundleItems（发货明细）：优先用订单自带，其次按产品/SKU 反查
+function getBundleItems(i){
+  let bi = i.bundleItems || [];
+  if(!bi.length){
+    const prod = PRODUCTS.find(p=>p.id===i.id);
+    if(prod && Array.isArray(prod.skus) && prod.skus.length){
+      const sku = prod.skus.find(s=>s.name===i.name)
+               || prod.skus.find(s=>(s.name||'').includes((i.name||'').slice(0,8)))
+               || prod.skus[0];
+      if(sku && Array.isArray(sku.bundleItems)) bi = sku.bundleItems;
+    }
+  }
+  return bi;
+}
+// 把订单项渲染成单行发货文本："三重乳 10瓶 ×2"，多条用全角空格分隔
+function formatShipItem(i){
+  const bi = getBundleItems(i);
+  if(bi.length){
+    return bi.map(b=>`${b.name||''} ${b.qty||''}${b.unit||''}${i.qty>1?' ×'+i.qty:''}`).join('　');
+  }
+  return `${i.name||''}${i.qty>1?' ×'+i.qty:''}`;
+}
+
 // 把「今日可发」订单导出到发货管家云端版：写入 Supabase mall_today_export，发货员 /shipper 视图即自动看到「商城今日订单总表」
 function toExportOrder(o){
   return {
     id:o.id, name:o.name, phone:o.phone, address:o.address, wechat:o.wechat||'',
     items:(o.items||[]).map(i=>{
-      // 优先用订单 items 自带的 bundleItems（最新下单时已复制）
-      let bi = i.bundleItems || [];
-      // 兼容历史订单：items[i].id 是产品 id，从 PRODUCTS 反查该产品下所有 SKU 的 bundleItems，
-      // 找不到 SKU 时按 items[i].name 名称模糊匹配 SKU，命中后取其 bundleItems。
-      if(!bi.length){
-        const prod = PRODUCTS.find(p=>p.id===i.id);
-        if(prod && Array.isArray(prod.skus) && prod.skus.length){
-          const sku = prod.skus.find(s=>s.name===i.name)
-                   || prod.skus.find(s=>(s.name||'').includes((i.name||'').slice(0,8)))
-                   || prod.skus[0];
-          if(sku && Array.isArray(sku.bundleItems)) bi = sku.bundleItems;
-        }
-      }
+      const bi = getBundleItems(i);
       // 渲染成多行 shipDetail："产品名 数量单位\n产品名 数量单位"，最后另起一行写 "× qty"
       const shipDetail = bi.length
         ? bi.map(b=>`${b.name||''} ${b.qty||''}${b.unit||''}`).join('\n') + `\n× ${i.qty||1}`
@@ -774,22 +785,14 @@ async function batchAllowPull(){
     render();
   }
 }
-// 合并发货文本格式：仅姓名+电话+地址+所有商品数量，详见 business_rules.md §3
+// 合并发货文本格式：仅姓名+电话+地址+实发产品明细，详见 business_rules.md §3
 function copyShipGroup(ids){
   const group=ORDERS.filter(o=>ids.includes(o.id)).sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
   const first=group[0];
   let text=`${first.name} ${first.phone}\n${first.address}\n\n`;
   group.forEach(o=>{
     o.items.forEach(i=>{
-      const prod=PRODUCTS.find(p=>p.id===i.id);
-      if(prod && prod.bundleItems && prod.bundleItems.length){
-        text+=`${prod.name}${i.qty>1?' *'+i.qty:''}\n`;
-        prod.bundleItems.forEach(b=>{
-          text+=`• ${b.name}   ${b.qty} ${b.unit}${i.qty>1?'   ×'+i.qty:''}\n`;
-        });
-      }else{
-        text+=`${i.name} ×${i.qty}\n`;
-      }
+      text+=formatShipItem(i)+'\n';
     });
   });
   navigator.clipboard.writeText(text).then(()=>toast('发货文本已复制，去微信粘贴')).catch(()=>{ window.prompt('复制下面内容：',text); });
