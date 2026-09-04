@@ -163,6 +163,7 @@
   .oCard .st-confirm{background:#f3e8ff;color:#7c3aed}
   .oCard .st-ship{background:#e8f1ff;color:#2f6fd0}
   .oCard .st-done{background:#e6f7ec;color:#1f9d55}
+  .oCard .st-cancel{background:#d4c8b8;color:#5b3a1f}
   .oCard .sect{margin-bottom:10px}
   .oCard .sect:last-child{margin-bottom:0}
   .oCard .sect-title{font-size:12px;color:#9a8f82;margin-bottom:6px;font-weight:600}
@@ -745,7 +746,7 @@ function lookupOrder(){
         list.forEach(o=>{
           const div=document.createElement('div'); div.className='oCard';
           div.onclick=()=>location.href='/order/'+o.id;
-          const stClass = {'待付款':'st-wait','待确认':'st-confirm','待发货':'st-ship','已发货':'st-done'}[o.status] || 'st-wait';
+          const stClass = {'待付款':'st-wait','待确认':'st-confirm','待发货':'st-ship','已发货':'st-done','已取消':'st-cancel'}[o.status] || 'st-wait';
           const stLabel = o.status==='已发货' ? '发货中' : o.status;
           const itemsHtml = o.items.map(i=>`<div class="item-line"><span class="item-name">${i.name}</span><span class="item-price">${money(i.price)} × ${i.qty}</span></div>`).join('');
           let trackingHtml = '';
@@ -755,6 +756,11 @@ function lookupOrder(){
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><div class="tt">${c.name}</div><div style="display:flex;gap:6px"><button onclick="event.stopPropagation();copyText('${o.tracking}','单号已复制')" style="border:none;background:#fff;color:#1f9d55;border-radius:12px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer">复制</button><button onclick="event.stopPropagation();queryTracking('${o.tracking}')" style="border:none;background:#1f9d55;color:#fff;border-radius:12px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer">查物流</button></div></div>
               <div class="no">${o.tracking}</div>
             </div>`;
+          }
+          let cancelHtml = '';
+          if(o.status==='已取消'){
+            cancelHtml = `<div style="background:#d4c8b8;color:#5b3a1f;font-weight:700;font-size:13px;text-align:center;padding:10px;border-radius:8px;margin-top:8px">⚠️ 订单已取消</div>
+              <div style="font-size:12px;color:#5b5147;line-height:1.8;margin-top:8px;text-align:left">商家反馈未收到您此笔订单金额，故此订单取消。如有疑问，请联系夏天老师本人微信<b style="color:#b8743f">buchu2018/buchu2021</b>。如补付款或核实后确有付款，本次订单将重新生成并发货</div>`;
           }
           div.innerHTML=`<div class="head"><span class="id">订单号：${o.id}</span><span class="status ${stClass}">${stLabel}</span></div>
             <div class="sect">
@@ -769,6 +775,7 @@ function lookupOrder(){
               ${itemsHtml}
               <div class="total">合计 ${money(o.total)}</div>
             </div>
+            ${cancelHtml}
             ${trackingHtml}`;
           box.appendChild(div);
         });
