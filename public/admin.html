@@ -144,7 +144,7 @@
   .merge-card{border:2px solid #f0d9c4}
   .suborder{background:#faf7f2;border-radius:8px;padding:8px 10px;margin:8px 0}
   .so-h{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#b8743f;font-weight:700;margin-bottom:4px}
-  .so-time{color:#9a8f82;font-weight:400}
+  .so-h .so-paytime{font-size:11px;color:#9a8f82;font-weight:400;margin-left:6px}
   .so-item{display:flex;justify-content:space-between;font-size:13px;color:#5b5147;padding:2px 0}
   .so-total{text-align:right;font-size:12px;color:#7a6f62;margin-top:4px;font-weight:600}
   .bundle-inline{font-size:11px;color:#9a6b3f;padding:2px 0 2px 2px;line-height:1.5}
@@ -605,16 +605,15 @@ function renderMergedShip(){
       return `
       <div class="suborder">
         <div class="so-h">
-          <span>${o.id}</span>
+          <span>${o.id}<span class="so-paytime">${fmtTime(o.paidAt)} 付款</span></span>
           <label class="allow-pull-per" onclick="event.stopPropagation()">
             <input type="checkbox" ${checked} onchange="toggleAllowPull('${o.id}', this.checked)"> 允许采集
           </label>
         </div>
-        <div class="so-time">付款 ${fmtTime(o.paidAt)} · 本单 ${money(o.total)}</div>
         ${o.items.map(i=>{
           let h=`<div class="so-item"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
           if(i.bundleItems && i.bundleItems.length){
-            h+=`<div class="bundle-inline">${i.bundleItems.map(b=>`• ${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('　')}</div>`;
+            h+=`<div class="bundle-inline">实发为：${i.bundleItems.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('、')}</div>`;
           }
           return h;
         }).join('')}

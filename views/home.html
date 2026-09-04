@@ -768,7 +768,7 @@ function lookupOrder(){
           const itemsHtml = o.items.map(i=>{
             const bi = getBundleItems(i);
             const shipLine = bi.length
-              ? `<div class="ship-detail">${bi.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('　')}</div>`
+              ? `<div class="ship-detail">实发为：${bi.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('、')}</div>`
               : '';
             return `<div class="item-line">
               <div class="item-main"><span class="item-name">${i.name}</span><span class="item-price">${money(i.price)} × ${i.qty}</span></div>
