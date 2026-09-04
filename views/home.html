@@ -28,12 +28,17 @@
   .notify-text{display:inline-block;padding-right:60px}
   @keyframes notifyScroll{0%{transform:translateX(0)}100%{transform:translateX(-100%)}}
 
-  /* 活动倒计时红条（Style B 修改版：闪动圆点 + 大数字） */
-  .cdbar{background:linear-gradient(135deg,#c0392b,#e0563f);color:#fff;padding:9px 14px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;font-weight:700;letter-spacing:.3px}
-  .cdbar .dot{width:9px;height:9px;border-radius:50%;background:#fff;animation:cdpulse 1s infinite}
-  @keyframes cdpulse{0%{box-shadow:0 0 0 0 rgba(255,255,255,.75)}70%{box-shadow:0 0 0 9px rgba(255,255,255,0)}100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}}
-  .cdbar .num{font-size:18px;color:#fff700;font-weight:800;margin:0 3px}
-  .cdbar.end{background:#6b6b6b;justify-content:center}
+  /* 活动倒计时条（深棕底 + 浅米字 + 金色上下边 + 实时跳秒） */
+  .cdbar{background:linear-gradient(135deg,#3d2817 0%,#5b3a1f 60%,#4a2f1a 100%);color:#fff;padding:10px 14px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:13.5px;font-weight:700;letter-spacing:.3px;border-top:1px solid #c09845;border-bottom:1px solid #c09845;position:relative;box-shadow:inset 0 1px 0 rgba(255,220,150,.18),inset 0 -1px 0 rgba(0,0,0,.18)}
+  .cdbar::before{content:"";position:absolute;top:1px;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#f0d9a0,#c09845,#f0d9a0,transparent);opacity:.7}
+  .cdbar::after{content:"";position:absolute;bottom:1px;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,#f0d9a0,#c09845,#f0d9a0,transparent);opacity:.55}
+  .cdbar .dot{width:8px;height:8px;border-radius:50%;background:#f0e6d8;animation:cdpulse 1s infinite;flex:none}
+  @keyframes cdpulse{0%{box-shadow:0 0 0 0 rgba(240,230,216,.85)}70%{box-shadow:0 0 0 9px rgba(240,230,216,0)}100%{box-shadow:0 0 0 0 rgba(240,230,216,0)}}
+  .cdbar .num{font-size:19px;color:#f0e6d8;font-weight:900;margin:0 2px;font-variant-numeric:tabular-nums;display:inline-block;letter-spacing:.5px}
+  .cdbar .num.tick{animation:cdtick 1s infinite}
+  @keyframes cdtick{0%{transform:scale(1)}50%{transform:scale(1.07)}100%{transform:scale(1)}}
+  .cdbar .ttl{color:#e8d9b0;font-size:11px;letter-spacing:1px;margin-left:8px;font-weight:500}
+  .cdbar.end{background:linear-gradient(135deg,#6b6b6b,#888);border-top-color:#999;border-bottom-color:#999;justify-content:center}
   .cdbar.end .num{color:#fff}
 
   /* 购物车紧迫文案（方案②：合计正上方） */
@@ -190,9 +195,9 @@
     </div>
   </div>
 
-  <!-- 活动倒计时红条 -->
+  <!-- 活动倒计时条（深棕底 + 三段跳秒） -->
   <div class="cdbar" id="cdbar" style="display:none">
-    <span class="dot"></span><span>距活动结束仅</span><span class="num" id="cdNum">--</span><span id="cdUnit">小时</span><span>　抢完提前截止</span>
+    <span class="dot"></span><span>距活动结束仅</span><span class="num" id="cdH">--</span><span>小时</span><span class="num" id="cdM">--</span><span>分</span><span class="num tick" id="cdS">--</span><span>秒</span><span class="ttl">抢完提前截止</span>
   </div>
 
   <!-- 活动分类导航 -->
@@ -775,7 +780,7 @@ function closeResult(){ $('#resultModal').classList.remove('show'); }
 
 // 活动倒计时（Style B 修改版）：剩 >1 小时显「小时」，最后 1 小时显「分钟」，归零显「活动已结束」
 function startCountdown(){
-  const bar=$('#cdbar'), num=$('#cdNum'), unit=$('#cdUnit');
+  const bar=$('#cdbar'), hEl=$('#cdH'), mEl=$('#cdM'), sEl=$('#cdS');
   const dl=(CONFIG&&CONFIG.activityDeadline)||'';
   if(!dl){ bar.style.display='none'; return; }
   const target=new Date(dl);
@@ -783,14 +788,18 @@ function startCountdown(){
   // 活动开始时间：未到开始时间则隐藏红条，到点才显示
   const st=(CONFIG&&CONFIG.activityStart)||'';
   if(st){ const startTime=new Date(st); if(!isNaN(startTime.getTime()) && Date.now()<startTime.getTime()){ bar.style.display='none'; return; } }
+  function pad(n){return n<10?'0'+n:n}
   function tick(){
     const diff=target.getTime()-Date.now();
     if(diff<=0){ bar.style.display='flex'; bar.classList.add('end'); bar.innerHTML='活动已结束'; return; }
-    const hrs=Math.floor(diff/3600000);
-    const mins=Math.floor(diff/60000);
+    const totalSec=Math.floor(diff/1000);
+    const hrs=Math.floor(totalSec/3600);
+    const mins=Math.floor((totalSec%3600)/60);
+    const secs=totalSec%60;
     bar.style.display='flex'; bar.classList.remove('end');
-    if(diff>=3600000){ num.textContent=hrs; unit.textContent='小时'; }
-    else { num.textContent=mins; unit.textContent='分钟'; }
+    hEl.textContent=pad(hrs);
+    mEl.textContent=pad(mins);
+    sEl.textContent=pad(secs);
     setTimeout(tick,1000);
   }
   tick();
