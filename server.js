@@ -834,9 +834,31 @@ const server = http.createServer(async (req, res)=>{
             }
           });
         }
+        const prevStatus = o.status;
+        const prevCancelledAt = o.cancelledAt;
         o.status='已取消';
         o.cancelledAt=Date.now();
-        await saveOrderRowSync(o);
+        try {
+          await saveOrderRowSync(o);
+        } catch(e){
+          // 关键：云端保存失败时必须回滚状态和库存，否则内存与数据库不一致，重复点击会报状态错误
+          o.status = prevStatus;
+          if(prevCancelledAt === undefined) delete o.cancelledAt; else o.cancelledAt = prevCancelledAt;
+          if(stockRestored){
+            (o.items||[]).forEach(it=>{
+              const p = products.find(p=>p.id===it.id);
+              if(!p) return;
+              const qty = Number(it.qty)||0;
+              if(it.skuId){
+                const sku = (p.skus||[]).find(s=>String(s.id)===it.skuId);
+                if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) - qty; markProductDirty(it.id); }
+              } else if(p.stock!=null){
+                p.stock = Math.floor(Number(p.stock)) - qty; markProductDirty(it.id);
+              }
+            });
+          }
+          res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'save_failed', message:e.message})); return;
+        }
         if(stockRestored) saveProductsDebounced();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
@@ -861,10 +883,34 @@ const server = http.createServer(async (req, res)=>{
             }
           });
         }
+        const prevStatus = o.status;
+        const prevRestoredAt = o.restoredAt;
+        const prevRestoredCount = o.restoredCount;
         o.status='待发货';
         o.restoredAt=Date.now();
         o.restoredCount=(o.restoredCount||0)+1;
-        await saveOrderRowSync(o);
+        try {
+          await saveOrderRowSync(o);
+        } catch(e){
+          // 关键：云端保存失败时必须回滚状态、重扣次数和库存
+          o.status = prevStatus;
+          if(prevRestoredAt === undefined) delete o.restoredAt; else o.restoredAt = prevRestoredAt;
+          o.restoredCount = prevRestoredCount;
+          if(stockRededucted){
+            (o.items||[]).forEach(it=>{
+              const p = products.find(p=>p.id===it.id);
+              if(!p) return;
+              const qty = Number(it.qty)||0;
+              if(it.skuId){
+                const sku = (p.skus||[]).find(s=>String(s.id)===it.skuId);
+                if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) + qty; markProductDirty(it.id); }
+              } else if(p.stock!=null){
+                p.stock = Math.floor(Number(p.stock)) + qty; markProductDirty(it.id);
+              }
+            });
+          }
+          res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'save_failed', message:e.message})); return;
+        }
         if(stockRededucted) saveProductsDebounced();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }

@@ -852,30 +852,34 @@ async function confirmPaid(id){
   await syncOrder(id, '/confirm', {}, prev);
 }
 // 商家后台：待确认订单标记「未收到该款项」→ 已取消（退回库存）
+// 乐观 UI：点完立即本地流转到已取消，云端同步在后台跑；失败自动回滚
 function markNotPaid(id){
   const o=ORDERS.find(x=>x.id===id); if(!o) return;
+  if(pendingIds.has(id)){ toast('操作进行中，请稍候'); return; }
   if(!window.confirm('确认该订单「未收到该款项」？\n订单 '+id+' 将标记为已取消，并退回库存。')) return;
-  fetch('/api/orders/'+id+'/cancel',{method:'POST'})
-    .then(r=>r.json()).then(d=>{
-      if(d.error){ toast('操作失败：'+d.error); return; }
-      o.status='已取消'; o.cancelledAt=Date.now();
-      curTab='已取消';
-      document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='已取消'));
-      render(); toast('已标记未收到该款项，订单转入已取消');
-    }).catch(()=>toast('操作失败，请稍后重试'));
+  const prev=JSON.parse(JSON.stringify(o));
+  o.status='已取消'; o.cancelledAt=Date.now();
+  ORDERS=ORDERS.map(x=>x.id===id?o:x);
+  curTab='已取消';
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='已取消'));
+  render();
+  toast('已标记未收到该款项，订单转入已取消');
+  syncOrder(id, '/cancel', {}, prev);
 }
 // 商家后台：已取消订单「核实重新成立，进入待发货」→ 待发货（再次扣除库存）
+// 乐观 UI：点完立即本地流转到待发货，云端同步在后台跑；失败自动回滚
 function restoreOrder(id){
   const o=ORDERS.find(x=>x.id===id); if(!o) return;
+  if(pendingIds.has(id)){ toast('操作进行中，请稍候'); return; }
   if(!window.confirm('确认「核实重新成立，进入待发货」？\n订单 '+id+' 将恢复为待发货状态，并再次扣除库存。')) return;
-  fetch('/api/orders/'+id+'/restore',{method:'POST'})
-    .then(r=>r.json()).then(d=>{
-      if(d.error){ toast('操作失败：'+d.error); return; }
-      o.status='待发货'; o.restoredAt=Date.now();
-      curTab='待发货';
-      document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='待发货'));
-      render(); toast('已重新成立，订单转入待发货');
-    }).catch(()=>toast('操作失败，请稍后重试'));
+  const prev=JSON.parse(JSON.stringify(o));
+  o.status='待发货'; o.restoredAt=Date.now();
+  ORDERS=ORDERS.map(x=>x.id===id?o:x);
+  curTab='待发货';
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='待发货'));
+  render();
+  toast('已重新成立，订单转入待发货');
+  syncOrder(id, '/restore', {}, prev);
 }
 // 通用后台同步：成功用服务端返回订单覆盖，失败回滚到 prev（含一次可选重试）
 async function syncOrder(id, action, body, prev){
