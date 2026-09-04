@@ -626,6 +626,9 @@ const server = http.createServer(async (req, res)=>{
         const key = String(u.searchParams.get('key')||'').trim();
         if(!key){ res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify([])); return; }
         const lower = key.toLowerCase();
+        // 关键：买家端查询前先复核云端最新状态（后台在本地 4301 把订单改成已取消，
+        // 买家访问线上 Render 实例的内存副本仍是旧状态，不刷新会一直读到待确认）
+        await refreshOrdersFromCloud();
         const list = await getOrders();
         const found = list.filter(o=>{
           const nameMatch = (o.name||'').toLowerCase().includes(lower);
@@ -637,6 +640,8 @@ const server = http.createServer(async (req, res)=>{
       // 单个订单（供前端恢复「待付款」订单）
       const mOrderApi = pathname.match(/^\/api\/orders\/([\w-]+)$/);
       if(method==='GET' && mOrderApi){
+        // 同上：读单个订单前先复核云端，避免读到本实例过期的内存状态
+        await refreshOrdersFromCloud();
         const list = await getOrders();
         const o = list.find(o=>o.id===mOrderApi[1]) || null;
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(o)); return;
