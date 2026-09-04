@@ -995,7 +995,7 @@ const server = http.createServer(async (req, res)=>{
           return _sanitizeHtml(String(html).trim(), {
             allowedTags: SANITIZE_ALLOWED_TAGS,
             allowedAttributes: {
-              '*': ['style'],
+              '*': ['style','class'],
               'a': ['href','target','rel'],
               'img': ['src','alt']
             },
@@ -1029,7 +1029,9 @@ const server = http.createServer(async (req, res)=>{
           }
           const style=(attrs.match(/style\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
           const safeStyle=style.replace(/url\s*\(/gi,'').replace(/expression\s*\(/gi,'').replace(/javascript:/gi,'');
-          return slash + tag.toLowerCase() + (safeStyle?' style="'+safeStyle.replace(/"/g,'')+'"':'') + '>';
+          const cls=(attrs.match(/class\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
+          const safeCls=cls.replace(/[^a-zA-Z0-9_\- ]/g,'').trim();
+          return slash + tag.toLowerCase() + (safeStyle?' style="'+safeStyle.replace(/"/g,'')+'"':'') + (safeCls?' class="'+safeCls+'"':'') + '>';
         });
         return s;
       }
