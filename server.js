@@ -464,11 +464,32 @@ function saveProductsDebounced(){
 // 关键修复：若存在"尚未落云的脏编辑"（dirtyProductIds 非空），直接返回内存版本，
 // 绝不用云端旧值覆盖，避免"保存成功但刷新后变回旧数据"的假象（Supabase 抖动导致单行 flush 偶败时尤甚）。
 // 无脏行时回源云端读取（含 product_order 排序），保证顾客端最多延迟一次轮询即可看到最新。
+// 性能修复：为产品读集合加 3 秒 TTL + 并发去重缓存。以前每个商品详情页/首页/列表都全量回源一次
+// Supabase，Render 免费实例冷启动/回源慢时页面白屏 3-4 秒。加上缓存后，同一 3 秒窗口内的多次读
+// 只回源一次，其余走内存快照秒开；后台保存产品会经 flushDirtyProducts->clearHtmlCache 一并失效。
+const PRODUCT_READ_TTL_MS = 3000;
+let productReadCache = { ts: 0, value: products, promise: null, failed: false };
 async function getProducts(){
   if(!USE_SUPABASE) return products;
   if(dirtyProductIds.size) return products;
-  try { return await loadProductsFromRows(products); }
-  catch(e){ console.error('[getProducts] 读云端失败，使用内存副本：', e.message); return products; }
+  const now = Date.now();
+  if(productReadCache.promise) return productReadCache.promise;   // 同窗口并发的回源共享在途请求
+  if(productReadCache.ts > 0 && productReadCache.value && now - productReadCache.ts < PRODUCT_READ_TTL_MS && !productReadCache.failed) return productReadCache.value;
+  const promise = (async()=>{
+    try{
+      const list = await loadProductsFromRows(products);
+      productReadCache = { ts: Date.now(), value: list, promise: null, failed: false };
+      return list;
+    }catch(e){
+      console.error('[getProducts] 读云端失败，使用内存副本：', e.message);
+      productReadCache = { ts: Date.now(), value: products, promise: null, failed: true };
+      return products;
+    }
+  })();
+  productReadCache.promise = promise;
+  const result = await promise;
+  productReadCache.promise = null;
+  return result;
 }
 // 后台重试：Supabase 免费层偶发 fetch failed 时，单行 flush 可能失败；每 5s 把残留脏行再刷一次，
 // 确保最终一致，且管理员界面因 getProducts 优先返回内存脏行而不受影响。
@@ -585,7 +606,7 @@ function getCachedHtml(key){
   return null;
 }
 function setCachedHtml(key, html){ htmlCache.set(key, { html, ts: Date.now() }); }
-function clearHtmlCache(){ htmlCache.clear(); }
+function clearHtmlCache(){ htmlCache.clear(); productReadCache = { ts: 0, value: products, promise: null, failed: false }; }
 
 // ---------- 路由 ----------
 const server = http.createServer(async (req, res)=>{
