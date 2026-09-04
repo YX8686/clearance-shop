@@ -178,6 +178,21 @@
       <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">活动开始时间</span><input type="datetime-local" id="sStart" style="flex:1;border:1px solid #e0d6c8;border-radius:8px;padding:9px;font-size:13px;min-width:200px"><span style="font-size:12px;color:#9a8f82">留空则保存后立即倒计时</span></div>
       <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">活动截止时间</span><input type="datetime-local" id="sDeadline" style="flex:1;border:1px solid #e0d6c8;border-radius:8px;padding:9px;font-size:13px;min-width:200px"><span style="font-size:12px;color:#9a8f82">留空则不显示倒计时</span></div>
       <div class="setrow" style="align-items:flex-start">
+        <span style="font-size:13px;color:#7a6f62;width:80px;flex-shrink:0;padding-top:6px">倒计时后半句</span>
+        <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+          <textarea id="sCdPhrases" rows="4" style="flex:1;border:1px solid #e0d6c8;border-radius:8px;padding:9px;font-size:13px;min-width:200px;resize:vertical" placeholder="每行一句，按时间先后：第1段显示第1句，第2段显示第2句…"></textarea>
+          <div style="display:flex;align-items:center;gap:6px;font-size:13px;color:#5b5147">
+            <span>每段时长</span><input type="number" id="sCdSeg" min="1" max="8760" value="12" style="width:64px;border:1px solid #e0d6c8;border-radius:6px;padding:5px;font-size:13px">小时
+            <span style="font-size:12px;color:#9a8f82">（活动总时长 ÷ 段数 = 自动切换；例：48小时÷4段=12）</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;font-size:13px;color:#5b5147">
+            <span>手动指定</span>
+            <select id="sCdManual" style="border:1px solid #e0d6c8;border-radius:6px;padding:5px;font-size:13px;min-width:140px"><option value="-1">自动切换</option></select>
+            <span style="font-size:12px;color:#9a8f82">（选「自动切换」才按时段轮替）</span>
+          </div>
+        </div>
+      </div>
+      <div class="setrow" style="align-items:flex-start">
         <span style="font-size:13px;color:#7a6f62;width:80px;flex-shrink:0;padding-top:6px">隐藏分类</span>
         <div id="catHideBox" style="display:flex;flex-wrap:wrap;gap:10px;flex:1;font-size:13px;color:#5b5147">
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="cat-hide-cb" value="特惠单品"> 特惠单品</label>
@@ -431,6 +446,16 @@ async function load(){
   // 其余数据并行加载，不阻塞订单显示
   loadOthers();
 }
+function refreshCdManualOptions(sel){
+  const ta=document.getElementById('sCdPhrases');
+  if(!ta) return;
+  const n=(ta.value.split('\n').map(s=>s.trim()).filter(Boolean)).length;
+  const sel0=document.getElementById('sCdManual');
+  if(!sel0) return;
+  const cur=(sel!=null)?sel:(Number(sel0.value)||-1);
+  sel0.innerHTML='<option value="-1">自动切换</option>';
+  for(let i=1;i<=n;i++){ const o=document.createElement('option'); o.value=String(i-1); o.textContent='第'+i+'句'; if((i-1)===cur) o.selected=true; sel0.appendChild(o); }
+}
 async function loadOthers(){
   const [c,p,g]=await Promise.all([
     fetch('/api/config').then(r=>r.json()),
@@ -448,6 +473,10 @@ async function loadOthers(){
     document.getElementById('sBankHolder').value=CONFIG.bankHolder||'';
     document.getElementById('sStart').value=CONFIG.activityStart||'';
     document.getElementById('sDeadline').value=CONFIG.activityDeadline||'';
+    document.getElementById('sCdPhrases').value=(CONFIG.countdownPhrases||[]).join('\n');
+    document.getElementById('sCdSeg').value=CONFIG.countdownSegmentHours||12;
+    refreshCdManualOptions(CONFIG.countdownManualIndex);
+    document.getElementById('sCdPhrases').addEventListener('input', refreshCdManualOptions);
     configFormFilled=true;
   }
   const hiddenCats=Array.isArray(CONFIG.hiddenCategories)?CONFIG.hiddenCategories:[];
@@ -955,7 +984,10 @@ async function saveSettings(){
     bankHolder:document.getElementById('sBankHolder').value,
     hiddenCategories:hiddenCats,
     activityDeadline:document.getElementById('sDeadline').value,
-    activityStart:document.getElementById('sStart').value
+    activityStart:document.getElementById('sStart').value,
+    countdownPhrases:document.getElementById('sCdPhrases').value.split('\n').map(s=>s.trim()).filter(Boolean),
+    countdownSegmentHours:Number(document.getElementById('sCdSeg').value)||12,
+    countdownManualIndex:Number(document.getElementById('sCdManual').value)
   };
   const b64Qr=document.getElementById('sQrPrev').dataset.b64; if(b64Qr) body.paymentQrBase64=b64Qr;
   const b64Wc=document.getElementById('sWcPrev').dataset.b64; if(b64Wc) body.paymentWechatQrBase64=b64Wc;

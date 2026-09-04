@@ -707,7 +707,7 @@ function submitOrder(){
 
 // 活动倒计时（Style B 修改版）：剩 >1 小时显「小时」，最后 1 小时显「分钟」，归零显「活动已结束」
 function startCountdown(){
-  const bar=$('#cdbar'), hEl=$('#cdH'), mEl=$('#cdM'), sEl=$('#cdS');
+  const bar=$('#cdbar'), hEl=$('#cdH'), mEl=$('#cdM'), sEl=$('#cdS'), ttlEl=$('#cdTtl');
   const dl=(CONFIG&&CONFIG.activityDeadline)||'';
   if(!dl){ bar.style.display='none'; return; }
   const target=new Date(dl);
@@ -715,6 +715,19 @@ function startCountdown(){
   // 活动开始时间：未到开始时间则隐藏红条，到点才显示
   const st=(CONFIG&&CONFIG.activityStart)||'';
   if(st){ const startTime=new Date(st); if(!isNaN(startTime.getTime()) && Date.now()<startTime.getTime()){ bar.style.display='none'; return; } }
+  // 倒计时后半句：按活动时间分段自动切换，或后台手动指定
+  function currentPhrase(){
+    const phrases=(CONFIG&&Array.isArray(CONFIG.countdownPhrases))?CONFIG.countdownPhrases.filter(s=>s&&String(s).trim()):[];
+    if(!phrases.length) return null;
+    const manual=(CONFIG&&typeof CONFIG.countdownManualIndex==='number')?CONFIG.countdownManualIndex:-1;
+    if(manual>=0 && manual<phrases.length) return phrases[manual];
+    const startMs = st ? new Date(st).getTime() : Date.now();
+    const segH = (CONFIG&&typeof CONFIG.countdownSegmentHours==='number'&&CONFIG.countdownSegmentHours>0)?CONFIG.countdownSegmentHours:12;
+    let elapsed = Date.now()-startMs; if(elapsed<0) elapsed=0;
+    let idx = Math.floor(elapsed/(segH*3600*1000));
+    if(idx<0) idx=0; if(idx>=phrases.length) idx=phrases.length-1;
+    return phrases[idx];
+  }
   function pad(n){return n<10?'0'+n:n}
   function tick(){
     const diff=target.getTime()-Date.now();
@@ -727,6 +740,7 @@ function startCountdown(){
     hEl.textContent=pad(hrs);
     mEl.textContent=pad(mins);
     sEl.textContent=pad(secs);
+    const ph=currentPhrase(); if(ph!=null && ttlEl) ttlEl.textContent=ph;
     setTimeout(tick,1000);
   }
   tick();

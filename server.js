@@ -226,7 +226,10 @@ const DEFAULT_CONFIG = {
   shareImage: '',
   hiddenCategories: [],
   activityDeadline: '',
-  activityStart: ''
+  activityStart: '',
+  countdownPhrases: [],
+  countdownSegmentHours: 12,
+  countdownManualIndex: -1
 };
 
 let products = [];
@@ -949,6 +952,9 @@ const server = http.createServer(async (req, res)=>{
         if(body.announcement!=null) config.announcement=String(body.announcement).slice(0,300);
         if(body.activityDeadline!=null) config.activityDeadline=String(body.activityDeadline).slice(0,50);
         if(body.activityStart!=null) config.activityStart=String(body.activityStart).slice(0,50);
+        if(Array.isArray(body.countdownPhrases)) config.countdownPhrases=body.countdownPhrases.filter(x=>x!=null).map(x=>String(x).slice(0,50)).filter(s=>s.trim().length);
+        if(body.countdownSegmentHours!=null){ const _n=Number(body.countdownSegmentHours); if(Number.isFinite(_n)&&_n>0&&_n<=8760) config.countdownSegmentHours=Math.floor(_n); }
+        if(body.countdownManualIndex!=null){ const _m=Number(body.countdownManualIndex); if(Number.isFinite(_m)) config.countdownManualIndex=Math.floor(_m); }
         if(body.bankName!=null) config.bankName=String(body.bankName).slice(0,50);
         if(body.bankAccount!=null) config.bankAccount=String(body.bankAccount).slice(0,60);
         if(body.bankHolder!=null) config.bankHolder=String(body.bankHolder).slice(0,20);
