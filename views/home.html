@@ -837,7 +837,7 @@ function startCountdown(){
   function pad(n){return n<10?'0'+n:n}
   function tick(){
     const diff=target.getTime()-Date.now();
-    if(diff<=0){ bar.style.display='flex'; bar.classList.add('end'); bar.innerHTML='活动已结束'; return; }
+    if(diff<=0){ bar.style.display='flex'; bar.classList.add('end'); bar.innerHTML='<span class="dot"></span><span>本次活动已全部结束</span>'; return; }
     const totalSec=Math.floor(diff/1000);
     const hrs=Math.floor(totalSec/3600);
     const mins=Math.floor((totalSec%3600)/60);
