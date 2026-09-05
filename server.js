@@ -1080,7 +1080,7 @@ const server = http.createServer(async (req, res)=>{
           return _sanitizeHtml(String(html).trim(), {
             allowedTags: SANITIZE_ALLOWED_TAGS,
             allowedAttributes: {
-              '*': ['style','class'],
+              '*': ['style','class','color'],
               'a': ['href','target','rel'],
               'img': ['src','alt']
             },
@@ -1116,7 +1116,8 @@ const server = http.createServer(async (req, res)=>{
           const safeStyle=style.replace(/url\s*\(/gi,'').replace(/expression\s*\(/gi,'').replace(/javascript:/gi,'');
           const cls=(attrs.match(/class\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
           const safeCls=cls.replace(/[^a-zA-Z0-9_\- ]/g,'').trim();
-          return slash + tag.toLowerCase() + (safeStyle?' style="'+safeStyle.replace(/"/g,'')+'"':'') + (safeCls?' class="'+safeCls+'"':'') + '>';
+          const colorAttr=(attrs.match(/color\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
+          return slash + tag.toLowerCase() + (safeStyle?' style="'+safeStyle.replace(/"/g,'')+'"':'') + (safeCls?' class="'+safeCls+'"':'') + (colorAttr?' color="'+colorAttr.replace(/"/g,'')+'"':'') + '>';
         });
         return s;
       }
