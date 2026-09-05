@@ -140,9 +140,12 @@
   .desc-img-wrap .img-crop-btn{top:-10px;left:-10px}
   .desc-img-wrap .img-resize-handle{bottom:-8px;right:-8px}
   /* 描述编辑器：黄底标题块 */
-  .desc-highlight-title{background:#fff3cd;padding:10px 12px;border-radius:6px;margin:12px 0;display:block;border-left:4px solid #d4a017;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"PingFang SC","Microsoft YaHei",sans-serif !important;font-size:14px !important;color:#5d4a0d !important}
+  .desc-highlight-title{position:relative;background:#fff3cd;padding:10px 28px 10px 12px;border-radius:6px;margin:12px 0;display:block;border-left:4px solid #d4a017;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"PingFang SC","Microsoft YaHei",sans-serif !important;font-size:14px !important;color:#5d4a0d !important}
   .desc-highlight-title *{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"PingFang SC","Microsoft YaHei",sans-serif !important;font-size:14px !important}
   .desc-highlight-title .dht-box{display:inline-block;width:10px;height:10px;background:#d4a017;border-radius:2px;margin-right:8px;vertical-align:middle}
+  .desc-highlight-title .dht-del-btn{position:absolute;top:4px;right:4px;width:20px;height:20px;border:none;border-radius:50%;background:#d4a017;color:#fff;font-size:12px;line-height:20px;text-align:center;cursor:pointer;opacity:0;transition:opacity .15s;pointer-events:auto;z-index:1;padding:0}
+  @media(hover:hover){.desc-highlight-title:hover .dht-del-btn{opacity:1}}
+  @media(hover:none){.desc-highlight-title .dht-del-btn{opacity:1}}
 
   /* 合并订单 */
   .merge-card{border:2px solid #f0d9c4}
@@ -1394,6 +1397,8 @@ function openProdModal(p){
   document.getElementById('prodModal').classList.add('show');
   // 把描述里已存在的裸 img 包装成可交互 wrapper（删除/缩放/重新裁剪）
   wrapDescImages(pDescEl);
+  // 给已存在的黄底标题块加上删除按钮
+  wrapHighlightTitles(pDescEl);
 }
 function closeProdModal(){ document.getElementById('prodModal').classList.remove('show'); }
 
@@ -1520,7 +1525,7 @@ function cleanDescNode(root){
   if(!root) return;
   purgeOfficeJunk(root);
   const allowed=new Set(['P','BR','STRONG','B','I','EM','U','UL','OL','LI','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','HR','IMG','SPAN']);
-  const keepStruct=(el)=> el.classList && (el.classList.contains('desc-highlight-title')||el.classList.contains('desc-img-wrap')||el.classList.contains('dht-box'));
+  const keepStruct=(el)=> el.classList && (el.classList.contains('desc-highlight-title')||el.classList.contains('desc-img-wrap')||el.classList.contains('dht-box')||el.classList.contains('dht-del-btn'));
   const cleanNode=(node)=>{
     let i=node.childNodes.length;
     while(i--){
@@ -1592,6 +1597,7 @@ function cleanWordStyles(){
   const t=document.getElementById('pDesc'); if(!t) return;
   cleanDescNode(t);
   wrapDescImages(t);
+  wrapHighlightTitles(t);
   updateDescCount();
   toast('已清除 Word 格式，段间距已恢复（列表符号请用上方「项目」按钮重新点）');
 }
@@ -1682,6 +1688,7 @@ function insertHighlightTitle(){
   box.className='dht-box';
   box.contentEditable=false;
   div.appendChild(box);
+  div.appendChild(createHighlightDelBtn());
   if(!sel.isCollapsed && t.contains(r.commonAncestorContainer)){
     // 有选中文字：用黄底 div 包裹，并清除可能带入的外部字体样式
     const frag=r.extractContents();
@@ -1701,6 +1708,38 @@ function insertHighlightTitle(){
   after.setStartAfter(div); after.collapse(true);
   sel.removeAllRanges(); sel.addRange(after);
   updateDescCount();
+}
+
+function createHighlightDelBtn(){
+  const btn=document.createElement('button');
+  btn.type='button';
+  btn.className='dht-del-btn';
+  btn.title='删除本段';
+  btn.innerHTML='×';
+  btn.contentEditable=false;
+  btn.addEventListener('click',onDelHighlightTitle);
+  return btn;
+}
+function onDelHighlightTitle(e){
+  e.preventDefault(); e.stopPropagation();
+  const block=e.currentTarget && e.currentTarget.closest ? e.currentTarget.closest('.desc-highlight-title') : null;
+  if(!block) return;
+  const t=document.getElementById('pDesc');
+  // 如果删除后编辑器为空，补一个空段落方便继续编辑
+  block.remove();
+  if(t && t.innerHTML.replace(/<br\s*\/?>/gi,'').trim()==='') t.innerHTML='<p><br></p>';
+  updateDescCount();
+  if(t) t.focus();
+}
+function wrapHighlightTitles(root){
+  if(!root) return;
+  root.querySelectorAll('.desc-highlight-title').forEach(block=>{
+    if(!block.querySelector('.dht-del-btn')) block.appendChild(createHighlightDelBtn());
+  });
+}
+function stripHighlightDelBtns(root){
+  if(!root) return;
+  root.querySelectorAll('.desc-highlight-title .dht-del-btn').forEach(btn=>btn.remove());
 }
 
 
@@ -1783,6 +1822,7 @@ function handleDescPaste(e){
     if(sel && sel.rangeCount){
       const r=sel.getRangeAt(0); r.deleteContents(); r.insertNode(frag);
     }
+    wrapHighlightTitles(t);
   } else if(text){
     document.execCommand('insertText', false, text);
   }
@@ -2154,6 +2194,8 @@ async function saveProduct(){
     }
     // 保存前把描述的交互 wrapper 还原成裸 img，避免数据库里存 button/div
     unwrapDescImages(document.getElementById('pDesc'));
+    // 保存前去掉黄底标题块的删除按钮（编辑器辅助 UI，不存入数据库）
+    stripHighlightDelBtns(document.getElementById('pDesc'));
     const descBefore = document.getElementById('pDesc').innerHTML;
     // 幂等键：每次保存唯一，后端据此去重，防止网络抖动/超时重试导致重复产品
     const clientSaveId = (editingProdId || 'new') + '_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
