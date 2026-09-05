@@ -536,9 +536,13 @@ async function refreshOrdersFromCloud(){
 }
 // 订单写入前必须先刷新内存副本：手机端在云端下的订单，本地服务内存里可能没有，
 // 直接 find 内存会 404 静默失败（症状：后台点"确认收款"提示成功但状态不变）
+// ⚠️ 严禁用 loadKV('orders', ...)：那是已废弃的「旧大数组」行，长期不更新——发货管家对
+//    order:<id> 单行的改动（已发货+tracking）从不同步回这个大数组，读到的是一份过期快照。
+//    若用它刷新再写回，会把「已发货」用旧的「待发货」整单覆盖回去，造成状态回退 bug
+//    （订单从已发货自动跳回待发货、tracking 被清空 → 重复发货风险）。必须按 order:* 单行重新聚合。
 async function syncOrders(){
   if(!USE_SUPABASE) return orders;
-  try { orders = await loadKV('orders', orders); }
+  try { orders = await refreshOrdersFromCloud(); }
   catch(e){ console.error('[syncOrders] 同步云端失败，继续使用内存副本：', e.message); }
   return orders;
 }
@@ -788,6 +792,7 @@ const server = http.createServer(async (req, res)=>{
       // 客户确认已发送付款截图
       const mPaid = pathname.match(/^\/api\/orders\/([\w-]+)\/paid$/);
       if(method==='POST' && mPaid){
+        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
         const o = orders.find(o=>o.id===mPaid[1]);
         if(!o){ res.writeHead(404); res.end('no'); return; }
         if(o.status==='待付款'){ o.status='待确认'; o.paidScreenshotAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o); }
@@ -796,6 +801,7 @@ const server = http.createServer(async (req, res)=>{
       // 确认收款
       const mConfirm = pathname.match(/^\/api\/orders\/([\w-]+)\/confirm$/);
       if(method==='POST' && mConfirm){
+        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
         const o = orders.find(o=>o.id===mConfirm[1]);
         if(!o){ res.writeHead(404); res.end('no'); return; }
         if(o.status==='待付款' || o.status==='待确认'){
@@ -806,6 +812,7 @@ const server = http.createServer(async (req, res)=>{
       // 发货
       const mShip = pathname.match(/^\/api\/orders\/([\w-]+)\/ship$/);
       if(method==='POST' && mShip){
+        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
         const o = orders.find(o=>o.id===mShip[1]);
         if(!o){ res.writeHead(404); res.end('no'); return; }
         let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
@@ -840,6 +847,20 @@ const server = http.createServer(async (req, res)=>{
         if(!USE_SUPABASE) await saveKV('orders', orders).catch(e=>console.error('[batch-allow disk]',e.message));
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, count:targets.length})); return;
       }
+      // 「同意进入今日可发」：把勾选了「允许发货管家采集」的待发货订单，移入独立的「今日可发」状态，
+      // 使其从「待发货」中移除——同一订单不会同时出现在两个栏目（互斥，防止重复）。
+      const mTodayAccept = pathname.match(/^\/api\/orders\/today-accept$/);
+      if(method==='POST' && mTodayAccept){
+        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+        const ids = Array.isArray(body.ids) ? body.ids : [];
+        const now = Date.now();
+        const targets = orders.filter(o => o.status==='待发货' && ids.includes(o.id));
+        targets.forEach(o => { o.status='今日可发'; o.allowPull=true; o.allowPullAt=now; o.todayAt=now; });
+        await Promise.all(targets.map(o => saveOrderRowSync(o).catch(e=>console.error('[today-accept]', o.id, e.message))));
+        if(!USE_SUPABASE) await saveKV('orders', orders).catch(e=>console.error('[today-accept disk]', e.message));
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, count:targets.length})); return;
+      }
       // 商家后台「今日可发订单」→ 全部导出：把当前允许采集的待发货订单形成一个「商城本次汇总单」，
       // 追加到 mall_sessions 数组（一天可多次汇总）。发货管家 /shipper 读取 sessions 列表。
       // 导出成功后把每笔订单标记为 status='待回传'（离开「今日可发」、进入「等待回传区」），防止重复导出。
@@ -861,10 +882,10 @@ const server = http.createServer(async (req, res)=>{
           // 关键：先刷新内存订单副本。Render 冷启动/内存可能过期或为空，直接 find 会找不到订单，
           // 导致「标记为待回传」这一步空转、防重复失效。refreshOrdersFromCloud() 正是 /api/orders 用的那份权威数据源。
           await refreshOrdersFromCloud().catch(e=>console.error('[mall-export refresh]', e.message));
-          // 防重复：把已导出的「待发货」订单标记为「待回传」，使其离开「今日可发」、进入「等待回传区」
+          // 防重复：把已导出的「今日可发」订单标记为「待回传」，使其离开「今日可发」、进入「等待回传区」
           const byId = new Map(exported.map(o=>[o.id, o]));
           const dirty = [];
-          orders.forEach(o=>{ if(byId.has(o.id) && o.status==='待发货'){ o.status='待回传'; o.exportedAt=Date.now(); dirty.push(o); } });
+          orders.forEach(o=>{ if(byId.has(o.id) && (o.status==='今日可发' || o.status==='待发货')){ o.status='待回传'; o.exportedAt=Date.now(); dirty.push(o); } });
           await Promise.all(dirty.map(o=>saveOrderRowSync(o).catch(e=>console.error('[mall-export markReturn]', o.id, e.message))));
           savedIds = dirty.map(o=>o.id);
         }
@@ -874,6 +895,7 @@ const server = http.createServer(async (req, res)=>{
       // 取消订单（允许待付款 / 待确认 状态，含商家端「未收到该款项」）
       const mCancel = pathname.match(/^\/api\/orders\/([\w-]+)\/cancel$/);
       if(method==='POST' && mCancel){
+        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
         const o = orders.find(o=>o.id===mCancel[1]);
         if(!o){ res.writeHead(404); res.end(JSON.stringify({error:'no'})); return; }
         if(o.status!=='待付款' && o.status!=='待确认'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_pending_or_confirm_can_cancel'})); return; }

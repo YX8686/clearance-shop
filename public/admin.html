@@ -730,8 +730,8 @@ function render(){
   document.getElementById('cReturn').textContent=returns;
   document.getElementById('cDone').textContent=dones;
   document.getElementById('cCancel').textContent=cancels;
-  document.getElementById('cToday').textContent=ORDERS.filter(o=>o.status==='待发货' && o.allowPull).length;
-  document.getElementById('stat').textContent='共 '+ORDERS.length+' 单 · 待处理'+waits+' / 待发'+ships+' / 今日可发'+ORDERS.filter(o=>o.status==='待发货' && o.allowPull).length+' / 回传区'+returns+' / 已发'+dones+' / 已取消'+cancels;
+  document.getElementById('cToday').textContent=ORDERS.filter(o=>o.status==='今日可发').length;
+  document.getElementById('stat').textContent='共 '+ORDERS.length+' 单 · 待处理'+waits+' / 待发'+ships+' / 今日可发'+ORDERS.filter(o=>o.status==='今日可发').length+' / 回传区'+returns+' / 已发'+dones+' / 已取消'+cancels;
   const list=document.getElementById('list'); list.innerHTML='';
   if(curTab==='待发货'){ renderMergedShip(); return; }
   if(curTab==='回传区'){ renderReturnZone(); return; }
@@ -739,7 +739,7 @@ function render(){
   const rows=ORDERS.filter(o=>curTab==='待确认'?o.status==='待确认':o.status===curTab).sort((a,b)=>b.createdAt-a.createdAt);
   if(!rows.length){ list.innerHTML='<div class="empty">暂无订单</div>'; return; }
   rows.forEach(o=>{
-    const stMap={'待付款':['st-wait','待付款'],'待确认':['st-wait','待确认'],'待发货':['st-ship','待发货'],'待回传':['st-ship','等待回传'],'已发货':['st-done','已发货'],'已取消':['st-cancel','已取消']};
+    const stMap={'待付款':['st-wait','待付款'],'待确认':['st-wait','待确认'],'待发货':['st-ship','待发货'],'今日可发':['st-ship','今日可发'],'待回传':['st-ship','等待回传'],'已发货':['st-done','已发货'],'已取消':['st-cancel','已取消']};
     const [cls,lab]=stMap[o.status]||['st-wait',o.status];
     const items=o.items.map(i=>{
       let h=`<div class="it-line"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
@@ -782,6 +782,8 @@ function renderMergedShip(){
   topBar.innerHTML=`
     <span>🟢 已允许 <b style="color:${allowedCount?'':'#888'}">${allowedCount}</b>/${pending.length} 单可被发货管家采集</span>
     <button onclick="batchAllowPull()">✅ 一键全部允许（再单独取消不发的那几单）</button>
+    <button onclick="moveToToday()" style="margin-left:8px">🚀 同意进入今日可发</button>
+    <span style="font-size:12px;color:#9a8f82">勾选「允许发货管家采集」后点此，订单即从「待发货」移入「今日可发」</span>
     ${pending.length?'':'<span style="color:#888">（暂无待发货订单）</span>'}
   `;
   list.appendChild(topBar);
@@ -849,17 +851,17 @@ function renderMergedShip(){
 // 「今日可发订单」栏目：展示已在待发货里勾选「允许发货管家采集」的订单，可一键全部导出到发货管家
 function renderTodayShip(){
   const list=document.getElementById('list');
-  const today=ORDERS.filter(o=>o.status==='待发货' && o.allowPull);
+  const today=ORDERS.filter(o=>o.status==='今日可发');
   const topBar=document.createElement('div');
   topBar.className='allow-pull-top';
   topBar.innerHTML=`
     <span>📦 今日可发 <b style="color:${today.length?'#1f9d55':'#888'}">${today.length}</b> 单
-      <span style="color:#9a8f82;font-weight:400">（在「待发货」勾选「允许发货管家采集」即进入此处；点「全部导出」后订单会移入「等待回传区」，不会重复）</span></span>
+      <span style="color:#9a8f82;font-weight:400">（从「待发货」勾选「允许发货管家采集」后点「同意进入今日可发」即进入此处；点「全部导出」后订单会移入「等待回传区」，不会重复）</span></span>
     <button onclick="exportTodayOrders()">📤 全部导出到发货管家＋下载发货单</button>`;
   list.appendChild(topBar);
   if(!today.length){
     const empty=document.createElement('div'); empty.className='empty';
-    empty.innerHTML='还没有「今日可发」订单。<br><br><span style="font-size:13px;color:#999">去「待发货」栏目，在每笔订单（或合并组）勾选「允许发货管家采集」，勾选的订单会自动出现在这里；再点上方「全部导出」，就会同步到发货管家「今日可发货」里的「商城今日订单总表」。</span>';
+    empty.innerHTML='还没有「今日可发」订单。<br><br><span style="font-size:13px;color:#999">去「待发货」栏目，在每笔订单（或合并组）勾选「允许发货管家采集」，再点顶部「🚀 同意进入今日可发」，订单就会从「待发货」移到这里；再点上方「全部导出」，同步到发货管家「商城今日订单总表」。</span>';
     list.appendChild(empty);
     return;
   }
@@ -984,7 +986,7 @@ function toExportOrder(o){
   };
 }
 async function exportTodayOrders(){
-  const list=ORDERS.filter(o=>o.status==='待发货' && o.allowPull);
+  const list=ORDERS.filter(o=>o.status==='今日可发');
   if(!list.length){ toast('没有已允许待发货的订单'); return; }
   if(!window.confirm(`确认把 ${list.length} 单「今日可发」订单导出到发货管家「今日配货单」，并同时下载一份商城发货单？\n（导出后这些订单会从「今日可发」移入「等待回传区」；下载的打单文件转给快递员即可）`)) return;
   try{
@@ -999,7 +1001,7 @@ async function exportTodayOrders(){
 // 生成打单用的「商城发货单」：每单一块，去掉标签词，像「生成发货文本」那样一目了然
 // 首行：姓名 手机；次行：地址；空一行；发货明细每个货品×数量独占一行竖排
 function downloadShipSheet(ordersParam){
-  const list = (Array.isArray(ordersParam) && ordersParam.length) ? ordersParam : ORDERS.filter(o=>o.status==='待发货' && o.allowPull);
+  const list = (Array.isArray(ordersParam) && ordersParam.length) ? ordersParam : ORDERS.filter(o=>o.status==='今日可发');
   if(!list.length){ toast('没有已允许待发货的订单，先去「待发货」勾选'); return; }
   const dateStr=new Date().toISOString().slice(0,10);
   const blocks=list.map((o,idx)=>{
@@ -1071,6 +1073,25 @@ async function batchAllowPull(){
     pending.forEach(o=>{ o.allowPull=!allow; o.allowPullAt=o.allowPull?Date.now():null; });
     render();
   }
+}
+// 「同意进入今日可发」：把勾选了「允许发货管家采集」的待发货订单，一次性移入独立的「今日可发」状态，
+// 从「待发货」移出——同一订单不会同时出现在两个栏目（互斥）。
+async function moveToToday(){
+  const pending=ORDERS.filter(o=>o.status==='待发货');
+  const selected=pending.filter(o=>o.allowPull);
+  if(!selected.length){ toast('请先在「待发货」勾选『允许发货管家采集』的订单，再点此进入今日可发'); return; }
+  if(!window.confirm(`确认把 ${selected.length} 单移入「今日可发」？\n（这些订单会从「待发货」移入「今日可发」，不会重复出现在两个栏目；如需调整，进入「今日可发」后可再次导出或处理）`)) return;
+  try{
+    const r=await fetch('/api/orders/today-accept',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:selected.map(o=>o.id)})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.message||('HTTP '+r.status));
+    // 乐观更新本地订单状态（保持与云端一致后再跳转）
+    selected.forEach(o=>{ o.status='今日可发'; o.allowPull=true; o.todayAt=Date.now(); });
+    toast(`已把 ${d.count} 单移入「今日可发」，并从「待发货」移除`);
+    curTab='今日可发订单';
+    document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='今日可发订单'));
+    load(); // 重新拉取云端权威状态
+  }catch(e){ toast('操作失败：'+e.message); console.error('[today-accept]',e); }
 }
 // 合并发货文本格式：仅姓名+电话+地址+实发产品明细，详见 business_rules.md §3
 function copyShipGroup(ids){
