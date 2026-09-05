@@ -1519,7 +1519,7 @@ function purgeOfficeJunk(root){
 function cleanDescNode(root){
   if(!root) return;
   purgeOfficeJunk(root);
-  const allowed=new Set(['P','BR','STRONG','B','I','EM','U','UL','OL','LI','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','HR','IMG']);
+  const allowed=new Set(['P','BR','STRONG','B','I','EM','U','UL','OL','LI','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','HR','IMG','SPAN']);
   const keepStruct=(el)=> el.classList && (el.classList.contains('desc-highlight-title')||el.classList.contains('desc-img-wrap')||el.classList.contains('dht-box'));
   const cleanNode=(node)=>{
     let i=node.childNodes.length;
@@ -1556,9 +1556,10 @@ function cleanDescNode(root){
         if(!c.getAttribute('style')) c.setAttribute('style','max-width:100%;height:auto;display:block;margin:12px auto;border-radius:8px');
         continue;
       }
-      // 在白名单内：清理 Word 带来的属性
+      // 在白名单内：清理 Word 带来的属性（SPAN 保留 style，用于标红/颜色）
       for(let a=c.attributes.length-1;a>=0;a--){
         const nm=c.attributes[a].name.toLowerCase();
+        if(tag==='SPAN' && nm==='style') continue; // 标红 span 保留颜色
         if(nm==='style'||nm==='class'||nm.startsWith('data-')||nm.startsWith('on')||nm.startsWith('xmlns')||nm.startsWith('xml:')||nm==='id'||nm==='lang'||nm==='dir'||nm==='role'||nm==='face'||nm==='size'||nm==='color'){
           c.removeAttribute(c.attributes[a].name);
         }
