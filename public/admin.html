@@ -872,7 +872,7 @@ function renderMergedShip(){
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       ${orderBlocks}
-      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-ship" onclick="shipGroup(['${ids.join("','")}'])">填写单号发货</button> ${swapBtnHtml(o.id)}</div>`;
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-ship" onclick="shipGroup(['${ids.join("','")}'])">填写单号发货</button> ${swapBtnHtml(first.id)}</div>`;
     list.appendChild(div);
   });
   // 设置 indeterminate 状态（HTML 属性不会自动反映）
