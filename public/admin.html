@@ -1334,7 +1334,7 @@ function shipSheetRows(list){
   const groupArr=Object.values(groups).map(g=>g.slice().sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)));
   groupArr.forEach((group,idx)=>{
     const first=group[0];
-    rows.push({t:`【第 ${idx+1} 单】${group.length>1?`（合并 ${group.length} 笔 · ${first.name||''}）`:`　订单号：${first.id||''}`, b:true});
+    rows.push({t:`【第 ${idx+1} 单】${group.length>1?`（合并 ${group.length} 笔 · ${first.name||''}）`:`　订单号：${first.id||''}`}`, b:true});
     rows.push({t:`${first.name||''} ${first.phone||''}`.replace(/\s+/g,' ').trim()});
     rows.push({t:first.address||''});
     rows.push({t:''});
