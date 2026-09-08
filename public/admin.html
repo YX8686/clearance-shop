@@ -180,6 +180,7 @@
   .so-total{text-align:right;font-size:12px;color:#7a6f62;margin-top:4px;font-weight:600}
   .bundle-inline{font-size:11px;color:#9a6b3f;padding:2px 0 2px 2px;line-height:1.5}
   .it-line{display:flex;justify-content:space-between;font-size:13px;color:#5b5147;padding:2px 0}
+  .manual-tag{color:#b8743f;font-size:10px;margin-left:4px;white-space:nowrap;opacity:.85}
   /* 允许发货管家采集 */
   .allow-pull-top{background:#fff8ec;border:1px dashed #b8743f;border-radius:10px;padding:8px 12px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;color:#5b5147}
   .allow-pull-top b{color:#b8743f}
@@ -497,25 +498,31 @@ function setLoading(v){
   if(v){ list.innerHTML='<div class="empty" id="loadingTip">⏳ 正在从云端同步订单数据，请稍候…</div>'; }
 }
 let firstLoad=true;
-async function load(){
+let loadTimer=null;
+async function load(silent){
   // 第一优先：订单数据（商家最关心），先渲染，不等设置/产品/图库
   // 仅首次打开显示 loading 提示；后续刷新（自动轮询/操作后）静默更新，避免页面闪烁
-  if(firstLoad){ setLoading(true); }
+  if(firstLoad && !silent){ setLoading(true); }
+  // 若上一轮询还没完成，先 abort 掉，避免并发请求堆积
+  if(loadTimer){ clearTimeout(loadTimer); loadTimer=null; }
+  const _ctrl=new AbortController();
+  loadTimer = setTimeout(()=>{ _ctrl.abort(); loadTimer=null; },25000);
   try{
-    // 12s 超时兜底：避免 Supabase 云端偶发卡顿时浏览器无限等待（表现为「等半天显示不出来」）
-    const _ctrl=new AbortController();
-    const _t=setTimeout(()=>_ctrl.abort(),12000);
     const res=await fetch('/api/orders',{signal:_ctrl.signal});
-    clearTimeout(_t);
+    clearTimeout(loadTimer); loadTimer=null;
     if(!res.ok) throw new Error('HTTP '+res.status);
     const o=await res.json();
     // 进行中的乐观更新订单以本地版本为准，避免 15s 轮询把刚点的状态冲掉
     ORDERS = o.map(s => pendingIds.has(s.id) ? (ORDERS.find(l=>l.id===s.id) || s) : s);
   }catch(e){
-    // 云端拉取失败时：保留旧 ORDERS 不清空，给出明确的重试入口
-    const list=document.getElementById('list');
-    list.innerHTML='<div class="empty" style="color:#e74c3c">⚠️ 订单数据加载失败（'+e.message+'）<br><br><button class="btn-primary" onclick="load()">重新加载</button></div>';
-    setLoading(false);
+    clearTimeout(loadTimer); loadTimer=null;
+    // 轮询失败时静默保留旧数据，只有首次加载/用户手动刷新才显示错误
+    if(firstLoad && !silent){
+      const list=document.getElementById('list');
+      const msg = (e.name==='AbortError' || e.message.includes('aborted')) ? '请求超时，请检查网络或重试' : e.message;
+      list.innerHTML='<div class="empty" style="color:#e74c3c">⚠️ 订单数据加载失败（'+msg+'）<br><br><button class="btn-primary" onclick="load()">重新加载</button></div>';
+      setLoading(false);
+    }
     firstLoad=false;
     return;
   }
@@ -819,23 +826,20 @@ function renderMergedPending(){
     const ids=group.map(o=>o.id);
     const first=group[0];
     const total=group.reduce((s,o)=>s+(Number(o.total)||0),0);
-    // 每笔一个子块：下单时间 + 商品明细 + 本笔小计
-    const blocks=group.map(o=>{
-      const items=o.items.map((i,idx)=>{
-        let h=`<div class="it-line"><span>${renderItemName(i)}</span><span>${renderItemQty(i)}${itemDelBtn(o.id,idx)}</span></div>`;
-        const bi=getBundleItems(i);
-        if(bi && bi.length){
-          h+=`<div class="bundle-inline">实发为：${bi.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('、')}</div>`;
-        }
-        return h;
-      }).join('');
-      return `<div style="border:1px solid #ece4d8;border-radius:8px;padding:8px 10px;margin-bottom:8px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:6px">
-          <span style="color:#9a8f82;font-size:13px">🕒 下单 ${fmtTime(o.createdAt)}</span>
-          <span style="font-size:12px;color:#b8743f">${o.id}${swapBtnHtml(o.id)}</span>
-        </div>
-        <div>${items}</div>
-        <div style="text-align:right;font-size:13px;color:#6b6258;margin-top:4px">本笔 ${money(o.total)}</div>
+    // 每笔子订单用 .suborder 块：下单时间 + 每个产品一行 + 本笔总价
+    const orderBlocks=group.map(o=>{
+      return `
+      <div class="suborder">
+        <div class="so-h"><span>${o.id}<span class="so-paytime">下单 ${fmtTime(o.createdAt)}</span></span></div>
+        ${o.items.map((i,idx)=>{
+          let h=`<div class="so-item"><span>${renderItemName(i)}</span><span>${renderItemQty(i)}${itemDelBtn(o.id,idx)}</span></div>`;
+          const bi=getBundleItems(i);
+          if(bi && bi.length && !i.isManualAdd){
+            h+=`<div class="bundle-inline">实发为：${bi.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('、')}</div>`;
+          }
+          return h;
+        }).join('')}
+        <div class="so-total">本笔合计 ${money(o.total)}</div>
       </div>`;
     }).join('');
     const div=document.createElement('div'); div.className='card merge-card';
@@ -845,7 +849,7 @@ function renderMergedPending(){
       <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
-      <div class="items">${blocks}<div style="border-top:1px dashed #e0d6c8;margin-top:6px;padding-top:6px;font-weight:700">合计 ${money(total)}</div></div>
+      <div class="items">${orderBlocks}<div style="border-top:1px dashed #e0d6c8;margin-top:6px;padding-top:6px;font-weight:700">合计 ${money(total)}</div></div>
       <div class="acts"><button class="btn-confirm" onclick="confirmPaidGroup(['${ids.join("','")}'])">客户已发截图，确认收款${group.length>1?`（${group.length}笔一起）`:''}</button><button class="btn-cancel" onclick="markNotPaidGroup(['${ids.join("','")}'])">未收到该款项</button></div>`;
     list.appendChild(div);
   });
@@ -1126,11 +1130,14 @@ async function removeOrderItem(orderId, idx){
 }
 
 function renderItemName(i){
-  const tag=i.isManualAdd?'<span style="color:#b8743f;font-size:11px;margin-left:4px">【手工已付】</span>':'';
-  const qtyText = i.unit ? `${i.qty}${escapeHtml(i.unit)}` : `×${i.qty}`;
-  return `${escapeHtml(i.name)} <span style="color:#888;font-size:12px">${qtyText}</span>${tag}`;
+  // 手工加品：用户写什么就显示什么，不反查标准产品名、不拼接 bundle
+  const base = `${escapeHtml(i.name||'')} <span style="color:#888;font-size:12px">${i.qty||1}${escapeHtml(i.unit||'件')}</span>`;
+  if(i.isManualAdd){
+    return base + '<span class="manual-tag">【手工已付】</span>';
+  }
+  return base;
 }
-function renderItemQty(i){ return i.isManualAdd ? `${i.qty}${i.unit||''}` : `${money(i.price)} × ${i.qty}${i.unit||''}`; }
+function renderItemQty(i){ return i.isManualAdd ? `${i.qty||1}${i.unit||'件'}` : `${money(i.price)} × ${i.qty}${i.unit||''}`; }
 function parseQtyUnit(v){
   const s=String(v||'').trim();
   if(!s) return {qty:1, unit:''};
@@ -2848,7 +2855,8 @@ async function compressImage(file, opts={}){
 }
 
 load();
-setInterval(load, 15000);
+// 15s 轮询：失败时静默重试，不在页面上弹大红报错
+setInterval(()=>load(true), 15000);
 </script>
 </body>
 </html>
