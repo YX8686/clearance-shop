@@ -903,7 +903,8 @@ function renderTodayShip(){
   topBar.innerHTML=`
     <span>📦 今日可发 <b style="color:${today.length?'#1f9d55':'#888'}">${today.length}</b> 单
       <span style="color:#9a8f82;font-weight:400">（从「待发货」勾选「允许发货管家采集」后点「同意进入今日可发」即进入此处；点「全部导出」后订单会移入「等待回传区」，不会重复）</span></span>
-    <button onclick="exportTodayOrders()">📤 全部导出到发货管家＋下载发货单</button>`;
+    <button onclick="exportTodayOrders()">📤 全部导出到发货管家＋下载发货单</button>
+    <button onclick="downloadShipSheetImage()" style="border-color:#1f9d55;color:#1f9d55">🖼 下载图片版发货单（微信可直接看）</button>`;
   list.appendChild(topBar);
   if(!today.length){
     const empty=document.createElement('div'); empty.className='empty';
@@ -1176,6 +1177,7 @@ function openManualModal(){
 function toExportOrder(o){
   return {
     id:o.id, name:o.name, phone:o.phone, address:o.address, wechat:o.wechat||'',
+    createdAt:o.createdAt||o.paidAt||null,   // 下单时间（毫秒时间戳），供发货管家显示「9/8 晚上 7:28」
     items:(o.items||[]).map(i=>{
       const bi = getBundleItems(i);
       // 渲染成多行 shipDetail："产品名 数量单位\n产品名 数量单位"，最后另起一行写 "× qty"
@@ -1199,42 +1201,160 @@ async function exportTodayOrders(){
     load();                    // 拉取云端最新状态：今日可发清空、进入等待回传区
   }catch(e){ toast('导出失败：'+e.message); console.error('[mall-export]',e); }
 }
-// 生成打单用的「商城发货单」：每单一块，去掉标签词，像「生成发货文本」那样一目了然
-// 首行：姓名 手机；次行：地址；空一行；发货明细每个货品×数量独占一行竖排
+/* ---------- 真·Word(.docx) 生成：纯前端零依赖（ZIP store 打包 + OOXML） ----------
+   背景：旧版导出的 .doc 其实是「HTML 改名成 .doc」的伪 Word，Word/WPS 能容错打开，
+   但微信内置文档预览不认，点开闪一下就没了。这里改成生成标准 OOXML 的 .docx，微信可直接预览。 */
+function _crc32(u8){
+  let t=_crc32._t;
+  if(!t){ t=_crc32._t=new Uint32Array(256); for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[n]=c>>>0; } }
+  let crc=0xFFFFFFFF;
+  for(let i=0;i<u8.length;i++) crc=(crc>>>8)^t[(crc^u8[i])&0xFF];
+  return (crc^0xFFFFFFFF)>>>0;
+}
+// files:[{name,data:Uint8Array}] —— 只做 store（不压缩），Word / WPS / 微信均正常识别
+function _zipStore(files){
+  const enc=new TextEncoder(); let offset=0;
+  const parts=[], central=[];
+  files.forEach(f=>{
+    const nb=enc.encode(f.name), data=f.data, crc=_crc32(data);
+    const lh=new Uint8Array(30+nb.length), lv=new DataView(lh.buffer);
+    lv.setUint32(0,0x04034b50,true); lv.setUint16(4,20,true); lv.setUint16(6,0x0800,true);
+    lv.setUint16(8,0,true); lv.setUint16(10,0,true); lv.setUint16(12,0x21,true);
+    lv.setUint32(14,crc,true); lv.setUint32(18,data.length,true); lv.setUint32(22,data.length,true);
+    lv.setUint16(26,nb.length,true); lv.setUint16(28,0,true); lh.set(nb,30);
+    parts.push(lh,data);
+    const ch=new Uint8Array(46+nb.length), cv=new DataView(ch.buffer);
+    cv.setUint32(0,0x02014b50,true); cv.setUint16(4,20,true); cv.setUint16(6,20,true);
+    cv.setUint16(8,0x0800,true); cv.setUint16(10,0,true); cv.setUint16(12,0,true); cv.setUint16(14,0x21,true);
+    cv.setUint32(16,crc,true); cv.setUint32(20,data.length,true); cv.setUint32(24,data.length,true);
+    cv.setUint16(28,nb.length,true); cv.setUint16(30,0,true); cv.setUint16(32,0,true);
+    cv.setUint16(34,0,true); cv.setUint16(36,0,true); cv.setUint32(38,0,true); cv.setUint32(42,offset,true);
+    ch.set(nb,46); central.push(ch);
+    offset += lh.length + data.length;
+  });
+  const cdSize=central.reduce((s,c)=>s+c.length,0);
+  const eocd=new Uint8Array(22), ev=new DataView(eocd.buffer);
+  ev.setUint32(0,0x06054b50,true); ev.setUint16(4,0,true); ev.setUint16(6,0,true);
+  ev.setUint16(8,files.length,true); ev.setUint16(10,files.length,true);
+  ev.setUint32(12,cdSize,true); ev.setUint32(16,offset,true); ev.setUint16(20,0,true);
+  return new Blob([...parts,...central,eocd],{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+}
+function _xmlEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+// paras:[{t:'文本', b:加粗, sz:半磅(24=12pt), align:'center', color:'777777', indent:左缩进twips}]
+function _buildDocx(paras){
+  const body=(paras||[]).map(p=>{
+    const pPr=((p.align||p.indent)?'<w:pPr>'+(p.align?'<w:jc w:val="'+p.align+'"/>':'')+(p.indent?'<w:ind w:left="'+p.indent+'"/>':'')+'</w:pPr>':'');
+    const rPr='<w:rPr><w:rFonts w:ascii="SimSun" w:eastAsia="SimSun" w:hAnsi="SimSun"/>'+(p.b?'<w:b/>':'')+(p.color?'<w:color w:val="'+p.color+'"/>':'')+'<w:sz w:val="'+(p.sz||24)+'"/><w:szCs w:val="'+(p.sz||24)+'"/></w:rPr>';
+    const lines=String(p.t==null?'':p.t).split('\n');
+    return '<w:p>'+pPr+lines.map((ln,i)=>(i?'<w:br/>':'')+'<w:r>'+rPr+'<w:t xml:space="preserve">'+_xmlEsc(ln)+'</w:t></w:r>').join('')+'</w:p>';
+  }).join('');
+  const doc='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+body+
+    '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1024" w:bottom="1134" w:left="1024" w:header="851" w:footer="992" w:gutter="0"/></w:sectPr>'+
+    '</w:body></w:document>';
+  const ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+    '<Default Extension="xml" ContentType="application/xml"/>'+
+    '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>';
+  const rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
+  const enc=new TextEncoder();
+  return _zipStore([
+    {name:'[Content_Types].xml', data:enc.encode(ct)},
+    {name:'_rels/.rels', data:enc.encode(rels)},
+    {name:'word/document.xml', data:enc.encode(doc)}
+  ]);
+}
+// 发货单正文行（Word 版与图片版共用）：每单一块，去掉标签词，一目了然
+function shipSheetRows(list){
+  const rows=[];
+  list.forEach((o,idx)=>{
+    rows.push({t:`【第 ${idx+1} 单】　订单号：${o.id||''}`, b:true});
+    rows.push({t:`${o.name||''} ${o.phone||''}`.replace(/\s+/g,' ').trim()});
+    rows.push({t:o.address||''});
+    rows.push({t:''});
+    const lines=[];
+    (o.items||[]).forEach(i=>{
+      const bi=getBundleItems(i);
+      if(bi.length){ bi.forEach(b=>lines.push(`${b.name||''} ${b.qty||''}${b.unit||''}${i.qty>1?' ×'+i.qty:''}`)); }
+      else lines.push(`${i.name||''}${i.qty>1?' ×'+i.qty:''}`);
+    });
+    lines.forEach(l=>rows.push({t:l, indent:1}));
+    rows.push({t:''});
+  });
+  return rows;
+}
+// 生成打单用的「商城发货单」：真正的 Word(.docx)，微信 / WPS / Word 都能直接打开
 function downloadShipSheet(ordersParam){
   const list = (Array.isArray(ordersParam) && ordersParam.length) ? ordersParam : ORDERS.filter(o=>o.status==='今日可发');
   if(!list.length){ toast('没有已允许待发货的订单，先去「待发货」勾选'); return; }
   const dateStr=new Date().toISOString().slice(0,10);
-  const blocks=list.map((o,idx)=>{
-    // 首行：姓名 + 手机（空格分隔，便于复制）
-    const head=escapeHtml(`${o.name||''} ${o.phone||''}`.replace(/\s+/g,' ').trim());
-    const addr=escapeHtml(o.address||'');
-    // 发货明细：每个货品×数量独占一行（竖排，不用「・」不用标签词）
-    const textLines=[];
-    (o.items||[]).forEach(i=>{
-      const bi=getBundleItems(i);
-      if(bi.length){ bi.forEach(b=>textLines.push(`${b.name||''} ${b.qty||''}${b.unit||''}${i.qty>1?' ×'+i.qty:''}`)); }
-      else textLines.push(`${i.name||''}${i.qty>1?' ×'+i.qty:''}`);
-    });
-    const itemsHtml=textLines.map(x=>`<div style="margin-left:12px;line-height:1.5">${escapeHtml(x)}</div>`).join('');
-    return `<div style="margin:0 0 26px 0;padding-bottom:14px;border-bottom:2px dashed #c8c8c8">
-      <div style="font-size:16px;font-weight:bold">【第 ${idx+1} 单】　订单号：${escapeHtml(o.id)}</div>
-      <div style="margin-top:14px;font-size:14px">${head}</div>
-      <div style="font-size:14px">${addr}</div>
-      <div style="margin-top:14px;font-size:14px">${itemsHtml}</div>
-    </div>`;
-  }).join('');
-  const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>商城发货单 ${dateStr}</title></head><body style="font-family:'宋体',SimSun,serif;font-size:14px;line-height:1.9;color:#222">
-    <div style="text-align:center;font-size:22px;font-weight:bold;margin:0 0 4px 0">不初商城 · 发货单</div>
-    <div style="text-align:center;color:#777;font-size:13px;margin-bottom:22px">${dateStr}　共 ${list.length} 单</div>
-    ${blocks}
-    </body></html>`;
-  const blob=new Blob(['\ufeff'+html],{type:'application/msword'});
+  const paras=[
+    {t:'不初商城 · 发货单', b:true, sz:44, align:'center'},
+    {t:dateStr+'　共 '+list.length+' 单', sz:20, align:'center', color:'777777'},
+    {t:'', sz:12}
+  ].concat(shipSheetRows(list).map(r=>({t:r.t, b:r.b, sz:r.b?26:24, indent:r.indent?360:0})));
+  let blob;
+  try{ blob=_buildDocx(paras); }
+  catch(e){ console.error('[docx]',e); toast('Word 生成失败，已自动改用图片版'); downloadShipSheetImage(list); return; }
   const url=URL.createObjectURL(blob);
-  const a=document.createElement('a'); a.href=url; a.download=`商城发货单_${dateStr}.doc`;
+  const a=document.createElement('a'); a.href=url; a.download=`商城发货单_${dateStr}.docx`;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 3000);
-  toast(`已生成 ${list.length} 单的商城发货单（可读 Word），正在下载`);
+  toast(`已生成 ${list.length} 单的商城发货单（Word，微信可直接打开），正在下载`);
+}
+// 兜底：图片版发货单（微信 100% 能打开的长图，适合直接发给快递员看）
+function downloadShipSheetImage(ordersParam){
+  const list = (Array.isArray(ordersParam) && ordersParam.length) ? ordersParam : ORDERS.filter(o=>o.status==='今日可发');
+  if(!list.length){ toast('没有可导出的订单'); return; }
+  const dateStr=new Date().toISOString().slice(0,10);
+  const W=900, PAD=48;
+  let SCALE=2;
+  const cvs=document.createElement('canvas');
+  let ctx=cvs.getContext('2d');
+  const FONT=(px,bold)=>`${bold?'bold ':''}${px}px "Microsoft YaHei","PingFang SC",SimSun,sans-serif`;
+  const items=[
+    {t:'不初商城 · 发货单', size:30, bold:true, align:'center', gap:12},
+    {t:dateStr+'　共 '+list.length+' 单', size:15, align:'center', color:'#777', gap:26}
+  ].concat(shipSheetRows(list).map(r=>({t:r.t, size:r.b?18:16, bold:!!r.b, indent:r.indent?26:0, gap:r.t?4:12})));
+  const maxW=W-PAD*2, lines=[];
+  items.forEach(it=>{
+    ctx.font=FONT(it.size,it.bold);
+    const indent=it.indent||0, txt=String(it.t||'');
+    if(!txt){ lines.push({t:'', size:it.size, bold:it.bold, indent, align:it.align, gap:it.gap}); return; }
+    let cur='';
+    for(const ch of txt){
+      if(ctx.measureText(cur+ch).width > maxW-indent && cur){ lines.push({t:cur,size:it.size,bold:it.bold,indent,align:it.align,gap:0}); cur=ch; }
+      else cur+=ch;
+    }
+    lines.push({t:cur, size:it.size, bold:it.bold, indent, align:it.align, gap:it.gap});
+  });
+  let H=PAD;
+  lines.forEach(l=>{ H += Math.round(l.size*1.55) + (l.gap||0); });
+  H+=PAD;
+  if(H*SCALE>30000) SCALE=1;   // 单子太多时降清晰度，避免超出画布上限
+  cvs.width=W*SCALE; cvs.height=H*SCALE;
+  ctx=cvs.getContext('2d'); ctx.scale(SCALE,SCALE);
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H);
+  ctx.textBaseline='top';
+  let y=PAD;
+  lines.forEach(l=>{
+    ctx.font=FONT(l.size,l.bold);
+    ctx.fillStyle=l.color||'#222';
+    if(l.align==='center'){ ctx.textAlign='center'; ctx.fillText(l.t, W/2, y); ctx.textAlign='left'; }
+    else ctx.fillText(l.t, PAD+l.indent, y);
+    y += Math.round(l.size*1.55) + (l.gap||0);
+  });
+  cvs.toBlob(blob=>{
+    if(!blob){ toast('图片生成失败，请改用 Word 版'); return; }
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download=`商城发货单_${dateStr}.png`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 3000);
+    toast(`已生成 ${list.length} 单的图片版发货单（微信必能打开），正在下载`);
+  },'image/png');
 }
 // 勾选确认：单笔待发货订单允许/禁止发货管家采集
 async function toggleAllowPull(id, allow){
