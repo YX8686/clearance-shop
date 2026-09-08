@@ -190,7 +190,7 @@
   .allow-pull-per{display:inline-flex;align-items:center;gap:3px;font-size:11px;color:#1f9d55;font-weight:400;cursor:pointer;padding:2px 6px;border-radius:8px;background:#f0faf3}
   .allow-pull-per input{width:13px;height:13px;cursor:pointer}
 </style>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <script src="/assets/mammoth.browser.min.js" async></script>
 </head>
 <body>
   <div class="top"><h1>商家后台</h1><div class="stat" id="stat"></div></div>
@@ -502,7 +502,11 @@ async function load(){
   // 仅首次打开显示 loading 提示；后续刷新（自动轮询/操作后）静默更新，避免页面闪烁
   if(firstLoad){ setLoading(true); }
   try{
-    const res=await fetch('/api/orders');
+    // 12s 超时兜底：避免 Supabase 云端偶发卡顿时浏览器无限等待（表现为「等半天显示不出来」）
+    const _ctrl=new AbortController();
+    const _t=setTimeout(()=>_ctrl.abort(),12000);
+    const res=await fetch('/api/orders',{signal:_ctrl.signal});
+    clearTimeout(_t);
     if(!res.ok) throw new Error('HTTP '+res.status);
     const o=await res.json();
     // 进行中的乐观更新订单以本地版本为准，避免 15s 轮询把刚点的状态冲掉
@@ -761,6 +765,7 @@ function render(){
   document.getElementById('cToday').textContent=ORDERS.filter(o=>o.status==='今日可发').length;
   document.getElementById('stat').textContent='共 '+ORDERS.length+' 单 · 待处理'+waits+' / 待发'+ships+' / 今日可发'+ORDERS.filter(o=>o.status==='今日可发').length+' / 回传区'+returns+' / 已发'+dones+' / 已取消'+cancels;
   const list=document.getElementById('list'); list.innerHTML='';
+  if(curTab==='待确认'){ renderMergedPending(); return; }
   if(curTab==='待发货'){ renderMergedShip(); return; }
   if(curTab==='回传区'){ renderReturnZone(); return; }
   if(curTab==='今日可发订单'){ renderTodayShip(); return; }
@@ -797,6 +802,51 @@ function render(){
       <div class="items">${items}<div style="border-top:1px dashed #e0d6c8;margin-top:6px;padding-top:6px;font-weight:700">合计 ${money(o.total)}</div></div>
       ${o.status==='已发货'?('<div class="line"><span class="k">单号</span><b style="color:#1f9d55">'+o.tracking+'</b></div>'):''}
       <div class="acts">${acts}</div>`;
+    list.appendChild(div);
+  });
+}
+// 待处理（待确认）：★硬性规则★ 同一客户（姓名+电话+地址+微信 四项完全一致，缺一不可）
+// 的多笔订单自动合并为一张卡；每笔保留各自下单时间作为区分；确认收款/生成发货单均按合并组走。
+// 详见 business_rules.md §1 自动合并规则（适用于全流程：待处理/待发货/今日可发/发货单）
+function renderMergedPending(){
+  const list=document.getElementById('list');
+  const pending=ORDERS.filter(o=>o.status==='待确认');
+  if(!pending.length){ list.innerHTML='<div class="empty">暂无订单</div>'; return; }
+  const groups={};
+  pending.forEach(o=>{ const key=BUSINESS_RULES.merge.makeKey(o); (groups[key]=groups[key]||[]).push(o); });
+  Object.values(groups).forEach(group=>{
+    group.sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+    const ids=group.map(o=>o.id);
+    const first=group[0];
+    const total=group.reduce((s,o)=>s+(Number(o.total)||0),0);
+    // 每笔一个子块：下单时间 + 商品明细 + 本笔小计
+    const blocks=group.map(o=>{
+      const items=o.items.map((i,idx)=>{
+        let h=`<div class="it-line"><span>${renderItemName(i)}</span><span>${renderItemQty(i)}${itemDelBtn(o.id,idx)}</span></div>`;
+        const bi=getBundleItems(i);
+        if(bi && bi.length){
+          h+=`<div class="bundle-inline">实发为：${bi.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('、')}</div>`;
+        }
+        return h;
+      }).join('');
+      return `<div style="border:1px solid #ece4d8;border-radius:8px;padding:8px 10px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:6px">
+          <span style="color:#9a8f82;font-size:13px">🕒 下单 ${fmtTime(o.createdAt)}</span>
+          <span style="font-size:12px;color:#b8743f">${o.id}${swapBtnHtml(o.id)}</span>
+        </div>
+        <div>${items}</div>
+        <div style="text-align:right;font-size:13px;color:#6b6258;margin-top:4px">本笔 ${money(o.total)}</div>
+      </div>`;
+    }).join('');
+    const div=document.createElement('div'); div.className='card merge-card';
+    div.innerHTML=`
+      <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-wait">待确认</span></div>
+      <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
+      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
+      <div class="line"><span class="k">地址</span>${first.address}</div>
+      <div class="items">${blocks}<div style="border-top:1px dashed #e0d6c8;margin-top:6px;padding-top:6px;font-weight:700">合计 ${money(total)}</div></div>
+      <div class="acts"><button class="btn-confirm" onclick="confirmPaidGroup(['${ids.join("','")}'])">客户已发截图，确认收款${group.length>1?`（${group.length}笔一起）`:''}</button><button class="btn-cancel" onclick="markNotPaidGroup(['${ids.join("','")}'])">未收到该款项</button></div>`;
     list.appendChild(div);
   });
 }
@@ -1273,26 +1323,35 @@ function _buildDocx(paras){
     {name:'word/document.xml', data:enc.encode(doc)}
   ]);
 }
-// 发货单正文行（Word 版与图片版共用）：每单一块，去掉标签词，一目了然
+// 发货单正文行（Word 版与图片版共用）：★硬性规则★ 先按合并规则分组
+// （姓名+电话+地址+微信 四项完全一致 = 同一客户，缺一不可），
+// 每个客户只出一个发货块 = 最终合并发货单；多笔时逐笔标注下单时间作为区分。
 // 手工加品：直接显示 名称+数量+单位+【手工已付】；真实无 bundleItems 时也带上 unit
 function shipSheetRows(list){
   const rows=[];
-  list.forEach((o,idx)=>{
-    rows.push({t:`【第 ${idx+1} 单】　订单号：${o.id||''}`, b:true});
-    rows.push({t:`${o.name||''} ${o.phone||''}`.replace(/\s+/g,' ').trim()});
-    rows.push({t:o.address||''});
+  const groups={};
+  list.forEach(o=>{ const key=BUSINESS_RULES.merge.makeKey(o); (groups[key]=groups[key]||[]).push(o); });
+  const groupArr=Object.values(groups).map(g=>g.slice().sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)));
+  groupArr.forEach((group,idx)=>{
+    const first=group[0];
+    rows.push({t:`【第 ${idx+1} 单】${group.length>1?`（合并 ${group.length} 笔 · ${first.name||''}）`:`　订单号：${first.id||''}`, b:true});
+    rows.push({t:`${first.name||''} ${first.phone||''}`.replace(/\s+/g,' ').trim()});
+    rows.push({t:first.address||''});
     rows.push({t:''});
-    const lines=[];
-    (o.items||[]).forEach(i=>{
-      if(i.isManualAdd){
-        lines.push(`${i.name||''} ${i.qty||''}${i.unit||''}【手工已付】`);
-        return;
-      }
-      const bi=getBundleItems(i);
-      if(bi.length){ bi.forEach(b=>lines.push(`${b.name||''} ${b.qty||''}${b.unit||''}${i.qty>1?' ×'+i.qty:''}`)); }
-      else lines.push(`${i.name||''}${i.qty>1?' ×'+i.qty:''}${i.unit?' '+i.unit:''}`);
+    group.forEach((o,gi)=>{
+      if(group.length>1) rows.push({t:`— 第 ${gi+1} 笔 · 下单 ${fmtTime(o.createdAt)}（${o.id||''}）—`, sz:20, color:'777777', indent:1});
+      const lines=[];
+      (o.items||[]).forEach(i=>{
+        if(i.isManualAdd){
+          lines.push(`${i.name||''} ${i.qty||''}${i.unit||''}【手工已付】`);
+          return;
+        }
+        const bi=getBundleItems(i);
+        if(bi.length){ bi.forEach(b=>lines.push(`${b.name||''} ${b.qty||''}${b.unit||''}${i.qty>1?' ×'+i.qty:''}`)); }
+        else lines.push(`${i.name||''}${i.qty>1?' ×'+i.qty:''}${i.unit?' '+i.unit:''}`);
+      });
+      lines.forEach(l=>rows.push({t:l, indent:1}));
     });
-    lines.forEach(l=>rows.push({t:l, indent:1}));
     rows.push({t:''});
   });
   return rows;
@@ -1306,7 +1365,7 @@ function downloadShipSheet(ordersParam){
     {t:'不初商城 · 发货单', b:true, sz:44, align:'center'},
     {t:dateStr+'　共 '+list.length+' 单', sz:20, align:'center', color:'777777'},
     {t:'', sz:12}
-  ].concat(shipSheetRows(list).map(r=>({t:r.t, b:r.b, sz:r.b?26:24, indent:r.indent?360:0})));
+  ].concat(shipSheetRows(list).map(r=>({t:r.t, b:r.b, sz:r.b?26:(r.sz||24), indent:r.indent?360:0, color:r.color})));
   let blob;
   try{ blob=_buildDocx(paras); }
   catch(e){ console.error('[docx]',e); toast('Word 生成失败，已自动改用图片版'); downloadShipSheetImage(list); return; }
@@ -1329,7 +1388,7 @@ function downloadShipSheetImage(ordersParam){
   const items=[
     {t:'不初商城 · 发货单', size:30, bold:true, align:'center', gap:12},
     {t:dateStr+'　共 '+list.length+' 单', size:15, align:'center', color:'#777', gap:26}
-  ].concat(shipSheetRows(list).map(r=>({t:r.t, size:r.b?18:16, bold:!!r.b, indent:r.indent?26:0, gap:r.t?4:12})));
+  ].concat(shipSheetRows(list).map(r=>({t:r.t, size:r.b?18:(r.sz?14:16), bold:!!r.b, indent:r.indent?26:0, gap:r.t?4:12, color:r.color?'#'+r.color:undefined})));
   const maxW=W-PAD*2, lines=[];
   items.forEach(it=>{
     ctx.font=FONT(it.size,it.bold);
@@ -1494,6 +1553,41 @@ async function confirmPaid(id){
   render();
   toast('已确认收款，已转入待发货');
   await syncOrder(id, '/confirm', {}, prev);
+}
+// 待处理合并组：整组确认收款（逐笔 /confirm；整组转入待发货后会自动合并为一个客户组）
+async function confirmPaidGroup(ids){
+  const orders=(ids||[]).map(id=>ORDERS.find(x=>x.id===id)).filter(o=>o&&o.status==='待确认');
+  if(!orders.length){ toast('没有待确认的订单'); return; }
+  const detail=orders.map(o=>`· ${o.id}（下单 ${fmtTime(o.createdAt)}）\n${o.items.map(i=>`  ${i.name}  ${money(i.price)} × ${i.qty}`).join('\n')}\n  本笔小计 ${money(o.total)}`).join('\n\n');
+  const total=orders.reduce((s,o)=>s+(Number(o.total)||0),0);
+  if(!window.confirm(`请核对收款金额后再确认：\n\n${orders[0].name||''}　共 ${orders.length} 笔\n\n${detail}\n\n合计：${money(total)}\n\n确认已收到全部款项？`)) return;
+  for(const o of orders){
+    const prev=JSON.parse(JSON.stringify(o));
+    o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now();
+    ORDERS=ORDERS.map(x=>x.id===o.id?o:x);
+    syncOrder(o.id,'/confirm',{},prev);
+  }
+  curTab='待发货';
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='待发货'));
+  render();
+  toast('已确认收款 '+orders.length+' 笔，整组转入待发货');
+}
+// 待处理合并组：整组标记未收到款项（逐笔 /cancel，各自退回库存）
+function markNotPaidGroup(ids){
+  const orders=(ids||[]).map(id=>ORDERS.find(x=>x.id===id)).filter(o=>o&&o.status==='待确认');
+  if(!orders.length){ toast('没有待确认的订单'); return; }
+  if(orders.some(o=>pendingIds.has(o.id))){ toast('操作进行中，请稍候'); return; }
+  if(!window.confirm(`确认「未收到该款项」？\n${orders.map(o=>o.id).join('\n')}\n共 ${orders.length} 笔将标记为已取消，并退回库存。`)) return;
+  for(const o of orders){
+    const prev=JSON.parse(JSON.stringify(o));
+    o.status='已取消'; o.cancelledAt=Date.now();
+    ORDERS=ORDERS.map(x=>x.id===o.id?o:x);
+    syncOrder(o.id,'/cancel',{},prev);
+  }
+  curTab='已取消';
+  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='已取消'));
+  render();
+  toast('已标记未收到该款项，'+orders.length+' 笔转入已取消');
 }
 // 商家后台：待确认订单标记「未收到该款项」→ 已取消（退回库存）
 // 乐观 UI：点完立即本地流转到已取消，云端同步在后台跑；失败自动回滚
