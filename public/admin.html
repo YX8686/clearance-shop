@@ -147,6 +147,30 @@
   @media(hover:hover){.desc-highlight-title:hover .dht-del-btn{opacity:1}}
   @media(hover:none){.desc-highlight-title .dht-del-btn{opacity:1}}
 
+  /* 订单商品行：删除单个商品按钮 */
+  .it-del{margin-left:8px;border:none;background:#f3e9e0;color:#c0392b;width:18px;height:18px;line-height:16px;border-radius:50%;font-size:13px;cursor:pointer;padding:0;vertical-align:middle}
+  .it-del:hover{background:#c0392b;color:#fff}
+
+  /* 订单调整弹窗（删除商品/换货补货/新建手工单） */
+  .modal-mask{position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px}
+  .modal-box{background:#fff;border-radius:12px;max-width:520px;width:100%;max-height:86vh;overflow:auto;padding:18px 18px 20px;box-shadow:0 8px 30px rgba(0,0,0,.2)}
+  .modal-box h3{margin:0 0 12px;font-size:17px;color:#4a3f33}
+  .modal-box .modal-sub{font-size:12px;color:#9a8f82;margin:-6px 0 12px}
+  .modal-fld{margin:10px 0}
+  .modal-fld label{display:block;font-size:12px;color:#7a6f62;margin-bottom:4px}
+  .modal-fld input,.modal-fld select{width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #e0d6c8;border-radius:6px;font-size:14px}
+  .modal-edititem{display:flex;align-items:center;gap:6px;padding:6px 8px;background:#faf7f2;border-radius:6px;margin:6px 0;font-size:13px}
+  .modal-edititem .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .modal-edititem .pr{color:#7a6f62;font-size:12px;white-space:nowrap}
+  .modal-edititem .del{border:none;background:#f3e9e0;color:#c0392b;width:20px;height:20px;border-radius:50%;cursor:pointer;font-size:13px;padding:0}
+  .modal-addrow{display:flex;gap:6px;margin:8px 0;flex-wrap:wrap}
+  .modal-addrow input,.modal-addrow select{flex:1;min-width:90px;padding:7px 8px;border:1px solid #e0d6c8;border-radius:6px;font-size:13px;box-sizing:border-box}
+  .modal-actions{display:flex;gap:10px;margin-top:16px}
+  .modal-actions button{flex:1;padding:10px;border:none;border-radius:8px;font-size:14px;cursor:pointer}
+  .btn-modal-ok{background:#1f9d55;color:#fff;font-weight:600}
+  .btn-modal-cancel{background:#eee;color:#555}
+  .btn-swap{background:#b8743f;color:#fff}
+
   /* 合并订单 */
   .merge-card{border:2px solid #f0d9c4}
   .suborder{background:#faf7f2;border-radius:8px;padding:8px 10px;margin:8px 0}
@@ -744,8 +768,9 @@ function render(){
   rows.forEach(o=>{
     const stMap={'待付款':['st-wait','待付款'],'待确认':['st-wait','待确认'],'待发货':['st-ship','待发货'],'今日可发':['st-ship','今日可发'],'待回传':['st-ship','等待回传'],'已发货':['st-done','已发货'],'已取消':['st-cancel','已取消']};
     const [cls,lab]=stMap[o.status]||['st-wait',o.status];
-    const items=o.items.map(i=>{
-      let h=`<div class="it-line"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
+    const editable=isEditableOrder(o);
+    const items=o.items.map((i,idx)=>{
+      let h=`<div class="it-line"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}${editable?itemDelBtn(o.id,idx):''}</span></div>`;
       const bi=getBundleItems(i);
       if(bi && bi.length){
         h+=`<div class="bundle-inline">实发为：${bi.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('、')}</div>`;
@@ -756,6 +781,7 @@ function render(){
     if(o.status==='待确认') acts=`<button class="btn-confirm" onclick="confirmPaid('${o.id}')">客户已发截图，确认收款</button><button class="btn-cancel" onclick="markNotPaid('${o.id}')">未收到该款项</button>`;
     if(o.status==='已取消') acts=`<button class="btn-restore" onclick="restoreOrder('${o.id}')">核实重新成立，进入待发货</button>`;
     if(o.status==='已发货') acts=`<button class="btn-copy" onclick="copyShip('${o.id}')">复制发货信息</button>`;
+    if(editable) acts+=swapBtnHtml(o.id);
     const div=document.createElement('div'); div.className='card';
     const showPayTime = o.status==='待确认' || o.status==='待发货' || o.status==='待回传' || o.status==='已发货';
     const payLine=showPayTime?`<div class="line"><span class="k">付款时间</span>${fmtTime(o.paidAt)}</div>`:'';
@@ -786,6 +812,7 @@ function renderMergedShip(){
     <span>🟢 已允许 <b style="color:${allowedCount?'':'#888'}">${allowedCount}</b>/${pending.length} 单可被发货管家采集</span>
     <button onclick="batchAllowPull()">✅ 一键全部允许（再单独取消不发的那几单）</button>
     <button onclick="moveToToday()" style="margin-left:8px">🚀 同意进入今日可发</button>
+    <button onclick="openManualModal()" style="margin-left:8px">➕ 新建手工订单</button>
     <span style="font-size:12px;color:#9a8f82">勾选「允许发货管家采集」后点此，订单即从「待发货」移入「今日可发」</span>
     ${pending.length?'':'<span style="color:#888">（暂无待发货订单）</span>'}
   `;
@@ -819,8 +846,8 @@ function renderMergedShip(){
             <input type="checkbox" ${checked} onchange="toggleAllowPull('${o.id}', this.checked)"> 允许采集
           </label>
         </div>
-        ${o.items.map(i=>{
-          let h=`<div class="so-item"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
+        ${o.items.map((i,idx)=>{
+          let h=`<div class="so-item"><span>${i.name}</span><span>${money(i.price)} × ${i.qty}${itemDelBtn(o.id,idx)}</span></div>`;
           const bi=getBundleItems(i);
           if(bi && bi.length){
             h+=`<div class="bundle-inline">实发为：${bi.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('、')}</div>`;
@@ -845,7 +872,7 @@ function renderMergedShip(){
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       ${orderBlocks}
-      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-ship" onclick="shipGroup(['${ids.join("','")}'])">填写单号发货</button></div>`;
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-ship" onclick="shipGroup(['${ids.join("','")}'])">填写单号发货</button> ${swapBtnHtml(o.id)}</div>`;
     list.appendChild(div);
   });
   // 设置 indeterminate 状态（HTML 属性不会自动反映）
@@ -874,7 +901,7 @@ function renderTodayShip(){
     group.sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
     const ids=group.map(o=>o.id);
     const first=group[0];
-    const itemsHtml=group.map(o=>o.items.map(i=>{
+    const itemsHtml=group.map(o=>o.items.map((i,idx)=>{
       // 优先用订单 items 自带的 bundleItems（最新下单时已复制），兼容历史空数组
       let bi = i.bundleItems || [];
       if(!bi.length){
@@ -889,11 +916,11 @@ function renderTodayShip(){
       if(bi.length){
         // 竖行显示：每个 bundle item 一行"产品名 数量单位"，末尾再写 "× qty"
         const lines = bi.map(b=>`• ${b.name} ${b.qty}${b.unit||'件'}`).join('<br>');
-        return `<div class="so-item"><span>${escapeHtml(i.name)}</span><span>${money(i.price)} × ${i.qty}</span></div>`+
+        return `<div class="so-item"><span>${escapeHtml(i.name)}</span><span>${money(i.price)} × ${i.qty}${itemDelBtn(o.id,idx)}</span></div>`+
                `<div class="bundle-inline" style="white-space:pre-line">${lines}<br>× ${i.qty}</div>`;
       }
       // 没有发货明细：回退到产品标题 + ×qty
-      return `<div class="so-item"><span>${escapeHtml(i.name)}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
+      return `<div class="so-item"><span>${escapeHtml(i.name)}</span><span>${money(i.price)} × ${i.qty}${itemDelBtn(o.id,idx)}</span></div>`;
     }).join('')).join('');
     const div=document.createElement('div'); div.className='card merge-card';
     div.innerHTML=`
@@ -930,14 +957,14 @@ function renderReturnZone(){
     group.sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
     const ids=group.map(o=>o.id);
     const first=group[0];
-    const itemsHtml=group.map(o=>o.items.map(i=>{
+    const itemsHtml=group.map(o=>o.items.map((i,idx)=>{
       const bi = i.bundleItems || [];
       if(bi.length){
         const lines = bi.map(b=>`• ${b.name} ${b.qty}${b.unit||'件'}`).join('<br>');
-        return `<div class="so-item"><span>${escapeHtml(i.name)}</span><span>${money(i.price)} × ${i.qty}</span></div>`+
+        return `<div class="so-item"><span>${escapeHtml(i.name)}</span><span>${money(i.price)} × ${i.qty}${itemDelBtn(o.id,idx)}</span></div>`+
                `<div class="bundle-inline" style="white-space:pre-line">${lines}<br>× ${i.qty}</div>`;
       }
-      return `<div class="so-item"><span>${escapeHtml(i.name)}</span><span>${money(i.price)} × ${i.qty}</span></div>`;
+      return `<div class="so-item"><span>${escapeHtml(i.name)}</span><span>${money(i.price)} × ${i.qty}${itemDelBtn(o.id,idx)}</span></div>`;
     }).join('')).join('');
     const div=document.createElement('div'); div.className='card merge-card';
     div.innerHTML=`
@@ -972,6 +999,157 @@ function formatShipItem(i){
     return bi.map(b=>`${b.name||''} ${b.qty||''}${b.unit||''}${i.qty>1?' ×'+i.qty:''}`).join('　');
   }
   return `${i.name||''}${i.qty>1?' ×'+i.qty:''}`;
+}
+
+// ===== 订单商品调整：删除 / 换货补货 / 新建手工单 =====
+const EDITABLE_STATUSES=['待确认','待发货','今日可发','待回传'];
+function isEditableOrder(o){ return EDITABLE_STATUSES.includes(o && o.status); }
+function itemDelBtn(orderId, idx){ return ` <button class="it-del" title="删除该商品" onclick="removeOrderItem('${orderId}',${idx})">×</button>`; }
+function swapBtnHtml(orderId){ return `<button class="btn-swap" onclick="openSwapModal('${orderId}')">换货/补货</button>`; }
+
+let modalEl=null;
+function showModal(innerHtml){
+  closeModal();
+  modalEl=document.createElement('div');
+  modalEl.className='modal-mask';
+  modalEl.innerHTML=`<div class="modal-box">${innerHtml}</div>`;
+  modalEl.addEventListener('click',e=>{ if(e.target===modalEl) closeModal(); });
+  document.body.appendChild(modalEl);
+}
+function closeModal(){ if(modalEl){ modalEl.remove(); modalEl=null; } }
+
+// 乐观更新订单商品并同步云端（统一入口：删商品/换货/补货都走这）
+async function applyOrderItems(o, newItems, okMsg){
+  const prev=JSON.parse(JSON.stringify(o));
+  o.items=newItems.map(x=>({id:String(x.id||''),skuId:String(x.skuId||''),skuName:String(x.skuName||''),name:String(x.name||''),price:Number(x.price)||0,qty:Math.max(0,Math.floor(Number(x.qty)||0)),image:String(x.image||''),bundleItems:Array.isArray(x.bundleItems)?x.bundleItems:[]})).filter(x=>x.qty>0&&(x.id||x.name));
+  o.total=o.items.reduce((s,x)=>s+x.price*x.qty,0);
+  if(o.items.length===0){ o.status='已取消'; o.cancelledAt=Date.now(); }
+  render();
+  try{
+    const r=await fetch('/api/orders/'+encodeURIComponent(o.id)+'/update-items',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:o.items})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.error||'save_failed');
+    Object.assign(o,d.order);
+    render();
+    toast(okMsg||'已更新订单');
+  }catch(e){
+    Object.assign(o,prev);
+    render();
+    toast('更新失败：'+(e.message||e));
+  }
+}
+
+// 单商品删除（行内 × 按钮）
+async function removeOrderItem(orderId, idx){
+  const o=ORDERS.find(x=>x.id===orderId);
+  if(!o) return;
+  if(!isEditableOrder(o)){ toast('该订单已发货或已取消，不能删除商品'); return; }
+  const it=o.items[idx];
+  if(!it) return;
+  if(!window.confirm(`确认从订单 ${orderId} 删除商品「${it.name} ×${it.qty}」？\n删除后库存会自动恢复，订单金额会重新计算。`)) return;
+  const newItems=o.items.filter((_,i)=>i!==idx);
+  await applyOrderItems(o,newItems,`已删除「${it.name}」`);
+}
+
+// 换货/补货弹窗：在该订单上删旧、加新（同一订单号）
+function openSwapModal(orderId){
+  const o=ORDERS.find(x=>x.id===orderId);
+  if(!o) return;
+  if(!isEditableOrder(o)){ toast('该订单已发货或已取消，不能再调整'); return; }
+  let tmp=JSON.parse(JSON.stringify(o.items));
+  const draw=()=>{
+    const rows=tmp.map((it,i)=>`<div class="modal-edititem"><span class="nm">${escapeHtml(it.name)}</span><span class="pr">${money(it.price)} × ${it.qty}</span><button class="del" onclick="__swapDel(${i})">×</button></div>`).join('')||'<div style="color:#aaa;font-size:12px;padding:4px 0">（暂无商品）</div>';
+    const opts=PRODUCTS.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+    showModal(`
+      <h3>换货 / 补货</h3>
+      <div class="modal-sub">订单 ${orderId} · ${escapeHtml(o.name)} · 沿用该客户姓名电话地址</div>
+      <div style="font-size:12px;color:#7a6f62;margin-bottom:6px">当前商品（点 × 删除）：</div>
+      ${rows}
+      <div class="modal-fld"><label>从产品库添加</label>
+        <div class="modal-addrow">
+          <select id="swapProd">${opts}</select>
+          <input id="swapQty" type="number" min="1" value="1" style="max-width:70px">
+          <button class="btn-modal-ok" style="flex:0 0 auto;padding:8px 14px" onclick="__swapAddProd()">添加</button>
+        </div>
+      </div>
+      <div class="modal-fld"><label>手工添加（自定义名称/单价）</label>
+        <div class="modal-addrow">
+          <input id="swapName" placeholder="商品名称">
+          <input id="swapPrice" type="number" min="0" step="0.01" placeholder="单价" style="max-width:90px">
+          <input id="swapQty2" type="number" min="1" value="1" style="max-width:60px">
+          <button class="btn-modal-ok" style="flex:0 0 auto;padding:8px 14px" onclick="__swapAddManual()">添加</button>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-modal-cancel" onclick="closeModal()">取消</button>
+        <button class="btn-modal-ok" onclick="__swapSave()">保存修改（重算金额）</button>
+      </div>
+    `);
+  };
+  window.__swapDel=i=>{ tmp=tmp.filter((_,j)=>j!==i); draw(); };
+  window.__swapAddProd=()=>{ const pid=document.getElementById('swapProd').value; const p=PRODUCTS.find(x=>x.id===pid); if(!p) return; const qty=Math.max(1,Math.floor(Number(document.getElementById('swapQty').value)||1)); tmp.push({id:p.id,skuId:'',skuName:'',name:p.name,price:Number(p.price||0),qty,image:p.image||(p.images&&p.images[0])||'',bundleItems:Array.isArray(p.bundleItems)?p.bundleItems:[]}); draw(); };
+  window.__swapAddManual=()=>{ const name=document.getElementById('swapName').value.trim(); const price=Number(document.getElementById('swapPrice').value||0); const qty=Math.max(1,Math.floor(Number(document.getElementById('swapQty2').value)||1)); if(!name){ toast('请填写商品名称'); return; } tmp.push({id:'',skuId:'',skuName:'',name,price,qty,image:'',bundleItems:[]}); draw(); };
+  window.__swapSave=async()=>{ closeModal(); await applyOrderItems(o,tmp,`已更新订单 ${orderId}`); };
+  draw();
+}
+
+// 新建手工订单弹窗：选已有客户或手填，添加手工商品
+function openManualModal(){
+  const customers=[]; const seen=new Set();
+  ORDERS.filter(o=>o.status!=='已取消').forEach(o=>{ const k=o.name+'|'+o.phone; if(!seen.has(k)){ seen.add(k); customers.push(o); } });
+  const custOpts=customers.map(c=>`<option value="${c.id}">${escapeHtml(c.name)} ${escapeHtml(c.phone||'')}</option>`).join('')||'<option value="">（无已有客户，请手填）</option>';
+  const prodOpts=PRODUCTS.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+  let items=[];
+  const draw=()=>{
+    const rows=items.map((it,i)=>`<div class="modal-edititem"><span class="nm">${escapeHtml(it.name)}</span><span class="pr">${money(it.price)} × ${it.qty}</span><button class="del" onclick="__manDel(${i})">×</button></div>`).join('')||'<div style="color:#aaa;font-size:12px;padding:4px 0">（暂未添加商品）</div>';
+    showModal(`
+      <h3>新建手工订单</h3>
+      <div class="modal-sub">用于补单/换货补差价：可直接生成一笔「待发货」订单</div>
+      <div class="modal-fld"><label>沿用已有客户（自动填联系方式）</label>
+        <select id="manCust" onchange="__manFill()">${custOpts}</select>
+      </div>
+      <div class="modal-fld"><label>姓名</label><input id="manName" placeholder="收件人姓名"></div>
+      <div class="modal-fld"><label>电话</label><input id="manPhone" placeholder="手机号"></div>
+      <div class="modal-fld"><label>地址</label><input id="manAddr" placeholder="收货地址"></div>
+      <div class="modal-fld"><label>微信（选填）</label><input id="manWechat" placeholder="微信号"></div>
+      <div style="font-size:12px;color:#7a6f62;margin:10px 0 2px">商品（可多条）：</div>
+      ${rows}
+      <div class="modal-fld"><label>从产品库添加</label>
+        <div class="modal-addrow"><select id="manProd">${prodOpts}</select><input id="manQty" type="number" min="1" value="1" style="max-width:70px"><button class="btn-modal-ok" style="flex:0 0 auto;padding:8px 14px" onclick="__manAddProd()">添加</button></div>
+      </div>
+      <div class="modal-fld"><label>手工添加（自定义名称/单价）</label>
+        <div class="modal-addrow"><input id="manName2" placeholder="商品名称"><input id="manPrice" type="number" min="0" step="0.01" placeholder="单价" style="max-width:90px"><input id="manQty2" type="number" min="1" value="1" style="max-width:60px"><button class="btn-modal-ok" style="flex:0 0 auto;padding:8px 14px" onclick="__manAddManual()">添加</button></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-modal-cancel" onclick="closeModal()">取消</button>
+        <button class="btn-modal-ok" onclick="__manSave()">生成手工订单</button>
+      </div>
+    `);
+  };
+  window.__manFill=()=>{ const c=customers.find(x=>x.id===document.getElementById('manCust').value); if(!c) return; document.getElementById('manName').value=c.name||''; document.getElementById('manPhone').value=c.phone||''; document.getElementById('manAddr').value=(c.address||'').replace(/<[^>]*>/g,''); document.getElementById('manWechat').value=c.wechat||''; };
+  window.__manDel=i=>{ items=items.filter((_,j)=>j!==i); draw(); };
+  window.__manAddProd=()=>{ const p=PRODUCTS.find(x=>x.id===document.getElementById('manProd').value); if(!p) return; const qty=Math.max(1,Math.floor(Number(document.getElementById('manQty').value)||1)); items.push({id:p.id,skuId:'',skuName:'',name:p.name,price:Number(p.price||0),qty,image:p.image||(p.images&&p.images[0])||'',bundleItems:Array.isArray(p.bundleItems)?p.bundleItems:[]}); draw(); };
+  window.__manAddManual=()=>{ const name=document.getElementById('manName2').value.trim(); const price=Number(document.getElementById('manPrice').value||0); const qty=Math.max(1,Math.floor(Number(document.getElementById('manQty2').value)||1)); if(!name){ toast('请填写商品名称'); return; } items.push({id:'',skuId:'',skuName:'',name,price,qty,image:'',bundleItems:[]}); draw(); };
+  window.__manSave=async()=>{
+    const name=document.getElementById('manName').value.trim();
+    const phone=document.getElementById('manPhone').value.trim();
+    const address=document.getElementById('manAddr').value.trim();
+    if(!name||!phone||!address){ toast('请填写姓名、电话、地址'); return; }
+    if(!items.length){ toast('请至少添加一个商品'); return; }
+    const payload={name,phone,address,wechat:document.getElementById('manWechat').value.trim(),items,status:'待发货'};
+    closeModal();
+    try{
+      const r=await fetch('/api/orders/manual',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok) throw new Error(d.error||'save_failed');
+      ORDERS.push(d.order);
+      curTab='待发货';
+      document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='待发货'));
+      render();
+      toast('已生成手工订单 '+d.id);
+    }catch(e){ toast('生成失败：'+(e.message||e)); }
+  };
+  draw();
 }
 
 // 把「今日可发」订单导出到发货管家云端版：写入 Supabase mall_today_export，发货员 /shipper 视图即自动看到「商城今日订单总表」

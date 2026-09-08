@@ -996,6 +996,92 @@ const server = http.createServer(async (req, res)=>{
         if(stockRededucted) saveProductsDebounced();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
+      // ---------- 修改订单商品（删除某几项 / 换货补货追加）：重算 total，被删商品恢复库存 ----------
+      const mUpdateItems = pathname.match(/^\/api\/orders\/([\w-]+)\/update-items$/);
+      if(method==='POST' && mUpdateItems){
+        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本覆盖
+        const o = orders.find(o=>o.id===mUpdateItems[1]);
+        if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
+        // 仅未发货订单可改商品（已发货/已取消不可直接改）
+        if(o.status==='已发货' || o.status==='已取消'){
+          res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_unshipped_can_edit'})); return;
+        }
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
+        if(!Array.isArray(body.items)){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'items_required'})); return; }
+        const keyOf = x => x.skuId ? (String(x.id)+'#'+String(x.skuId)) : String(x.id);
+        const newItems = body.items.map(it=>({
+          id: String(it.id||it.pid||'').slice(0,50),
+          skuId: String(it.skuId||'').slice(0,50),
+          skuName: String(it.skuName||'').slice(0,100),
+          name: String(it.name||'').slice(0,200),
+          price: Number(it.price)||0,
+          qty: Math.max(0, Math.floor(Number(it.qty)||0)),
+          image: String(it.image||'').slice(0,500),
+          bundleItems: Array.isArray(it.bundleItems)?it.bundleItems:[]
+        })).filter(it=> it.qty>0 && (it.id || it.name));
+        // diff：旧 items 中被删的 key → 恢复库存（仅本功能上线后下单、已扣库存的才恢复）
+        const newKeys = new Set(newItems.map(keyOf));
+        let stockRestored=false;
+        (o.items||[]).forEach(it=>{
+          if(!newKeys.has(keyOf(it)) && o.stockDeducted){
+            const p=products.find(p=>p.id===it.id); if(!p) return;
+            const qty=Number(it.qty)||0;
+            if(it.skuId){ const sku=(p.skus||[]).find(s=>String(s.id)===it.skuId); if(sku&&sku.stock!=null){ sku.stock=Math.floor(Number(sku.stock))+qty; stockRestored=true; markProductDirty(it.id);} }
+            else if(p.stock!=null){ p.stock=Math.floor(Number(p.stock))+qty; stockRestored=true; markProductDirty(it.id); }
+          }
+        });
+        const prevItems=o.items, prevTotal=o.total, prevStatus=o.status, prevCancelledAt=o.cancelledAt;
+        o.items=newItems;
+        o.total=newItems.reduce((s,x)=>s+x.price*x.qty,0);
+        if(newItems.length===0){ o.status='已取消'; o.cancelledAt=Date.now(); }
+        try { await saveOrderRowSync(o); }
+        catch(e){
+          o.items=prevItems; o.total=prevTotal; o.status=prevStatus;
+          if(prevCancelledAt===undefined) delete o.cancelledAt; else o.cancelledAt=prevCancelledAt;
+          if(stockRestored){ (o.items||[]).forEach(it=>{ const p=products.find(p=>p.id===it.id); if(!p) return; const qty=Number(it.qty)||0; if(it.skuId){ const sku=(p.skus||[]).find(s=>String(s.id)===it.skuId); if(sku&&sku.stock!=null){ sku.stock=Math.floor(Number(sku.stock))-qty; markProductDirty(it.id);} } else if(p.stock!=null){ p.stock=Math.floor(Number(p.stock))-qty; markProductDirty(it.id);} }); }
+          res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'save_failed', message:e.message})); return;
+        }
+        if(stockRestored) saveProductsDebounced();
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
+      }
+      // ---------- 新建手工订单（商家后台补单/换货追加）：沿用客户信息，商品可手工填写，不扣系统库存 ----------
+      if(method==='POST' && pathname==='/api/orders/manual'){
+        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
+        if(!body.name || !body.phone || !body.address){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'missing_contact'})); return; }
+        const rawItems = Array.isArray(body.items)?body.items:[];
+        if(!rawItems.length){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'empty'})); return; }
+        const detail = rawItems.map(it=>{
+          const pid = String(it.id||'').slice(0,50);
+          const p = pid ? products.find(p=>p.id===pid) : null;
+          const name = p ? p.name : String(it.name||'手工商品').slice(0,200);
+          const price = p ? Number(p.price||0) : (Number(it.price)||0);
+          return {
+            id: pid,
+            skuId: String(it.skuId||'').slice(0,50),
+            skuName: String(it.skuName||'').slice(0,100),
+            name,
+            price,
+            qty: Math.max(1, Math.floor(Number(it.qty)||1)),
+            image: p ? (p.image||p.images&&p.images[0]||'') : String(it.image||'').slice(0,500),
+            bundleItems: Array.isArray(it.bundleItems)?it.bundleItems:[]
+          };
+        });
+        const total = detail.reduce((s,x)=>s+x.price*x.qty,0);
+        const id = genId();
+        const order = {
+          id, items:detail, total,
+          name:String(body.name).slice(0,50), phone:String(body.phone).slice(0,30),
+          address:String(body.address).slice(0,200), wechat:String(body.wechat||'').slice(0,50),
+          note:String('【手工补单】'+(body.note||'')).slice(0,200),
+          status: (body.status==='待发货'||body.status==='待确认'||body.status==='今日可发')?body.status:'待发货',
+          tracking:'',
+          stockDeducted:false, // 手工订单不扣系统库存
+          isManual:true,
+          createdAt:Date.now(), paidAt:Date.now(), confirmedAt:Date.now(), shippedAt:null
+        };
+        saveOrderRow(order);
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, id, order})); return;
+      }
       // 更新配置（店铺名/联系人/公告/收款码）
       const mConfig = pathname.match(/^\/api\/config$/);
       if(method==='POST' && mConfig){
