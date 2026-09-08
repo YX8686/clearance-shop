@@ -903,7 +903,7 @@ function renderTodayShip(){
   topBar.innerHTML=`
     <span>📦 今日可发 <b style="color:${today.length?'#1f9d55':'#888'}">${today.length}</b> 单
       <span style="color:#9a8f82;font-weight:400">（从「待发货」勾选「允许发货管家采集」后点「同意进入今日可发」即进入此处；点「全部导出」后订单会移入「等待回传区」，不会重复）</span></span>
-    <button onclick="exportTodayOrders()">📤 全部导出到发货管家＋下载发货单</button>
+    <button onclick="exportTodayOrders()">📋 下载发货单</button>
     <button onclick="downloadShipSheetImage()" style="border-color:#1f9d55;color:#1f9d55">🖼 下载图片版发货单（微信可直接看）</button>`;
   list.appendChild(topBar);
   if(!today.length){
@@ -964,7 +964,7 @@ function renderReturnZone(){
   list.appendChild(topBar);
   if(!waiting.length){
     const empty=document.createElement('div'); empty.className='empty';
-    empty.innerHTML='还没有待在回传的订单。<br><br><span style="font-size:13px;color:#999">把「今日可发」的订单点「📤 全部导出到发货管家＋下载发货单」，导出成功的订单会自动出现在这里。</span>';
+    empty.innerHTML='还没有待在回传的订单。<br><br><span style="font-size:13px;color:#999">在「今日可发」点「📋 下载发货单」下载 Word，订单会自动转入这里；之后在发货管家「待确认回传」里填上快递单号回传即可。</span>';
     list.appendChild(empty);
     return;
   }
@@ -1010,12 +1010,18 @@ function getBundleItems(i){
   return bi;
 }
 // 把订单项渲染成单行发货文本："三重乳 10瓶 ×2"，多条用全角空格分隔
+// 手工加品：直接显示 名称 + 数量 + 单位（不重复 ×qty），末尾打【手工已付】标
+// 普通商品：有 bundleItems 用展开的明细；没有就显示 "名称 ×数量 [单位]"
 function formatShipItem(i){
+  if(i.isManualAdd){
+    return `${i.name||''} ${i.qty||''}${i.unit||''}【手工已付】`;
+  }
   const bi = getBundleItems(i);
   if(bi.length){
     return bi.map(b=>`${b.name||''} ${b.qty||''}${b.unit||''}${i.qty>1?' ×'+i.qty:''}`).join('　');
   }
-  return `${i.name||''}${i.qty>1?' ×'+i.qty:''}`;
+  const u=i.unit?(' '+i.unit):'';
+  return `${i.name||''}${i.qty>1?' ×'+i.qty:''}${u}`;
 }
 
 // ===== 订单商品调整：删除 / 换货补货 / 新建手工单 =====
@@ -1268,6 +1274,7 @@ function _buildDocx(paras){
   ]);
 }
 // 发货单正文行（Word 版与图片版共用）：每单一块，去掉标签词，一目了然
+// 手工加品：直接显示 名称+数量+单位+【手工已付】；真实无 bundleItems 时也带上 unit
 function shipSheetRows(list){
   const rows=[];
   list.forEach((o,idx)=>{
@@ -1277,9 +1284,13 @@ function shipSheetRows(list){
     rows.push({t:''});
     const lines=[];
     (o.items||[]).forEach(i=>{
+      if(i.isManualAdd){
+        lines.push(`${i.name||''} ${i.qty||''}${i.unit||''}【手工已付】`);
+        return;
+      }
       const bi=getBundleItems(i);
       if(bi.length){ bi.forEach(b=>lines.push(`${b.name||''} ${b.qty||''}${b.unit||''}${i.qty>1?' ×'+i.qty:''}`)); }
-      else lines.push(`${i.name||''}${i.qty>1?' ×'+i.qty:''}`);
+      else lines.push(`${i.name||''}${i.qty>1?' ×'+i.qty:''}${i.unit?' '+i.unit:''}`);
     });
     lines.forEach(l=>rows.push({t:l, indent:1}));
     rows.push({t:''});
