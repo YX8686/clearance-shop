@@ -1017,7 +1017,8 @@ const server = http.createServer(async (req, res)=>{
           price: Number(it.price)||0,
           qty: Math.max(0, Math.floor(Number(it.qty)||0)),
           image: String(it.image||'').slice(0,500),
-          bundleItems: Array.isArray(it.bundleItems)?it.bundleItems:[]
+          bundleItems: Array.isArray(it.bundleItems)?it.bundleItems:[],
+          isManualAdd: !!it.isManualAdd
         })).filter(it=> it.qty>0 && (it.id || it.name));
         // diff：旧 items 中被删的 key → 恢复库存（仅本功能上线后下单、已扣库存的才恢复）
         const newKeys = new Set(newItems.map(keyOf));
@@ -1032,7 +1033,7 @@ const server = http.createServer(async (req, res)=>{
         });
         const prevItems=o.items, prevTotal=o.total, prevStatus=o.status, prevCancelledAt=o.cancelledAt;
         o.items=newItems;
-        o.total=newItems.reduce((s,x)=>s+x.price*x.qty,0);
+        o.total=newItems.reduce((s,x)=>s+(x.isManualAdd?0:x.price*x.qty),0);
         if(newItems.length===0){ o.status='已取消'; o.cancelledAt=Date.now(); }
         try { await saveOrderRowSync(o); }
         catch(e){
