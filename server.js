@@ -1016,6 +1016,7 @@ const server = http.createServer(async (req, res)=>{
           name: String(it.name||'').slice(0,200),
           price: Number(it.price)||0,
           qty: Math.max(0, Math.floor(Number(it.qty)||0)),
+          unit: String(it.unit||'').trim().slice(0,10),
           image: String(it.image||'').slice(0,500),
           bundleItems: Array.isArray(it.bundleItems)?it.bundleItems:[],
           isManualAdd: !!it.isManualAdd
@@ -1063,6 +1064,7 @@ const server = http.createServer(async (req, res)=>{
             name,
             price,
             qty: Math.max(1, Math.floor(Number(it.qty)||1)),
+            unit: String(it.unit||'').trim().slice(0,10),
             image: p ? (p.image||p.images&&p.images[0]||'') : String(it.image||'').slice(0,500),
             bundleItems: Array.isArray(it.bundleItems)?it.bundleItems:[]
           };

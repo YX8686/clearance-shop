@@ -771,7 +771,7 @@ function render(){
     const [cls,lab]=stMap[o.status]||['st-wait',o.status];
     const editable=isEditableOrder(o);
     const items=o.items.map((i,idx)=>{
-      let h=`<div class="it-line"><span>${renderItemName(i)}</span><span>${i.isManualAdd?'—':(money(i.price)+' × '+i.qty)}${editable&&!i.isManualAdd?itemDelBtn(o.id,idx):''}</span></div>`;
+      let h=`<div class="it-line"><span>${renderItemName(i)}</span><span>${renderItemQty(i)}${editable?itemDelBtn(o.id,idx):''}</span></div>`;
       const bi=getBundleItems(i);
       if(bi && bi.length){
         h+=`<div class="bundle-inline">实发为：${bi.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('、')}</div>`;
@@ -859,7 +859,7 @@ function renderMergedShip(){
           </label>
         </div>
         ${o.items.map((i,idx)=>{
-          let h=`<div class="so-item"><span>${renderItemName(i)}</span><span>${i.isManualAdd?'—':(money(i.price)+' × '+i.qty)}${!i.isManualAdd?itemDelBtn(o.id,idx):''}</span></div>`;
+          let h=`<div class="so-item"><span>${renderItemName(i)}</span><span>${renderItemQty(i)}${itemDelBtn(o.id,idx)}</span></div>`;
           const bi=getBundleItems(i);
           if(bi && bi.length){
             h+=`<div class="bundle-inline">实发为：${bi.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('、')}</div>`;
@@ -932,11 +932,11 @@ function renderTodayShip(){
       if(bi.length){
         // 竖行显示：每个 bundle item 一行"产品名 数量单位"，末尾再写 "× qty"
         const lines = bi.map(b=>`• ${b.name} ${b.qty}${b.unit||'件'}`).join('<br>');
-        return `<div class="so-item"><span>${renderItemName(i)}</span><span>${i.isManualAdd?'—':(money(i.price)+' × '+i.qty)}${!i.isManualAdd?itemDelBtn(o.id,idx):''}</span></div>`+
+        return `<div class="so-item"><span>${renderItemName(i)}</span><span>${renderItemQty(i)}${itemDelBtn(o.id,idx)}</span></div>`+
                `<div class="bundle-inline" style="white-space:pre-line">${lines}<br>× ${i.qty}</div>`;
       }
       // 没有发货明细：回退到产品标题 + ×qty
-      return `<div class="so-item"><span>${renderItemName(i)}</span><span>${i.isManualAdd?'—':(money(i.price)+' × '+i.qty)}${!i.isManualAdd?itemDelBtn(o.id,idx):''}</span></div>`;
+      return `<div class="so-item"><span>${renderItemName(i)}</span><span>${renderItemQty(i)}${itemDelBtn(o.id,idx)}</span></div>`;
     }).join('')).join('');
     const div=document.createElement('div'); div.className='card merge-card';
     div.innerHTML=`
@@ -977,10 +977,10 @@ function renderReturnZone(){
       const bi = i.bundleItems || [];
       if(bi.length){
         const lines = bi.map(b=>`• ${b.name} ${b.qty}${b.unit||'件'}`).join('<br>');
-        return `<div class="so-item"><span>${renderItemName(i)}</span><span>${i.isManualAdd?'—':(money(i.price)+' × '+i.qty)}${!i.isManualAdd?itemDelBtn(o.id,idx):''}</span></div>`+
+        return `<div class="so-item"><span>${renderItemName(i)}</span><span>${renderItemQty(i)}${itemDelBtn(o.id,idx)}</span></div>`+
                `<div class="bundle-inline" style="white-space:pre-line">${lines}<br>× ${i.qty}</div>`;
       }
-      return `<div class="so-item"><span>${renderItemName(i)}</span><span>${i.isManualAdd?'—':(money(i.price)+' × '+i.qty)}${!i.isManualAdd?itemDelBtn(o.id,idx):''}</span></div>`;
+      return `<div class="so-item"><span>${renderItemName(i)}</span><span>${renderItemQty(i)}${itemDelBtn(o.id,idx)}</span></div>`;
     }).join('')).join('');
     const div=document.createElement('div'); div.className='card merge-card';
     div.innerHTML=`
@@ -1021,7 +1021,7 @@ function formatShipItem(i){
 const EDITABLE_STATUSES=['待确认','待发货','今日可发','待回传'];
 function isEditableOrder(o){ return EDITABLE_STATUSES.includes(o && o.status); }
 function itemDelBtn(orderId, idx){ return ` <button class="it-del" title="删除该商品" onclick="removeOrderItem('${orderId}',${idx})">×</button>`; }
-function swapBtnHtml(orderId){ return `<button class="btn-swap" onclick="openSwapModal('${orderId}')">换货/补货</button>`; }
+function swapBtnHtml(orderId){ return `<button class="btn-swap" onclick="openSwapModal('${orderId}')">手工加品</button>`; }
 
 let modalEl=null;
 function showModal(innerHtml){
@@ -1037,7 +1037,7 @@ function closeModal(){ if(modalEl){ modalEl.remove(); modalEl=null; } }
 // 乐观更新订单商品并同步云端（统一入口：删商品/换货/补货都走这）
 async function applyOrderItems(o, newItems, okMsg){
   const prev=JSON.parse(JSON.stringify(o));
-  o.items=newItems.map(x=>({id:String(x.id||''),skuId:String(x.skuId||''),skuName:String(x.skuName||''),name:String(x.name||''),price:Number(x.price)||0,qty:Math.max(0,Math.floor(Number(x.qty)||0)),image:String(x.image||''),bundleItems:Array.isArray(x.bundleItems)?x.bundleItems:[],isManualAdd:!!x.isManualAdd})).filter(x=>x.qty>0&&(x.id||x.name));
+  o.items=newItems.map(x=>({id:String(x.id||''),skuId:String(x.skuId||''),skuName:String(x.skuName||''),name:String(x.name||''),price:Number(x.price)||0,qty:Math.max(0,Math.floor(Number(x.qty)||0)),unit:String(x.unit||'').slice(0,10),image:String(x.image||''),bundleItems:Array.isArray(x.bundleItems)?x.bundleItems:[],isManualAdd:!!x.isManualAdd})).filter(x=>x.qty>0&&(x.id||x.name));
   o.total=o.items.reduce((s,x)=>s+(x.isManualAdd?0:x.price*x.qty),0);
   if(o.items.length===0){ o.status='已取消'; o.cancelledAt=Date.now(); }
   render();
@@ -1062,32 +1062,42 @@ async function removeOrderItem(orderId, idx){
   if(!isEditableOrder(o)){ toast('该订单已发货或已取消，不能删除商品'); return; }
   const it=o.items[idx];
   if(!it) return;
-  if(!window.confirm(`确认从订单 ${orderId} 删除商品「${it.name} ×${it.qty}」？\n删除后库存会自动恢复，订单金额会重新计算。`)) return;
+  const unit=it.unit||'';
+  if(!window.confirm(`确认从订单 ${orderId} 删除商品「${it.name} ${it.qty}${unit}」？\n删除后库存会自动恢复，订单金额会重新计算。`)) return;
   const newItems=o.items.filter((_,i)=>i!==idx);
   await applyOrderItems(o,newItems,`已删除「${it.name}」`);
 }
 
 function renderItemName(i){
-  const tag=i.isManualAdd?'<span style="color:#b8743f;font-size:11px;margin-left:4px">【手工订单已补金额】</span>':'';
-  return escapeHtml(i.name)+tag;
+  const tag=i.isManualAdd?'<span style="color:#b8743f;font-size:11px;margin-left:4px">【手工已付】</span>':'';
+  const qtyText = i.unit ? `${i.qty}${escapeHtml(i.unit)}` : `×${i.qty}`;
+  return `${escapeHtml(i.name)} <span style="color:#888;font-size:12px">${qtyText}</span>${tag}`;
 }
-// 删品 / 补货弹窗：在该订单上删除原有商品，并手工追加不计算金额的补货商品（同一订单号）
+function renderItemQty(i){ return i.isManualAdd ? `${i.qty}${i.unit||''}` : `${money(i.price)} × ${i.qty}${i.unit||''}`; }
+function parseQtyUnit(v){
+  const s=String(v||'').trim();
+  if(!s) return {qty:1, unit:''};
+  const m=s.match(/^\s*(\d+(?:\.\d+)?)\s*(.*)$/);
+  if(!m) return {qty:1, unit:s.slice(0,10)};
+  return {qty:Math.max(1, Number(m[1])||1), unit:m[2].trim().slice(0,10)};
+}
+// 手工加品弹窗：在订单上删除原商品后，可手工追加已付款商品（不计入订单金额）
 function openSwapModal(orderId){
   const o=ORDERS.find(x=>x.id===orderId);
   if(!o) return;
   if(!isEditableOrder(o)){ toast('该订单已发货或已取消，不能再调整'); return; }
   let tmp=JSON.parse(JSON.stringify(o.items));
   const draw=()=>{
-    const rows=tmp.map((it,i)=>`<div class="modal-edititem"><span class="nm">${renderItemName(it)}</span><span class="pr">${it.isManualAdd?'—':(money(it.price)+' × '+it.qty)}</span><button class="del" onclick="__swapDel(${i})">×</button></div>`).join('')||'<div style="color:#aaa;font-size:12px;padding:4px 0">（暂无商品）</div>';
+    const rows=tmp.map((it,i)=>`<div class="modal-edititem"><span class="nm">${renderItemName(it)}</span><span class="pr">${renderItemQty(it)}</span><button class="del" onclick="__swapDel(${i})">×</button></div>`).join('')||'<div style="color:#aaa;font-size:12px;padding:4px 0">（暂无商品）</div>';
     showModal(`
-      <h3>删品 / 补货</h3>
-      <div class="modal-sub">订单 ${orderId} · ${escapeHtml(o.name)} · 删除原商品后，可手工追加补货商品</div>
+      <h3>手工加品</h3>
+      <div class="modal-sub">订单 ${orderId} · ${escapeHtml(o.name)} · 可删除原商品，并追加已付款的手工商品</div>
       <div style="font-size:12px;color:#7a6f62;margin-bottom:6px">当前商品（点 × 删除）：</div>
       ${rows}
-      <div class="modal-fld"><label>手工添加补货（只写名称和数量，不计算金额）</label>
+      <div class="modal-fld"><label>手工添加（只写名称和数量规格，不计入金额）</label>
         <div class="modal-addrow">
           <input id="swapName" placeholder="商品名称，例如：三重乳" style="flex:2">
-          <input id="swapQty2" type="number" min="1" value="1" style="max-width:70px">
+          <input id="swapQty2" type="text" placeholder="15瓶" style="max-width:90px">
           <button class="btn-modal-ok" style="flex:0 0 auto;padding:8px 14px" onclick="__swapAddManual()">添加</button>
         </div>
       </div>
@@ -1098,7 +1108,7 @@ function openSwapModal(orderId){
     `);
   };
   window.__swapDel=i=>{ tmp=tmp.filter((_,j)=>j!==i); draw(); };
-  window.__swapAddManual=()=>{ const name=document.getElementById('swapName').value.trim(); const qty=Math.max(1,Math.floor(Number(document.getElementById('swapQty2').value)||1)); if(!name){ toast('请填写商品名称'); return; } tmp.push({id:'',skuId:'',skuName:'',name,price:0,qty,isManualAdd:true,image:'',bundleItems:[]}); document.getElementById('swapName').value=''; document.getElementById('swapQty2').value='1'; draw(); };
+  window.__swapAddManual=()=>{ const name=document.getElementById('swapName').value.trim(); const q=parseQtyUnit(document.getElementById('swapQty2').value); if(!name){ toast('请填写商品名称'); return; } tmp.push({id:'',skuId:'',skuName:'',name,price:0,qty:q.qty,unit:q.unit,isManualAdd:true,image:'',bundleItems:[]}); document.getElementById('swapName').value=''; document.getElementById('swapQty2').value=''; draw(); };
   window.__swapSave=async()=>{ closeModal(); await applyOrderItems(o,tmp,`已更新订单 ${orderId}`); };
   draw();
 }
