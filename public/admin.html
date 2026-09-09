@@ -506,6 +506,7 @@ let PRODUCTS=[];
 let GALLERY=[];
 let curTab='待确认';
 let shipPhoneFilter=''; // 待发货栏按电话搜索
+let pendingPhoneFilter=''; // 待处理（待确认）栏按电话搜索
 let editingProdId=null;
 let pickerMode='main'; // 'main' | 'detail' | 'sku'
 let galPickSkuIdx=-1; // pickerMode==='sku' 时，正在为哪个 SKU 选主图
@@ -891,9 +892,37 @@ function _renderInner(){
 function renderMergedPending(){
   const list=document.getElementById('list');
   const pending=ORDERS.filter(o=>o.status==='待确认');
-  if(!pending.length){ list.innerHTML='<div class="empty">暂无订单</div>'; return; }
+  // 2026-09-09 新增：顶部快捷条 + 按电话搜索（参照 renderMergedShip 搜索框样式）
+  const topBar=document.createElement('div'); topBar.className='allow-pull-top';
+  topBar.innerHTML=`
+    <span>📋 待处理 <b>${pending.length}</b> 笔</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;margin-left:auto">
+      <span style="font-size:12px;color:#7a6f62">按电话搜：</span>
+      <input type="tel" id="pendingPhoneInput" value="${escapeHtml(pendingPhoneFilter)}" placeholder="输入电话后按回车" style="padding:5px 8px;border:1px solid #e0d6c8;border-radius:6px;font-size:13px;width:150px" onkeydown="if(event.key==='Enter'){event.preventDefault();onPendingPhoneSearch(this.value.trim());}">
+      <button type="button" onclick="onPendingPhoneSearch(document.getElementById('pendingPhoneInput').value.trim())" style="padding:5px 10px;border:1px solid #b8743f;background:#fff;color:#b8743f;border-radius:6px;font-size:12px;cursor:pointer">搜索</button>
+      ${pendingPhoneFilter?`<button type="button" onclick="onPendingPhoneSearch('')" style="padding:5px 10px;border:1px solid #c0392b;background:#fff;color:#c0392b;border-radius:6px;font-size:12px;cursor:pointer;margin-left:4px">清除</button>`:''}
+    </span>
+    ${pending.length?'':'<span style="color:#888">（暂无待处理订单）</span>'}
+  `;
+  list.appendChild(topBar);
+  if(!pending.length){
+    const empty=document.createElement('div'); empty.className='empty'; empty.textContent='暂无订单';
+    list.appendChild(empty); return;
+  }
+  const filtered=pending.filter(o=>{
+    if(!pendingPhoneFilter) return true;
+    const ph=String(o.phone||'');
+    return ph.includes(pendingPhoneFilter);
+  });
+  if(!filtered.length){
+    const empty=document.createElement('div');
+    empty.className='empty';
+    empty.innerHTML=pendingPhoneFilter?`没有找到电话包含「${escapeHtml(pendingPhoneFilter)}」的待处理订单。<br><br><span style="font-size:13px;color:#999">请检查号码是否输对；清除搜索可显示全部。</span>`:`暂无订单。`;
+    list.appendChild(empty);
+    return;
+  }
   const groups={};
-  pending.forEach(o=>{ const key=BUSINESS_RULES.merge.makeKey(o); (groups[key]=groups[key]||[]).push(o); });
+  filtered.forEach(o=>{ const key=BUSINESS_RULES.merge.makeKey(o); (groups[key]=groups[key]||[]).push(o); });
   Object.values(groups).forEach(group=>{
     group.sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
     const ids=group.map(o=>o.id);
@@ -1045,6 +1074,10 @@ function renderMergedShip(){
 function onShipPhoneSearch(v){
   shipPhoneFilter=String(v||'').trim();
   if(curTab==='待发货') renderMergedShip();
+}
+function onPendingPhoneSearch(v){
+  pendingPhoneFilter=String(v||'').trim();
+  if(curTab==='待确认') renderMergedPending();
 }
 // 「今日可发订单」栏目：展示已在待发货里勾选「允许发货管家采集」的订单，可一键全部导出到发货管家
 function renderTodayShip(){
