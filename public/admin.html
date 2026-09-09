@@ -527,6 +527,7 @@ function setLoading(v){
 let firstLoad=true;
 let loadTimer=null;
 async function load(silent){
+  window._lastLoadAt = Date.now(); // 供「切回页面立即刷新」节流判断：距上次拉取多久
   // 第一优先：订单数据（商家最关心），先渲染，不等设置/产品/图库
   // 仅首次打开显示 loading 提示；后续刷新（自动轮询/操作后）静默更新，避免页面闪烁
   if(firstLoad && !silent){ setLoading(true); }
@@ -793,7 +794,14 @@ function copyBuyerStats(){
   if(navigator.clipboard){ navigator.clipboard.writeText(text).then(()=>toast('统计已复制，可直接粘贴到微信')).catch(()=>window.prompt('长按复制：',text)); }
   else window.prompt('长按复制：',text);
 }
+// 2026-09-09 修复：render() 会执行 list.innerHTML='' 整表重建，浏览器随之把滚动位置归零，
+//   视觉上就是「页面跳一下、看不清」。这里在重建前后保持滚动位置不动。
 function render(){
+  const _sy = window.scrollY || document.documentElement.scrollTop || 0;
+  _renderInner();
+  try{ window.scrollTo(0, _sy); }catch(e){}
+}
+function _renderInner(){
   renderSalesSummary();
   renderBuyerStats();
   const waits=ORDERS.filter(o=>o.status==='待确认').length;
@@ -946,7 +954,16 @@ function renderMergedShip(){
       const key=BUSINESS_RULES.merge.makeKey(o);
       (groups[key]=groups[key]||[]).push(o);
     });
-  Object.values(groups).forEach(group=>{
+  // 2026-09-09 修复：合并组渲染顺序改为「按组内最早下单时间 createdAt 升序」的显式稳定排序。
+  //   原代码 Object.values(groups).forEach(...) 直接遍历，顺序完全取决于 /api/orders 的返回顺序，
+  //   服务端顺序一旦变化（或某单被 PATCH 更新后位置变动），轮询重新渲染时卡片就会漂移
+  //   —— 正是用户反馈的「取消勾选后，订单从第 1 位跳到第 2 位」。
+  //   createdAt 恒定不变，与勾选状态/网络返回顺序无关 → 顺序绝对稳定，且三个栏目位置一致。
+  Object.values(groups).sort((a,b)=>{
+    const ac=Math.min.apply(null, a.map(o=>o.createdAt||o.paidAt||0));
+    const bc=Math.min.apply(null, b.map(o=>o.createdAt||o.paidAt||0));
+    return ac-bc; // 先下单的排前面
+  }).forEach(group=>{
     group.sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
     const ids=group.map(o=>o.id);
     const first=group[0];
@@ -1017,7 +1034,16 @@ function renderTodayShip(){
   }
   const groups={};
   today.forEach(o=>{ const key=BUSINESS_RULES.merge.makeKey(o); (groups[key]=groups[key]||[]).push(o); });
-  Object.values(groups).forEach(group=>{
+  // 2026-09-09 修复：合并组渲染顺序改为「按组内最早下单时间 createdAt 升序」的显式稳定排序。
+  //   原代码 Object.values(groups).forEach(...) 直接遍历，顺序完全取决于 /api/orders 的返回顺序，
+  //   服务端顺序一旦变化（或某单被 PATCH 更新后位置变动），轮询重新渲染时卡片就会漂移
+  //   —— 正是用户反馈的「取消勾选后，订单从第 1 位跳到第 2 位」。
+  //   createdAt 恒定不变，与勾选状态/网络返回顺序无关 → 顺序绝对稳定，且三个栏目位置一致。
+  Object.values(groups).sort((a,b)=>{
+    const ac=Math.min.apply(null, a.map(o=>o.createdAt||o.paidAt||0));
+    const bc=Math.min.apply(null, b.map(o=>o.createdAt||o.paidAt||0));
+    return ac-bc; // 先下单的排前面
+  }).forEach(group=>{
     group.sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
     const ids=group.map(o=>o.id);
     const first=group[0];
@@ -1069,7 +1095,16 @@ function renderReturnZone(){
   }
   const groups={};
   waiting.forEach(o=>{ const key=BUSINESS_RULES.merge.makeKey(o); (groups[key]=groups[key]||[]).push(o); });
-  Object.values(groups).forEach(group=>{
+  // 2026-09-09 修复：合并组渲染顺序改为「按组内最早下单时间 createdAt 升序」的显式稳定排序。
+  //   原代码 Object.values(groups).forEach(...) 直接遍历，顺序完全取决于 /api/orders 的返回顺序，
+  //   服务端顺序一旦变化（或某单被 PATCH 更新后位置变动），轮询重新渲染时卡片就会漂移
+  //   —— 正是用户反馈的「取消勾选后，订单从第 1 位跳到第 2 位」。
+  //   createdAt 恒定不变，与勾选状态/网络返回顺序无关 → 顺序绝对稳定，且三个栏目位置一致。
+  Object.values(groups).sort((a,b)=>{
+    const ac=Math.min.apply(null, a.map(o=>o.createdAt||o.paidAt||0));
+    const bc=Math.min.apply(null, b.map(o=>o.createdAt||o.paidAt||0));
+    return ac-bc; // 先下单的排前面
+  }).forEach(group=>{
     group.sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
     const ids=group.map(o=>o.id);
     const first=group[0];
@@ -3098,9 +3133,21 @@ async function compressImage(file, opts={}){
 }
 
 load();
-// 30s 轮询：失败时静默重试，不在页面上弹大红报错
-// 2026-09-09 从 15s 拉长到 30s：减少 render() 重建频率，缓解「等过一会儿系统自动跳动、勾选错乱」症状
-setInterval(()=>load(true), 30000);
+// 15s 轮询：失败时静默重试，不在页面上弹大红报错
+// 2026-09-09 从 30s 改回 15s：发货管家回传单号后，商家后台要尽快反映「已发货」，
+//   30s 太慢（用户反馈：回传完点开后台还停在「等待回传区」，必须手动刷新才看到）。
+setInterval(()=>load(true), 15000);
+// 2026-09-09 新增：切回本窗口 / 页面重新可见时，立即静默拉取一次。
+//   典型场景 = 在发货管家回传完单号 → 切回商家后台，应该立刻看到「已发货」，而不是干等下一次轮询。
+//   节流 5s：避免频繁切窗造成请求风暴；轮询刚拉完的 5s 内也不会重复拉。
+function refreshOnFocus(){
+  const now=Date.now();
+  if(now-(window._lastLoadAt||0) < 5000) return;
+  window._lastLoadAt=now;
+  load(true);
+}
+window.addEventListener('focus', refreshOnFocus);
+document.addEventListener('visibilitychange', function(){ if(!document.hidden) refreshOnFocus(); });
 </script>
 </body>
 </html>
