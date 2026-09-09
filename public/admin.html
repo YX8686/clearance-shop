@@ -522,7 +522,35 @@ let isLoading=false;
 function setLoading(v){
   isLoading=v;
   const list=document.getElementById('list');
-  if(v){ list.innerHTML='<div class="empty" id="loadingTip">⏳ 正在从云端同步订单数据，请稍候…</div>'; }
+  if(v){
+    // 2026-09-09 体验优化：第一次冷启动可能要等 30-60s，
+    //   旧版只显示「请稍候…」，用户不知道在不在等、要不要刷新，
+    //   容易被误判「卡了」反复刷新。这里加秒级倒计时 + 友好说明 + 手动刷新按钮。
+    const _startAt=Date.now();
+    list.innerHTML=`
+      <div class="empty" id="loadingTip" style="padding:36px 20px;line-height:1.9;text-align:left;max-width:520px;margin:20px auto">
+        <div style="font-size:16px;color:#5d4f3f">⏳ 正在从云端同步订单数据…</div>
+        <div style="font-size:13px;color:#9a8f82;margin-top:10px">
+          首次打开云端需要「唤醒」，可能要 <b>30-60 秒</b>，请耐心等一下。<br>
+          唤醒后第二次打开会很快。如果一直停留，点下面的「立即刷新」手动重试。
+        </div>
+        <div id="loadingCounter" style="font-size:13px;color:#b8743f;margin-top:12px;font-weight:500">已等待 0 秒</div>
+        <div style="margin-top:14px">
+          <button class="btn-primary" onclick="location.reload()">🔄 立即刷新</button>
+        </div>
+      </div>`;
+    if(window._loadingTick){ clearInterval(window._loadingTick); }
+    const tick=()=>{
+      const el=document.getElementById('loadingCounter');
+      if(!el) return;
+      const sec=Math.floor((Date.now()-_startAt)/1000);
+      el.textContent='已等待 '+sec+' 秒'+(sec>=15?'（云端还在唤醒，再给点时间…）':'');
+    };
+    window._loadingTick=setInterval(tick, 1000);
+    tick();
+  }else{
+    if(window._loadingTick){ clearInterval(window._loadingTick); window._loadingTick=null; }
+  }
 }
 let firstLoad=true;
 let loadTimer=null;
