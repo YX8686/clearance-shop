@@ -1059,12 +1059,12 @@ function getBundleItems(i){
   }
   return bi;
 }
-// 把订单项渲染成单行发货文本："三重乳 10瓶 ×2"，多条用全角空格分隔
-// 手工加品：直接显示 名称 + 数量 + 单位（不重复 ×qty），末尾打【手工已付】标
+// 把订单项渲染成单行发货文本："三重乳 10瓶"，多条用全角空格分隔
+// 手工加品：直接显示 名称 + 数量 + 单位（不重复 ×qty），末尾不再带【手工已付】（2026-09-09 去掉，发货文本要纯净）
 // 普通商品：有 bundleItems 用展开的明细；没有就显示 "名称 ×数量 [单位]"
 function formatShipItem(i){
   if(i.isManualAdd){
-    return `${i.name||''} ${i.qty||''}${i.unit||''}【手工已付】`;
+    return `${i.name||''} ${i.qty||''}${i.unit||''}`;
   }
   const bi = getBundleItems(i);
   if(bi.length){
@@ -1092,11 +1092,15 @@ function showModal(innerHtml){
 function closeModal(){ if(modalEl){ modalEl.remove(); modalEl=null; } }
 
 // 乐观更新订单商品并同步云端（统一入口：删商品/换货/补货都走这）
+// 2026-09-09 修复：成功后强制 load(true) 从服务端拉权威 ORDERS，
+//   避免前端 d.order 与服务端不一致时手工加品看似成功但刷新不见
 async function applyOrderItems(o, newItems, okMsg){
   const prev=JSON.parse(JSON.stringify(o));
   o.items=newItems.map(x=>({id:String(x.id||''),skuId:String(x.skuId||''),skuName:String(x.skuName||''),name:String(x.name||''),price:Number(x.price)||0,qty:Math.max(0,Math.floor(Number(x.qty)||0)),unit:String(x.unit||'').slice(0,10),image:String(x.image||''),bundleItems:Array.isArray(x.bundleItems)?x.bundleItems:[],isManualAdd:!!x.isManualAdd})).filter(x=>x.qty>0&&(x.id||x.name));
   o.total=o.items.reduce((s,x)=>s+(x.isManualAdd?0:x.price*x.qty),0);
   if(o.items.length===0){ o.status='已取消'; o.cancelledAt=Date.now(); }
+  // 3 秒保护窗口：setInterval 轮询触发 load(true) 时保留本地版本
+  pendingIds.add(o.id);
   render();
   try{
     const r=await fetch('/api/orders/'+encodeURIComponent(o.id)+'/update-items',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:o.items})});
@@ -1105,10 +1109,14 @@ async function applyOrderItems(o, newItems, okMsg){
     Object.assign(o,d.order);
     render();
     toast(okMsg||'已更新订单');
+    // 成功后从服务端拉一次权威 ORDERS，保证前端/云端彻底一致（避免刷新看不到）
+    setTimeout(()=>load(true), 100);
   }catch(e){
     Object.assign(o,prev);
     render();
     toast('更新失败：'+(e.message||e));
+  } finally {
+    setTimeout(()=>pendingIds.delete(o.id), 3000);
   }
 }
 
@@ -1329,7 +1337,8 @@ function _buildDocx(paras){
 // 发货单正文行（Word 版与图片版共用）：★硬性规则★ 先按合并规则分组
 // （姓名+电话+地址+微信 四项完全一致 = 同一客户，缺一不可），
 // 每个客户只出一个发货块 = 最终合并发货单；多笔时逐笔标注下单时间作为区分。
-// 手工加品：直接显示 名称+数量+单位+【手工已付】；真实无 bundleItems 时也带上 unit
+// 手工加品：直接显示 名称+数量+单位；真实无 bundleItems 时也带上 unit
+// row.kind 用于下载图片版时上色：title=标题 / name=姓名电话 / address=地址 / product=产品行 / aux=辅助信息
 function shipSheetRows(list){
   const rows=[];
   const groups={};
@@ -1337,25 +1346,25 @@ function shipSheetRows(list){
   const groupArr=Object.values(groups).map(g=>g.slice().sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)));
   groupArr.forEach((group,idx)=>{
     const first=group[0];
-    rows.push({t:`【第 ${idx+1} 单】${group.length>1?`（合并 ${group.length} 笔 · ${first.name||''}）`:`　订单号：${first.id||''}`}`, b:true});
-    rows.push({t:`${first.name||''} ${first.phone||''}`.replace(/\s+/g,' ').trim()});
-    rows.push({t:first.address||''});
-    rows.push({t:''});
+    rows.push({t:`【第 ${idx+1} 单】${group.length>1?`（合并 ${group.length} 笔 · ${first.name||''}）`:`　订单号：${first.id||''}`}`, b:true, kind:'title'});
+    rows.push({t:`${first.name||''} ${first.phone||''}`.replace(/\s+/g,' ').trim(), kind:'name'});
+    rows.push({t:first.address||'', kind:'address'});
+    rows.push({t:'', kind:'blank'});
     group.forEach((o,gi)=>{
-      if(group.length>1) rows.push({t:`— 第 ${gi+1} 笔 · 下单 ${fmtTime(o.createdAt)}（${o.id||''}）—`, sz:20, color:'777777', indent:1});
+      if(group.length>1) rows.push({t:`— 第 ${gi+1} 笔 · 下单 ${fmtTime(o.createdAt)}（${o.id||''}）—`, sz:20, color:'777777', indent:1, kind:'aux'});
       const lines=[];
       (o.items||[]).forEach(i=>{
         if(i.isManualAdd){
-          lines.push(`${i.name||''} ${i.qty||''}${i.unit||''}【手工已付】`);
+          lines.push(`${i.name||''} ${i.qty||''}${i.unit||''}`);
           return;
         }
         const bi=getBundleItems(i);
         if(bi.length){ bi.forEach(b=>lines.push(`${b.name||''} ${b.qty||''}${b.unit||''}${i.qty>1?' ×'+i.qty:''}`)); }
         else lines.push(`${i.name||''}${i.qty>1?' ×'+i.qty:''}${i.unit?' '+i.unit:''}`);
       });
-      lines.forEach(l=>rows.push({t:l, indent:1}));
+      lines.forEach(l=>rows.push({t:l, indent:1, kind:'product'}));
     });
-    rows.push({t:''});
+    rows.push({t:'', kind:'blank'});
   });
   return rows;
 }
@@ -1379,19 +1388,38 @@ function downloadShipSheet(ordersParam){
   toast(`已生成 ${list.length} 单的商城发货单（Word，微信可直接打开），正在下载`);
 }
 // 兜底：图片版发货单（微信 100% 能打开的长图，适合直接发给快递员看）
+// 2026-09-09 改版：宽 720 的竖图（手机能全屏看清），姓名/电话/地址/产品 红字，
+// 辅助信息（如「— 第 X 笔」）黑字
 function downloadShipSheetImage(ordersParam){
   const list = (Array.isArray(ordersParam) && ordersParam.length) ? ordersParam : ORDERS.filter(o=>o.status==='今日可发');
   if(!list.length){ toast('没有可导出的订单'); return; }
   const dateStr=new Date().toISOString().slice(0,10);
-  const W=900, PAD=48;
+  const W=720, PAD=40;     // 竖图：宽 720，手机点开能撑满屏幕
   let SCALE=2;
   const cvs=document.createElement('canvas');
   let ctx=cvs.getContext('2d');
   const FONT=(px,bold)=>`${bold?'bold ':''}${px}px "Microsoft YaHei","PingFang SC",SimSun,sans-serif`;
+  // 红字色：姓名/电话/地址/产品行（发货核心信息，醒眼）
+  // 黑字：标题/辅助信息（"第 X 笔"等）
+  const COLOR_BY_KIND = {
+    name:'#c0392b',
+    address:'#c0392b',
+    product:'#c0392b',
+    title:'#222',
+    aux:'#555',
+    blank:undefined
+  };
   const items=[
     {t:'不初商城 · 发货单', size:30, bold:true, align:'center', gap:12},
     {t:dateStr+'　共 '+list.length+' 单', size:15, align:'center', color:'#777', gap:26}
-  ].concat(shipSheetRows(list).map(r=>({t:r.t, size:r.b?18:(r.sz?14:16), bold:!!r.b, indent:r.indent?26:0, gap:r.t?4:12, color:r.color?'#'+r.color:undefined})));
+  ].concat(shipSheetRows(list).map(r=>{
+    const size = r.b ? 18 : (r.sz ? 14 : 16);
+    const bold = !!r.b;
+    const indent = r.indent ? 26 : 0;
+    // 优先用 shipSheetRows 的 kind 决定颜色；旧字段 r.color 仅兜底
+    const color = COLOR_BY_KIND[r.kind] !== undefined ? COLOR_BY_KIND[r.kind] : (r.color ? '#'+r.color : undefined);
+    return {t:r.t, size, bold, indent, gap:r.t?4:12, color};
+  }));
   const maxW=W-PAD*2, lines=[];
   items.forEach(it=>{
     ctx.font=FONT(it.size,it.bold);
@@ -1430,18 +1458,22 @@ function downloadShipSheetImage(ordersParam){
   },'image/png');
 }
 // 勾选确认：单笔待发货订单允许/禁止发货管家采集
+// 2026-09-09 修复：把 id 加入 pendingIds 3s，setInterval 轮询触发的 load(true) 不会冲掉刚勾选的状态，
+//   避免「等过一会儿系统自动跳动页面、勾选状态错乱」症状
 async function toggleAllowPull(id, allow){
   const o=ORDERS.find(x=>x.id===id);
   if(o){
     o.allowPull=allow; o.allowPullAt=allow?Date.now():null;
+    pendingIds.add(id);
     render();
+    setTimeout(()=>pendingIds.delete(id), 3000);
   }
   try{
     const r=await fetch('/api/orders/'+encodeURIComponent(id)+'/allow-pull',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({allowPull:allow})});
     if(!r.ok) throw new Error('HTTP '+r.status);
   }catch(e){
     toast('同步失败，请重试'); console.error('[allow-pull]',e);
-    if(o){ o.allowPull=!allow; o.allowPullAt=o.allowPull?Date.now():null; render(); }
+    if(o){ o.allowPull=!allow; o.allowPullAt=o.allowPull?Date.now():null; pendingIds.add(id); render(); setTimeout(()=>pendingIds.delete(id), 3000); }
   }
 }
 // 勾选确认：组合内全部订单批量设置
@@ -1449,22 +1481,26 @@ function toggleAllowPullGroup(ids, allow){
   ids.forEach(id=>toggleAllowPull(id, allow));
 }
 // 顶部快捷：一键全部允许（仅对待发货）。点完后自己去单独取消"今天不能发"的那些
+// 2026-09-09 修复：把所有 pending id 加进 pendingIds 3s 保护，避免被 15s 轮询冲掉
 async function batchAllowPull(){
   const pending=ORDERS.filter(o=>o.status==='待发货');
   if(!pending.length){ toast('当前没有待发货订单'); return; }
   if(!window.confirm(`确认把当前 ${pending.length} 单待发货全部允许被发货管家采集？\n（之后你可以单独点击不需要的那几单取消勾选）`)) return;
   const allow=true;
-  // 乐观更新
-  pending.forEach(o=>{ o.allowPull=allow; o.allowPullAt=allow?Date.now():null; });
+  // 乐观更新：只勾选当前未勾选的，尊重用户此前已手动取消的（消除竞态）
+  pending.forEach(o=>{ if(!o.allowPull){ o.allowPull=allow; o.allowPullAt=Date.now(); } pendingIds.add(o.id); });
   render();
+  setTimeout(()=>pending.forEach(o=>pendingIds.delete(o.id)), 3000);
   try{
-    const r=await fetch('/api/orders/batch-allow-pull',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({allow})});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok) throw new Error(d.message||('HTTP '+r.status));
-    toast(`已全部允许 ${d.count} 单，去单独取消今天不能发的那几单`);
+    // 逐笔提交：仅提交当前 allowPull===true 的；用户在此期间手动取消的不会被覆盖回 true
+    const toSave=pending.filter(o=>o.allowPull===true);
+    await Promise.all(toSave.map(o=>
+      fetch('/api/orders/'+encodeURIComponent(o.id)+'/allow-pull',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({allowPull:true})})
+    ));
+    toast(`已允许 ${toSave.length} 单，可单独取消今天不能发的那几单`);
   }catch(e){
     toast('同步失败：'+e.message);
-    pending.forEach(o=>{ o.allowPull=!allow; o.allowPullAt=o.allowPull?Date.now():null; });
+    pending.forEach(o=>{ o.allowPull=false; o.allowPullAt=null; });
     render();
   }
 }
@@ -2851,8 +2887,9 @@ async function compressImage(file, opts={}){
 }
 
 load();
-// 15s 轮询：失败时静默重试，不在页面上弹大红报错
-setInterval(()=>load(true), 15000);
+// 30s 轮询：失败时静默重试，不在页面上弹大红报错
+// 2026-09-09 从 15s 拉长到 30s：减少 render() 重建频率，缓解「等过一会儿系统自动跳动、勾选错乱」症状
+setInterval(()=>load(true), 30000);
 </script>
 </body>
 </html>
