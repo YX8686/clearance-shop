@@ -95,12 +95,21 @@
   .sku-head .stock{font-size:12px;color:#9a8f82;margin-top:4px}
   .sku-section{margin-bottom:18px}
   .sku-sec-title{font-size:13px;color:#3a322b;font-weight:600;margin-bottom:10px}
-  .sku-opts{display:flex;flex-wrap:wrap;gap:10px}
-  .sku-opt{border:1px solid #e0d6c8;background:#fff;border-radius:20px;padding:9px 16px;font-size:13px;color:#3a322b;cursor:pointer;transition:all .15s}
-  .sku-opt.on{border-color:#b8743f;background:#fff7ef;color:#b8743f;font-weight:600}
-  .sku-opt.off{border-color:#eee;background:#faf8f4;color:#c8c0b4;cursor:not-allowed}
-  .sku-opt.off .sub{color:#c0392b}
-  .sku-opt .sub{font-size:11px;color:#9a8f82;margin-left:4px}
+  /* 2026-09-09 改版：SKU 选项由「纯文字胶囊」升级为「大图+名称+价格+库存」单列卡片；
+     一个 SKU 独占一横排，图片放大到 88px，手机上客户看得清 */
+  .sku-opts{display:flex;flex-direction:column;gap:10px}
+  .sku-opt{border:1.5px solid #e0d6c8;background:#fff;border-radius:12px;padding:10px;display:flex;gap:12px;align-items:center;cursor:pointer;transition:all .15s}
+  .sku-opt.on{border-color:#b8743f;background:#fff7ef}
+  .sku-opt.off{border-color:#f0ece4;background:#faf8f4;cursor:not-allowed;opacity:.6}
+  .sku-opt .sk-img{width:88px;height:88px;object-fit:cover;border-radius:10px;background:#f0ece4;flex:none}
+  .sku-opt .sk-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+  .sku-opt .sk-name{font-size:14px;font-weight:600;color:#3a322b;line-height:1.4}
+  .sku-opt.on .sk-name{color:#b8743f;font-weight:700}
+  .sku-opt .sk-meta{display:flex;justify-content:space-between;align-items:baseline}
+  .sku-opt .sk-price{font-size:16px;font-weight:700;color:#c0392b}
+  .sku-opt.on .sk-price{color:#b8743f}
+  .sku-opt .sk-stock{font-size:12px;color:#9a8f82}
+  .sku-opt.off .sk-stock{color:#c0392b;font-weight:600}
   .sku-qty-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
   .qty-box{display:flex;align-items:center;border:1px solid #e0d6c8;border-radius:8px;overflow:hidden}
   .qty-box button{width:34px;height:34px;border:none;background:#faf7f2;font-size:18px;color:#5b5147;cursor:pointer}
@@ -515,6 +524,8 @@ function openSkuModal(pid){
   document.getElementById('skuModal').classList.add('show');
 }
 function closeSkuModal(){ document.getElementById('skuModal').classList.remove('show'); }
+// 2026-09-09 新增：SKU 卡片渲染需要转义，避免名称里带引号/尖括号时破坏 HTML
+function escapeHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function renderSkuOptions(){
   const p=curSkuProd; if(!p) return;
   const box=document.getElementById('skuOpts');
@@ -522,7 +533,14 @@ function renderSkuOptions(){
     const st = skuStockOf(p, s);
     const off = st!=null && st<=0; // 该规格售罄，不可选
     return `<div class="sku-opt ${s.id===curSkuId?'on':''} ${off?'off':''}" ${off?'':`onclick="selectSku('${s.id}')"`}>
-      <span>${s.name}</span>${off?'<span class="sub">已售罄</span>':(st!=null?`<span class="sub">余${st}</span>`:'')}
+      <img class="sk-img" src="${escapeHtml(s.image||p.image||'/assets/products/default.svg')}" onerror="this.src='/assets/products/default.svg'" alt="">
+      <div class="sk-body">
+        <div class="sk-name">${escapeHtml(s.name||'')}</div>
+        <div class="sk-meta">
+          <span class="sk-price">${money(s.price!=null&&s.price!==''?s.price:(p.price||0))}</span>
+          <span class="sk-stock">${off?'已售罄':(st!=null?('余 '+st+' 件'):'')}</span>
+        </div>
+      </div>
     </div>`;
   }).join('');
 }
