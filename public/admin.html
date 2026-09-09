@@ -933,7 +933,9 @@ function renderMergedPending(){
     const div=document.createElement('div'); div.className='card merge-card';
     div.innerHTML=`
       <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-wait">待确认</span></div>
-      <div class="line" style="flex-wrap:wrap;gap:4px"><span class="k">客户</span><span style="font-weight:500">${escapeHtml(first.name||'')}</span><span style="color:#9a8f82">·</span><span>收件人：${escapeHtml(first.name||'')}</span><span style="color:#9a8f82">·</span><span>${escapeHtml(first.phone||'')}</span><span style="color:#9a8f82">·</span>${first.wechat?`<span style="color:#b8743f">微信：${escapeHtml(first.wechat)}</span>`:'<span style="color:#c0392b">（买家未填写微信）</span>'}</div>
+      <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
+      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       ${progressHtml}
       <div class="items">${orderBlocks}</div>
@@ -1029,7 +1031,9 @@ function renderMergedShip(){
           <input type="checkbox" id="gap-${ids.join('-')}" ${groupChecked} ${groupIndeterminate?'data-indeterminate="1"':''} onchange="toggleAllowPullGroup(['${ids.join("','")}'], this.checked)"> 允许发货管家采集
         </label>
       </div>
-      <div class="line" style="flex-wrap:wrap;gap:4px"><span class="k">客户</span><span style="font-weight:500">${escapeHtml(first.name||'')}</span><span style="color:#9a8f82">·</span><span>收件人：${escapeHtml(first.name||'')}</span><span style="color:#9a8f82">·</span><span>${escapeHtml(first.phone||'')}</span><span style="color:#9a8f82">·</span>${first.wechat?`<span style="color:#b8743f">微信：${escapeHtml(first.wechat)}</span>`:'<span style="color:#c0392b">（买家未填写微信）</span>'}</div>
+      <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
+      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       ${orderBlocks}
       <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-ship" onclick="shipGroup(['${ids.join("','")}'])">填写单号发货</button> ${swapBtnHtml(first.id)}</div>`;
