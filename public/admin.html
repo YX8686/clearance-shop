@@ -533,7 +533,9 @@ async function load(silent){
   // 若上一轮询还没完成，先 abort 掉，避免并发请求堆积
   if(loadTimer){ clearTimeout(loadTimer); loadTimer=null; }
   const _ctrl=new AbortController();
-  loadTimer = setTimeout(()=>{ _ctrl.abort(); loadTimer=null; },25000);
+  // 2026-09-09：Render 免费层冷启动可达 30-60s，把超时从 25s 拉到 80s，
+  // 并在首次加载遭遇超时时自动重试一次（极可能是冷启动未结束）
+  loadTimer = setTimeout(()=>{ _ctrl.abort(); loadTimer=null; },80000);
   try{
     const res=await fetch('/api/orders',{signal:_ctrl.signal});
     clearTimeout(loadTimer); loadTimer=null;
@@ -543,10 +545,18 @@ async function load(silent){
     ORDERS = o.map(s => pendingIds.has(s.id) ? (ORDERS.find(l=>l.id===s.id) || s) : s);
   }catch(e){
     clearTimeout(loadTimer); loadTimer=null;
+    const isAbort = (e.name==='AbortError' || (e.message||'').includes('aborted'));
+    // 首次加载超时 → 冷启动兜底：自动重试一次（仅一次，避免死循环）
+    if(firstLoad && !silent && isAbort && !window._loadColdRetried){
+      window._loadColdRetried=true;
+      toast('云端正在唤醒，自动重试中…');
+      await new Promise(r=>setTimeout(r,1500));
+      return load(silent);
+    }
     // 轮询失败时静默保留旧数据，只有首次加载/用户手动刷新才显示错误
     if(firstLoad && !silent){
       const list=document.getElementById('list');
-      const msg = (e.name==='AbortError' || e.message.includes('aborted')) ? '请求超时，请检查网络或重试' : e.message;
+      const msg = isAbort ? '云端响应较慢（已等待 80 秒）' : e.message;
       list.innerHTML='<div class="empty" style="color:#e74c3c">⚠️ 订单数据加载失败（'+msg+'）<br><br><button class="btn-primary" onclick="load()">重新加载</button></div>';
       setLoading(false);
     }
@@ -1539,22 +1549,19 @@ function downloadShipSheetImage(ordersParam){
   },'image/png');
 }
 // 勾选确认：单笔待发货订单允许/禁止发货管家采集
-// 2026-09-09 修复：把 id 加入 pendingIds 3s，setInterval 轮询触发的 load(true) 不会冲掉刚勾选的状态，
-//   避免「等过一会儿系统自动跳动页面、勾选状态错乱」症状
+// 2026-09-09 修复：把 id 加入 pendingIds 直到 fetch 完成才解除（不再固定 3s），
+//   避免「等过一会儿系统自动跳动页面、勾选状态错乱」症状（Render 冷启动时同步可能 >3s）
 async function toggleAllowPull(id, allow){
   const o=ORDERS.find(x=>x.id===id);
-  if(o){
-    o.allowPull=allow; o.allowPullAt=allow?Date.now():null;
-    pendingIds.add(id);
-    render();
-    setTimeout(()=>pendingIds.delete(id), 3000);
-  }
+  if(o){ o.allowPull=allow; o.allowPullAt=allow?Date.now():null; pendingIds.add(id); render(); }
   try{
     const r=await fetch('/api/orders/'+encodeURIComponent(id)+'/allow-pull',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({allowPull:allow})});
     if(!r.ok) throw new Error('HTTP '+r.status);
   }catch(e){
     toast('同步失败，请重试'); console.error('[allow-pull]',e);
-    if(o){ o.allowPull=!allow; o.allowPullAt=o.allowPull?Date.now():null; pendingIds.add(id); render(); setTimeout(()=>pendingIds.delete(id), 3000); }
+    if(o){ o.allowPull=!allow; o.allowPullAt=o.allowPull?Date.now():null; pendingIds.add(id); render(); }
+  }finally{
+    pendingIds.delete(id); // fetch 完成（成功或失败）才解除保护
   }
 }
 // 勾选确认：组合内全部订单批量设置
@@ -1562,7 +1569,8 @@ function toggleAllowPullGroup(ids, allow){
   ids.forEach(id=>toggleAllowPull(id, allow));
 }
 // 顶部快捷：一键全部允许（仅对待发货）。点完后自己去单独取消"今天不能发"的那些
-// 2026-09-09 修复：把所有 pending id 加进 pendingIds 3s 保护，避免被 15s 轮询冲掉
+// 2026-09-09 修复：每笔 fetch 完成（成功或失败）才解除 pendingIds 保护，
+//   避免 Render 冷启动时同步 >3s 导致 30s 轮询把刚勾选的又冲掉
 async function batchAllowPull(){
   const pending=ORDERS.filter(o=>o.status==='待发货');
   if(!pending.length){ toast('当前没有待发货订单'); return; }
@@ -1571,18 +1579,22 @@ async function batchAllowPull(){
   // 乐观更新：只勾选当前未勾选的，尊重用户此前已手动取消的（消除竞态）
   pending.forEach(o=>{ if(!o.allowPull){ o.allowPull=allow; o.allowPullAt=Date.now(); } pendingIds.add(o.id); });
   render();
-  setTimeout(()=>pending.forEach(o=>pendingIds.delete(o.id)), 3000);
-  try{
-    // 逐笔提交：仅提交当前 allowPull===true 的；用户在此期间手动取消的不会被覆盖回 true
-    const toSave=pending.filter(o=>o.allowPull===true);
-    await Promise.all(toSave.map(o=>
-      fetch('/api/orders/'+encodeURIComponent(o.id)+'/allow-pull',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({allowPull:true})})
-    ));
-    toast(`已允许 ${toSave.length} 单，可单独取消今天不能发的那几单`);
-  }catch(e){
-    toast('同步失败：'+e.message);
-    pending.forEach(o=>{ o.allowPull=false; o.allowPullAt=null; });
+  const toSave=pending.filter(o=>o.allowPull===true);
+  const failed=[];
+  await Promise.all(toSave.map(async o=>{
+    try{
+      const r=await fetch('/api/orders/'+encodeURIComponent(o.id)+'/allow-pull',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({allowPull:true})});
+      if(!r.ok) failed.push(o.id);
+    }catch(e){ failed.push(o.id); }
+    finally{ pendingIds.delete(o.id); } // fetch 完成才解除保护，不再固定 3s
+  }));
+  if(failed.length){
+    // 仅回滚失败的，保留成功的
+    failed.forEach(id=>{ const o=ORDERS.find(x=>x.id===id); if(o){ o.allowPull=false; o.allowPullAt=null; } });
     render();
+    toast(`已允许 ${toSave.length-failed.length} 单，${failed.length} 单同步失败已自动取消`);
+  }else{
+    toast(`已允许 ${toSave.length} 单，可单独取消今天不能发的那几单`);
   }
 }
 // 「同意进入今日可发」：把勾选了「允许发货管家采集」的待发货订单，一次性移入独立的「今日可发」状态，
@@ -1769,25 +1781,44 @@ function restoreOrder(id){
   toast('已重新成立，订单转入待发货');
   syncOrder(id, '/restore', {}, prev);
 }
-// 通用后台同步：成功用服务端返回订单覆盖，失败回滚到 prev（含一次可选重试）
+// 通用后台同步：成功用服务端返回订单覆盖
+// 失败（网络/HTTP）不再盲回滚到 prev（2026-09-09 修复「显示失败但实际已生效」自相矛盾），
+// 而是 load(true) 从云端拉权威状态对账：server 处理了 → 界面显示已处理；没处理 → 显示原状态
+// 2026-09-09 加 50s AbortController 防 Render 冷启动导致 fetch 永久挂起
 async function syncOrder(id, action, body, prev){
   pendingIds.add(id);
-  let r, tried=0;
-  while(tried<2){
-    try { r = await fetch('/api/orders/'+id+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
-    catch(e){ r=null; }
-    if(r && r.ok) break;
-    let tip='云端同步失败';
-    if(r){ try{ const d=await r.json(); if(d.message) tip+=': '+d.message; }catch(e){} }
-    if(r && r.status>=500 && tried===0 && window.confirm(tip+'\n\n云端同步可能失败，是否立即重试？')){ tried++; continue; }
+  const _sc=new AbortController();
+  const _scTimer=setTimeout(()=>_sc.abort(),50000);
+  let r;
+  try{
+    r = await fetch('/api/orders/'+id+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:_sc.signal});
+  }catch(e){ r=null; }
+  clearTimeout(_scTimer);
+  if(r && r.ok){
+    const d=await r.json().catch(()=>({}));
+    if(d.order){ ORDERS=ORDERS.map(x=>x.id===id?d.order:x); render(); }
     pendingIds.delete(id);
-    ORDERS=ORDERS.map(x=>x.id===id?prev:x); render();
-    toast(tip);
     return;
   }
-  const d=await r.json().catch(()=>({}));
-  if(d.order){ ORDERS=ORDERS.map(x=>x.id===id?d.order:x); render(); }
+  let tip='云端同步未确认';
+  if(r){ try{ const d=await r.json(); if(d.message) tip+=': '+d.message; }catch(e){} }
+  // HTTP 5xx 弹窗问用户是否重试（用户确认则新一次 fetch 不带旧 signal）
+  let retry=false;
+  if(r && r.status>=500){ retry = window.confirm(tip+'\n\n云端同步可能失败，是否立即重试？'); }
+  if(retry){
+    try{
+      const r2=await fetch('/api/orders/'+id+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(r2 && r2.ok){
+        const d=await r2.json().catch(()=>({}));
+        if(d.order){ ORDERS=ORDERS.map(x=>x.id===id?d.order:x); render(); }
+        pendingIds.delete(id);
+        return;
+      }
+    }catch(e){}
+  }
   pendingIds.delete(id);
+  toast(tip+'，已重新同步云端状态');
+  load(true); // 从云端拉权威状态对账（不盲回滚到 prev）
 }
 function copyShip(id){
   const o=ORDERS.find(x=>x.id===id);
