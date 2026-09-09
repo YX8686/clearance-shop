@@ -28,8 +28,6 @@ const SHIP_CLOUD_PREFIXES = ['/api/shipper/', '/api/manual-session/', '/api/manu
 // 精确路径 + 受允许 method（null = 任意 method）。/api/orders 与 /api/products 在商城已有同名端点，
 // 故仅在 ship-cloud 关心的 method（POST）上转发，避免破坏 GET 走商城
 const SHIP_CLOUD_EXACT = {
-  '/api/orders': 'POST',
-  '/api/products': 'POST',
   '/api/tracking': 'POST',
   '/api/pull-mall': 'POST',
   '/api/pull-mall-confirm': 'POST',
