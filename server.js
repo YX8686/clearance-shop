@@ -1406,6 +1406,8 @@ const server = http.createServer(async (req, res)=>{
         }
         const ogImage = inferShareImage(p) || pickShopShareImage(list);
         const safeConfig = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config && !Array.isArray(config) ? config : {}) };
+        // 2026-09-09 22:30 加：服务端预填主图，让浏览器在 HTML 解析时就并行下载（之前是 src="" 等 JS 再设，等几秒才出图）
+        const heroImage = p.image || (Array.isArray(p.skus) && p.skus.length && p.skus[0].image) || '/assets/product-placeholder.svg';
         let html = renderTemplate('product.html', {
           SHOP_NAME: htmlEscape(safeConfig.shopName),
           OG_TITLE: htmlEscape(p.name),
@@ -1413,6 +1415,7 @@ const server = http.createServer(async (req, res)=>{
           OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
           OG_URL: htmlEscape(BASE + '/product/'+p.id),
           OG_PRICE: htmlEscape(p.price || ''),
+          HERO_IMAGE: htmlEscape(heroImage),
           PRODUCT_JSON: jsonForScript(p),
           PRODUCTS_JSON: jsonForScript(list),
           CONFIG_JSON: jsonForScript(safeConfig)

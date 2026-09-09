@@ -110,6 +110,10 @@
   .sku-opt.on .sk-price{color:#b8743f}
   .sku-opt .sk-stock{font-size:12px;color:#9a8f82}
   .sku-opt.off .sk-stock{color:#c0392b;font-weight:600}
+  /* 2026-09-09 22:30 加：SKU 卡片显示「产品内容」（来自 bundleItems），让 A4组合/B2组合 这类编号名直接看得懂包含什么 */
+  .sku-opt .sk-bundle{font-size:12px;color:#7a6f62;line-height:1.55;margin-top:2px}
+  .sku-opt .sk-bundle .b-plus{color:#c0a989;margin:0 5px;font-weight:500}
+  .sku-opt.off .sk-bundle{color:#bbb}
   .sku-qty-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
   .qty-box{display:flex;align-items:center;border:1px solid #e0d6c8;border-radius:8px;overflow:hidden}
   .qty-box button{width:34px;height:34px;border:none;background:#faf7f2;font-size:18px;color:#5b5147;cursor:pointer}
@@ -249,7 +253,7 @@
         </div>
       </div>
       <div class="sku-bundle" id="skuBundleBox" style="display:none">
-        <div class="sku-sec-title">该选项实际包含</div>
+        <div class="sku-sec-title">产品内容</div>
         <div id="skuBundleList"></div>
       </div>
       <div class="sku-foot">
@@ -532,10 +536,20 @@ function renderSkuOptions(){
   box.innerHTML = p.skus.map(s=>{
     const st = skuStockOf(p, s);
     const off = st!=null && st<=0; // 该规格售罄，不可选
+    // 2026-09-09 22:30 加：SKU 卡片内置产品内容（来自 bundleItems），让 A4组合 这类编号名直接看得懂
+    const bi = (Array.isArray(s.bundleItems)&&s.bundleItems.length)?s.bundleItems:(p.bundleItems||[]);
+    const bundleHtml = bi.length
+      ? '<div class="sk-bundle">' + bi.map(b=>{
+          const qtyTxt = (b.qty&&b.qty>1) ? (b.qty+'× ') : '';
+          const unit = b.unit ? (' '+b.unit) : '';
+          return qtyTxt + escapeHtml(b.name||'') + unit;
+        }).join('<span class="b-plus">+</span>') + '</div>'
+      : '';
     return `<div class="sku-opt ${s.id===curSkuId?'on':''} ${off?'off':''}" ${off?'':`onclick="selectSku('${s.id}')"`}>
       <img class="sk-img" src="${escapeHtml(s.image||p.image||'/assets/products/default.svg')}" onerror="this.src='/assets/products/default.svg'" alt="">
       <div class="sk-body">
         <div class="sk-name">${escapeHtml(s.name||'')}</div>
+        ${bundleHtml}
         <div class="sk-meta">
           <span class="sk-price">${money(s.price!=null&&s.price!==''?s.price:(p.price||0))}</span>
           <span class="sk-stock">${off?'已售罄':(st!=null?('余 '+st+' 件'):'')}</span>
