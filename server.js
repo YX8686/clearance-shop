@@ -15,6 +15,39 @@ const VIEWS = path.join(ROOT, 'views');
 const GALLERY = path.join(PUBLIC, 'assets', 'gallery');
 const PORT = process.env.PORT || 4100;
 
+// ===== 嵌入发货管家（2026-09-09）：把 ship-cloud 的 handler 作为子路由转发 =====
+// 共用 4100 端口、共用 Supabase 数据源；线上访问路径不变（直接访问商城域名的原 ship-cloud 路径即可）
+let shipCloudHandler = null;
+try{
+  shipCloudHandler = require('./buchu-ship-cloud/server.js').handler;
+  console.log('[ship-cloud] handler loaded, embedded into mall server');
+}catch(e){
+  console.error('[ship-cloud] failed to load handler:', e.message);
+}
+const SHIP_CLOUD_PREFIXES = ['/api/shipper/', '/api/manual-session/', '/api/manual-pool/', '/api/manual-raw/'];
+// 精确路径 + 受允许 method（null = 任意 method）。/api/orders 与 /api/products 在商城已有同名端点，
+// 故仅在 ship-cloud 关心的 method（POST）上转发，避免破坏 GET 走商城
+const SHIP_CLOUD_EXACT = {
+  '/api/orders': 'POST',
+  '/api/products': 'POST',
+  '/api/tracking': 'POST',
+  '/api/pull-mall': 'POST',
+  '/api/pull-mall-confirm': 'POST',
+  '/api/mall-products': 'GET',
+  '/api/pending-tracking': 'GET',
+  '/api/confirm-tracking': 'POST',
+  '/api/pick-list': 'GET',
+  '/api/stock': null,
+  '/api/settings': null,
+};
+function isShipCloudPath(p, m){
+  if(!(p && typeof p==='string')) return false;
+  for(let i=0;i<SHIP_CLOUD_PREFIXES.length;i++) if(p.startsWith(SHIP_CLOUD_PREFIXES[i])) return true;
+  const want = Object.prototype.hasOwnProperty.call(SHIP_CLOUD_EXACT, p) ? SHIP_CLOUD_EXACT[p] : undefined;
+  if(want === undefined) return false;
+  return want === null || want === m;
+}
+
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
 function loadEnvLocal(){
   try {
@@ -651,6 +684,10 @@ const server = http.createServer(async (req, res)=>{
   const BASE = proto + '://' + host;
 
   try {
+    // ===== 发货管家子路由（路径命中则转发，不再走商城分发）=====
+    if(shipCloudHandler && isShipCloudPath(pathname, method)){
+      return shipCloudHandler(req, res);
+    }
     // ===== API =====
     if(pathname.startsWith('/api/')){
       // 商品 / 配置 / 订单列表（只读）
