@@ -426,8 +426,13 @@
       <div class="form-row">
         <label>SKU / 活动选项（买家可选不同规格）</label>
         <div id="skuList" style="display:flex;flex-direction:column;gap:10px;margin-bottom:10px"></div>
-        <button type="button" onclick="addSkuRow()" style="border:1px solid #b8743f;background:#fff;color:#b8743f;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer">+ 添加 SKU / 活动选项</button>
-        <div style="font-size:12px;color:#9a8f82;margin-top:8px">每个 SKU 可独立设置名称、价格、库存、发货明细。添加后，买家购买时必须先选择规格。</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button type="button" onclick="addSkuRow()" style="border:1px solid #b8743f;background:#fff;color:#b8743f;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer">+ 添加 SKU / 活动选项</button>
+          <!-- 2026-09-09 新增：一次选多张图，按 SKU 顺序批量分配主图（免去逐个上传） -->
+          <button type="button" onclick="uploadSkuImagesBatch()" style="border:1px solid #1f9d55;background:#fff;color:#1f9d55;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer">📷 批量上传主图（按顺序分配）</button>
+          <input type="file" id="skuBatchImgFile" accept="image/*" multiple style="display:none" onchange="handleSkuBatchUpload(this)">
+        </div>
+        <div style="font-size:12px;color:#9a8f82;margin-top:8px">每个 SKU 可独立设置名称、价格、库存、发货明细。添加后，买家购买时必须先选择规格。<br>「批量上传主图」：按住 Ctrl/Shift 一次选多张图，第 1 张给第 1 个 SKU、第 2 张给第 2 个 SKU，依次类推；图少的 SKU 保持原样。留空则用产品主图。</div>
       </div>
       <div class="form-row">
         <label>产品主图</label>
@@ -2271,6 +2276,43 @@ async function handleSkuImageUpload(input, idx){
   }
 }
 function pickSkuImage(idx){ galPickSkuIdx=idx; openGalPicker('sku'); }
+
+// ---- 2026-09-09 新增：批量上传 SKU 主图 ----
+// 场景：多 SKU 产品（如 5瓶/10瓶/20瓶）逐个点「上传主图」太慢。
+// 用法：按住 Ctrl/Shift 一次选中多张图，第1张给第1个SKU、第2张给第2个SKU，依次类推。
+function uploadSkuImagesBatch(){
+  if(!editingSkus || !editingSkus.length){ toast('请先添加至少一个 SKU'); return; }
+  const el=document.getElementById('skuBatchImgFile'); if(el) el.click();
+}
+async function handleSkuBatchUpload(input){
+  const files=Array.from(input.files||[]);
+  input.value=''; // 先清空，避免同样的一批文件再次触发
+  if(!files.length) return;
+  if(!editingSkus || !editingSkus.length){ toast('请先添加至少一个 SKU'); return; }
+  const use=files.slice(0, editingSkus.length);
+  const preview=use.slice(0,4).map((f,i)=>`第${i+1}张 → ${(editingSkus[i].name||('SKU'+(i+1)))}`).join('\n');
+  const more=use.length>4 ? `\n…共 ${use.length} 张` : '';
+  if(!window.confirm(`将按如下顺序分配 SKU 主图：\n\n${preview}${more}\n\n确定继续？（已配图的 SKU 会被覆盖）`)) return;
+  if(!currentGalFolder && GALLERY.length) currentGalFolder=GALLERY[0].name;
+  if(!currentGalFolder) currentGalFolder='默认图库';
+  let ok=0, fail=0;
+  toast(`开始上传 ${use.length} 张图…`);
+  for(let i=0;i<use.length;i++){
+    try{
+      const b64=await fileToBase64(use[i], true);
+      const res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:use[i].name})});
+      const data=await res.json();
+      if(!res.ok) throw new Error(data.error||('服务器错误 '+res.status));
+      if(data.error) throw new Error(data.error);
+      if(!data.url) throw new Error('服务器未返回图片地址');
+      updateSku(i,'image',data.url);
+      ok++;
+    }catch(err){ console.error('batch sku image upload error', err); fail++; }
+  }
+  renderSkuList();
+  try{ await refreshGallery(); }catch(e){}
+  toast(fail ? `批量上传完成：成功 ${ok} 张，失败 ${fail} 张` : `批量上传完成：${ok} 张已按顺序分配`);
+}
 function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function stripTags(s){ return String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').trim(); }
 function clearDesc(){ const t=document.getElementById('pDesc'); t.innerHTML=''; updateDescCount(); try{ t.focus(); }catch(e){} }
