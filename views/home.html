@@ -541,8 +541,7 @@ function renderSkuOptions(){
     const bundleHtml = bi.length
       ? '<div class="sk-bundle">' + bi.map(b=>{
           const qtyTxt = (b.qty&&b.qty>1) ? (b.qty+'× ') : '';
-          const unit = b.unit ? (' '+b.unit) : '';
-          return qtyTxt + escapeHtml(b.name||'') + unit;
+          return qtyTxt + escapeHtml(b.name||'');
         }).join('<span class="b-plus">+</span>') + '</div>'
       : '';
     return `<div class="sku-opt ${s.id===curSkuId?'on':''} ${off?'off':''}" ${off?'':`onclick="selectSku('${s.id}')"`}>
