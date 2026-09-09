@@ -159,7 +159,8 @@
   .modal-fld{margin:10px 0}
   .modal-fld label{display:block;font-size:12px;color:#7a6f62;margin-bottom:4px}
   .modal-fld input,.modal-fld select{width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #e0d6c8;border-radius:6px;font-size:14px}
-  .modal-edititem{display:flex;align-items:center;gap:6px;padding:6px 8px;background:#faf7f2;border-radius:6px;margin:6px 0;font-size:13px}
+  .modal-edititem{display:flex;align-items:center;gap:6px;padding:6px 8px;background:#faf7f2;border-radius:6px;margin:6px 0;font-size:13px;transition:background 1.2s ease-out}
+  .modal-edititem.manual-just-added{background:#d4f5d9 !important}
   .modal-edititem .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .modal-edititem .pr{color:#7a6f62;font-size:12px;white-space:nowrap}
   .modal-edititem .del{border:none;background:#f3e9e0;color:#c0392b;width:20px;height:20px;border-radius:50%;cursor:pointer;font-size:13px;padding:0}
@@ -1192,17 +1193,33 @@ function parseQtyUnit(v){
   return {qty:Math.max(1, Number(m[1])||1), unit:m[2].trim().slice(0,10)};
 }
 // 手工加品弹窗：在订单上删除原商品后，可手工追加已付款商品（不计入订单金额）
+// 2026-09-09 防丢加固：保存按钮实时显示 tmp 摘要 / 新加项高亮 1.5s / 保存前输入框残留自动加入 tmp
 function openSwapModal(orderId){
   const o=ORDERS.find(x=>x.id===orderId);
   if(!o) return;
   if(!isEditableOrder(o)){ toast('该订单已发货或已取消，不能再调整'); return; }
   let tmp=JSON.parse(JSON.stringify(o.items));
-  const draw=()=>{
-    const rows=tmp.map((it,i)=>`<div class="modal-edititem"><span class="nm">${renderItemName(it)}</span><span class="pr">${renderItemQty(it)}</span><button class="del" onclick="__swapDel(${i})">×</button></div>`).join('')||'<div style="color:#aaa;font-size:12px;padding:4px 0">（暂无商品）</div>';
+  const origSnapshot=JSON.parse(JSON.stringify(o.items)); // 原始快照，用于算"本次新增/删除"
+  // ★ 本次变更：新增手工品数 + 删除原品数（不算手工品删除，因手工品原本可加可不加）
+  const computeDelta=()=>{
+    const newManual=Math.max(0, tmp.filter(x=>x.isManualAdd).length - origSnapshot.filter(x=>x.isManualAdd).length);
+    const origKeySet=new Set(origSnapshot.map(x=>x.id+'#'+x.skuId));
+    const deletedOrig=origSnapshot.filter(x=>!x.isManualAdd && !tmp.some(y=>y.id+'#'+y.skuId===x.id+'#'+x.skuId)).length;
+    return {newManual, deletedOrig};
+  };
+  const saveBtnText=()=>{
+    const d=computeDelta();
+    const parts=[];
+    if(d.newManual>0) parts.push('+'+d.newManual+' 手工品');
+    if(d.deletedOrig>0) parts.push('-'+d.deletedOrig+' 原品');
+    return parts.length?('保存变更（'+parts.join(' / ')+'）'):'保存变更（无变化）';
+  };
+  const draw=(hiIdx)=>{
+    const rows=tmp.map((it,i)=>`<div class="modal-edititem${i===hiIdx?' manual-just-added':''}" data-idx="${i}"><span class="nm">${renderItemName(it)}</span><span class="pr">${renderItemQty(it)}</span><button class="del" onclick="__swapDel(${i})">×</button></div>`).join('')||'<div style="color:#aaa;font-size:12px;padding:4px 0">（暂无商品）</div>';
     showModal(`
       <h3>手工加品</h3>
       <div class="modal-sub">订单 ${orderId} · ${escapeHtml(o.name)} · 可删除原商品，并追加已付款的手工商品</div>
-      <div style="font-size:12px;color:#7a6f62;margin-bottom:6px">当前商品（点 × 删除）：</div>
+      <div style="font-size:12px;color:#7a6f62;margin-bottom:6px">当前商品（点 × 删除，新加项会闪绿色 1.5 秒）：</div>
       ${rows}
       <div class="modal-fld"><label>手工添加（只写名称和数量规格，不计入金额）</label>
         <div class="modal-addrow">
@@ -1213,13 +1230,39 @@ function openSwapModal(orderId){
       </div>
       <div class="modal-actions">
         <button class="btn-modal-cancel" onclick="closeModal()">取消</button>
-        <button class="btn-modal-ok" onclick="__swapSave()">保存</button>
+        <button class="btn-modal-ok" onclick="__swapSave()">${saveBtnText()}</button>
       </div>
     `);
+    // ★ 新加项高亮 1.5s 后自动移除
+    if(hiIdx!==undefined && hiIdx>=0){
+      setTimeout(()=>{ const el=document.querySelector('.modal-edititem[data-idx="'+hiIdx+'"]'); if(el) el.classList.remove('manual-just-added'); }, 1500);
+    }
   };
   window.__swapDel=i=>{ tmp=tmp.filter((_,j)=>j!==i); draw(); };
-  window.__swapAddManual=()=>{ const name=document.getElementById('swapName').value.trim(); const q=parseQtyUnit(document.getElementById('swapQty2').value); if(!name){ toast('请填写商品名称'); return; } tmp.push({id:'',skuId:'',skuName:'',name,price:0,qty:q.qty,unit:q.unit,isManualAdd:true,image:'',bundleItems:[]}); document.getElementById('swapName').value=''; document.getElementById('swapQty2').value=''; draw(); };
-  window.__swapSave=async()=>{ closeModal(); await applyOrderItems(o,tmp,`已更新订单 ${orderId}`); };
+  window.__swapAddManual=()=>{
+    const name=document.getElementById('swapName').value.trim();
+    const q=parseQtyUnit(document.getElementById('swapQty2').value);
+    if(!name){ toast('请填写商品名称'); return; }
+    tmp.push({id:'',skuId:'',skuName:'',name,price:0,qty:q.qty,unit:q.unit,isManualAdd:true,image:'',bundleItems:[]});
+    document.getElementById('swapName').value='';
+    document.getElementById('swapQty2').value='';
+    draw(tmp.length-1); // ★ 传入新加项索引触发高亮
+  };
+  // ★ 兜底：保存前若输入框还有残留，自动加入 tmp 再保存
+  // 防止"用户填了名称和数量但没点'添加'按钮，直接点了'保存'"导致加品丢失
+  window.__swapSave=async()=>{
+    const leftoverName=(document.getElementById('swapName')?.value||'').trim();
+    const leftoverQty=document.getElementById('swapQty2')?.value||'';
+    if(leftoverName){
+      const q=parseQtyUnit(leftoverQty);
+      tmp.push({id:'',skuId:'',skuName:'',name:leftoverName,price:0,qty:q.qty,unit:q.unit,isManualAdd:true,image:'',bundleItems:[]});
+      toast(`已自动添加输入框里的「${leftoverName} ${q.qty}${q.unit}」（你刚没点"添加"按钮，已替你加入保存）`);
+    }
+    closeModal();
+    const d=computeDelta();
+    const tip=`已更新订单 ${orderId}${d.newManual?`（+${d.newManual} 手工品）`:''}${d.deletedOrig?`（-${d.deletedOrig} 原品）`:''}`;
+    await applyOrderItems(o, tmp, tip);
+  };
   draw();
 }
 
