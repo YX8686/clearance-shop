@@ -1,9 +1,12 @@
 <!DOCTYPE html>
-<!-- BUILD-MARKER: clearance-shop admin 2026-09-10-v3 (隐藏分类即时保存修正 / 批量隐藏保勾选 / SKU副标题强制收集) -->
+<!-- BUILD-MARKER: clearance-shop admin 2026-09-10-v4 (单点隐藏兜底 / 5s缓存 / 双force no-cache / subtitle oninput) -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>商家后台</title>
 <link rel="icon" href="/assets/logo.ico">
 <script src="/business_rules.js"></script>
@@ -2294,7 +2297,7 @@ function renderSkuList(){
       </div>
       <input type="file" id="skuImgFile${idx}" accept="image/*" style="display:none" onchange="handleSkuImageUpload(this,${idx})">
       <textarea class="sku-bundle-text" rows="2" placeholder="该SKU对应的发货明细（每行：产品名 数量 单位）。必须填写，否则商城不会显示该SKU的发货内容。" onchange="updateSku(${idx},'bundle',this.value)" style="width:100%;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px;resize:vertical">${(s.bundleItems||[]).map(b=>`${b.name} ${b.qty} ${b.unit}`).join('\n')}</textarea>
-      <input type="text" class="sku-subtitle-input" placeholder="副标题（选填。客户端会以橘色小注解显示在 SKU 主框下方，如：「薄涂 5 瓶是 5 个月量」）" value="${escapeHtml(s.subtitle||'')}" onchange="updateSku(${idx},'subtitle',this.value)" maxlength="80" style="width:100%;border:1px dashed #fb923c;background:#fff7ef;color:#c2410c;border-radius:8px;padding:8px;font-size:13px;box-sizing:border-box">
+      <input type="text" class="sku-subtitle-input" placeholder="副标题（选填。客户端会以橘色小注解显示在 SKU 主框下方，如：「薄涂 5 瓶是 5 个月量」）" value="${escapeHtml(s.subtitle||'')}" oninput="updateSku(${idx},'subtitle',this.value)" onchange="updateSku(${idx},'subtitle',this.value)" maxlength="80" style="width:100%;border:1px dashed #fb923c;background:#fff7ef;color:#c2410c;border-radius:8px;padding:8px;font-size:13px;box-sizing:border-box">
     </div>
   `).join('');
 }
@@ -3172,15 +3175,35 @@ async function batchHide(){
   const targetHidden = !(selected.length>0 && selected.every(p=>p.hidden));
   if(!window.confirm('将'+(targetHidden?'隐藏':'上架')+'以下 '+ids.length+' 个产品？\n\n'+selected.map(p=>p.name||p.id).join('\n'))) return;
   let res;
-  try{ res = await fetch('/api/products/batch-hidden',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids, hidden:targetHidden})}); }
-  catch(e){ toast('批量操作失败：'+e.message); return; }
-  if(!res || !res.ok){
-    // 404 not found 几乎必然是「浏览器/服务器还是旧代码」——提示强刷而不是干报错
-    if(res && res.status===404){
-      toast('接口不存在，请按 Ctrl+F5 强刷后台后重试');
-      return;
+  // 加 ?_ts 时间戳防止任何中间代理/浏览器按 URL 缓存响应
+  const _ts = Date.now();
+  try{
+    res = await fetch('/api/products/batch-hidden?_ts='+_ts,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Cache-Control':'no-cache','Pragma':'no-cache'},
+      cache:'no-store',
+      body:JSON.stringify({ids, hidden:targetHidden})
+    });
+  }catch(e){ toast('批量操作失败：'+e.message); return; }
+  // 404 兜底：自动 fallback 到「逐个 toggle-hidden」——即使新接口被任何中间层拦了也能干活
+  if(res && res.status===404){
+    let ok2=0; for(const pid of ids){
+      const cur=PRODUCTS.find(p=>p.id===pid);
+      if(!cur) continue;
+      const want=!!targetHidden;
+      if(!!cur.hidden===want){ ok2++; continue; }
+      try{ const r=await fetch('/api/products/'+encodeURIComponent(pid)+'/toggle-hidden?_ts='+_ts,{method:'POST',cache:'no-store'}); if(r.ok){ ok2++; PRODUCTS.find(p=>p.id===pid).hidden=want; } }catch(e){}
     }
-    let tip='批量操作失败';
+    if(ok2){
+      toast('已通过备用通道 '+ (targetHidden?'隐藏':'上架') +' '+ok2+' 个产品');
+      load();
+    }else{
+      toast('批量操作失败：服务返回 404，且备用通道也未生效，请联系管理员');
+    }
+    return;
+  }
+  if(!res || !res.ok){
+    let tip='批量操作失败 (HTTP '+(res?res.status:'?')+')';
     try{ const d=await res.json(); if(d.error) tip+='：'+d.error; }catch(e){}
     toast(tip); return;
   }

@@ -716,7 +716,7 @@ function renderTemplate(name, vars){
 // 微信爬虫超时直接退化为纯文字链接、抓不到 OG 大图卡片。
 // 后台改完产品/配置会主动清缓存（见 saveProducts/saveConfig），兼顾新鲜度与速度。
 const htmlCache = new Map(); // key -> { html, ts }
-const HTML_CACHE_TTL = 30000; // 30 秒
+const HTML_CACHE_TTL = 5000; // 5 秒（2026-09-10 收紧：之前 30s 太长，admin 改完买家要等 30s 才看到，已发多次"设置不生效"误判）
 function getCachedHtml(key){
   const c = htmlCache.get(key);
   if(c && Date.now() - c.ts < HTML_CACHE_TTL) return c.html;
