@@ -117,9 +117,9 @@
   .sku-opt .sk-bundle{font-size:12px;color:#7a6f62;line-height:1.55;margin-top:2px}
   .sku-opt .sk-bundle .b-plus{color:#c0a989;margin:0 5px;font-weight:500}
   .sku-opt.off .sk-bundle{color:#bbb}
-  /* 2026-09-10 加：SKU 副标题（橘色小注解），放在规格名下面、产品内容上面；不填就不显示（前端条件渲染） */
-  .sku-opt .sk-subtitle{display:inline-block;background:linear-gradient(135deg,#fff3e0,#ffe0b2);color:#c2410c;border:1px solid #fb923c;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:600;line-height:1.5;margin-top:4px;max-width:100%;word-break:break-word;box-sizing:border-box}
-  .sku-opt.on .sk-subtitle{background:linear-gradient(135deg,#ffe0b2,#ffd591);border-color:#ea580c}
+  /* 2026-09-10 修：SKU 副标题改淡雅无背景斜体（按用户提供的目标图 image#2） */
+  .sku-opt .sk-subtitle{display:block;background:none !important;border:none !important;color:#8a6a4f !important;font-style:italic !important;font-weight:400 !important;font-size:12px !important;line-height:1.55;margin-top:5px !important;padding:0 !important;max-width:100%;word-break:break-word;box-sizing:border-box}
+  .sku-opt.on .sk-subtitle{color:#6f533c !important}
   .sku-opt.off .sk-subtitle{opacity:.55}
   .sku-qty-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
   .qty-box{display:flex;align-items:center;border:1px solid #e0d6c8;border-radius:8px;overflow:hidden}
@@ -555,7 +555,7 @@ function renderSkuOptions(){
       <img class="sk-img" src="${escapeHtml(s.image||p.image||'/assets/products/default.svg')}" onerror="this.src='/assets/products/default.svg'" alt="">
       <div class="sk-body">
         <div class="sk-name">${escapeHtml(s.name||'')}</div>
-        ${s.subtitle?'<div class="sk-subtitle">'+escapeHtml(s.subtitle)+'</div>':''}
+        ${s.subtitle?'<div class="v3-sub" data-v3sub="1" style="all:initial;display:block!important;background:none!important;border:none!important;color:#8a6a4f!important;font-style:italic!important;font-weight:400!important;font-size:12px!important;line-height:1.55!important;margin:5px 0 0!important;padding:0!important;max-width:100%;word-break:break-word;box-sizing:border-box">'+escapeHtml(s.subtitle)+'</div>':''}
         ${bundleHtml}
         <div class="sk-meta">
           <span class="sk-price">${money(s.price!=null&&s.price!==''?s.price:(p.price||0))}</span>
@@ -893,7 +893,8 @@ function startCountdown(){
   tick();
 }
 
-renderCats(); renderGrid(); updateBadge(); checkPendingOrders(); startCountdown();
+renderCats(); renderGrid(); updateBadge(); checkPendingOrders(); startCountdown(); /* v3-sub 兜底 */
+(function(){function fix(){document.querySelectorAll('[data-v3sub="1"]').forEach(function(el){el.style.cssText='all:initial;display:block!important;background:none!important;border:none!important;color:#8a6a4f!important;font-style:italic!important;font-weight:400!important;font-size:12px!important;line-height:1.55!important;margin:5px 0 0!important;padding:0!important;'});}fix();document.addEventListener('DOMContentLoaded',fix);setTimeout(fix,100);setTimeout(fix,500);})();
 </script>
 </body>
 </html>
