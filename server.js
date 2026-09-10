@@ -751,6 +751,13 @@ const server = http.createServer(async (req, res)=>{
     if(shipCloudHandler && isShipCloudPath(pathname, method)){
       return shipCloudHandler(req, res);
     }
+    if(method==='GET' && pathname==='/api/admin-build'){
+      // 商家后台自检版本端点：admin.html 加载时会 fetch 这里对比自己嵌入的版本号，
+      // 不一致就 location.replace 强制刷一次。no-store 防止任何中间层缓存。
+      res.writeHead(200, {'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store, must-revalidate', 'Pragma':'no-cache'});
+      res.end(JSON.stringify({ v: ADMIN_BUILD, t: Date.now() }));
+      return;
+    }
     // ===== API =====
     if(pathname.startsWith('/api/')){
       // 商品 / 配置 / 订单列表（只读）
@@ -1553,14 +1560,6 @@ const server = http.createServer(async (req, res)=>{
         CONFIG_JSON: jsonForScript(config)
       });
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':html); return;
-    }
-
-    if(method==='GET' && pathname==='/api/admin-build'){
-      // 商家后台自检版本端点：admin.html 加载时会 fetch 这里对比自己嵌入的版本号，
-      // 不一致就 location.replace 强制刷一次。no-store 防止任何中间层缓存。
-      res.writeHead(200, {'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store, must-revalidate', 'Pragma':'no-cache'});
-      res.end(JSON.stringify({ v: ADMIN_BUILD, t: Date.now() }));
-      return;
     }
 
     if(method==='GET' && pathname==='/admin'){
