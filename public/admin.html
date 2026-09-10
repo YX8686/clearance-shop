@@ -614,6 +614,27 @@ function refreshCdManualOptions(sel){
   sel0.innerHTML='<option value="-1">自动切换</option>';
   for(let i=1;i<=n;i++){ const o=document.createElement('option'); o.value=String(i-1); o.textContent='第'+i+'句'; if((i-1)===cur) o.selected=true; sel0.appendChild(o); }
 }
+// 隐藏分类：勾选即时落库（防 15s 轮询覆盖、免去「忘记点保存设置」造成错觉）。
+// 仅 POST hiddenCategories 一个字段，不会改动其它配置。
+let _hiddenSaveTimer = null;
+let _hiddenSaving = false;
+function scheduleHiddenCatsSave(){
+  if(_hiddenSaveTimer) clearTimeout(_hiddenSaveTimer);
+  _hiddenSaveTimer = setTimeout(saveHiddenCatsNow, 350);
+}
+async function saveHiddenCatsNow(){
+  _hiddenSaveTimer = null;
+  if(_hiddenSaving) return; // 防重叠
+  const list = Array.from(document.querySelectorAll('.cat-hide-cb:checked')).map(cb=>cb.value);
+  CONFIG.hiddenCategories = list;
+  _hiddenSaving = true;
+  try{
+    const res = await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hiddenCategories:list})});
+    if(res && res.ok){ toast(list.length? ('已隐藏 '+list.length+' 个分类（买家端即时生效）') : '已恢复显示全部分类'); }
+    else { toast('隐藏分类保存失败'); }
+  }catch(e){ toast('隐藏分类保存失败：'+e.message); }
+  finally{ _hiddenSaving = false; }
+}
 async function loadOthers(){
   const [c,p,g]=await Promise.all([
     fetch('/api/config').then(r=>r.json()),
@@ -635,10 +656,16 @@ async function loadOthers(){
     document.getElementById('sCdSeg').value=CONFIG.countdownSegmentHours||12;
     refreshCdManualOptions(CONFIG.countdownManualIndex);
     document.getElementById('sCdPhrases').addEventListener('input', refreshCdManualOptions);
+
+    // 隐藏分类勾选：只首次回填，之后由用户自由切换并即时保存（不被 15s 轮询覆盖）
+    const initHidden=Array.isArray(CONFIG.hiddenCategories)?CONFIG.hiddenCategories:[];
+    document.querySelectorAll('.cat-hide-cb').forEach(cb=>{ cb.checked=initHidden.includes(cb.value); });
+    document.querySelectorAll('.cat-hide-cb').forEach(cb=>{
+      cb.addEventListener('change', scheduleHiddenCatsSave);
+    });
+
     configFormFilled=true;
   }
-  const hiddenCats=Array.isArray(CONFIG.hiddenCategories)?CONFIG.hiddenCategories:[];
-  document.querySelectorAll('.cat-hide-cb').forEach(cb=>{ cb.checked=hiddenCats.includes(cb.value); });
 
   // 避免 15s 轮询导致产品列表不断重建、图片重载、页面闪烁
   const modalOpen=document.getElementById('prodModal')?.classList.contains('show');
@@ -2094,6 +2121,7 @@ function renderPM(){
       <label class="pm-all"><input type="checkbox" id="pmSelectAll" onchange="toggleSelectAll()"> 全选</label>
       <div class="pm-count">共 ${PRODUCTS.length} 个产品 · 拖拽卡片可调整前台展示顺序</div>
       <div class="pm-actions">
+        <button type="button" id="pmBatchHide" class="btn-primary" onclick="batchHide()" disabled title="把勾选的产品在买家端隐藏或恢复显示">隐藏选中产品 (0)</button>
         <button type="button" id="pmBatchDel" class="btn-primary" onclick="batchDelete()" disabled>删除选中产品 (0)</button>
         <button class="btn-primary" onclick="newProduct()">+ 新增产品</button>
       </div>
@@ -3082,9 +3110,20 @@ async function deleteProduct(id){
 }
 function updateBatchDelete(){
   const ids=Array.from(document.querySelectorAll('.pm-sel:checked')).map(cb=>cb.value);
-  const btn=document.getElementById('pmBatchDel');
+  const delBtn=document.getElementById('pmBatchDel');
+  const hideBtn=document.getElementById('pmBatchHide');
   const all=document.getElementById('pmSelectAll');
-  if(btn){ btn.textContent='删除选中产品 ('+ids.length+')'; btn.disabled=ids.length===0; }
+  if(delBtn){ delBtn.textContent='删除选中产品 ('+ids.length+')'; delBtn.disabled=ids.length===0; }
+  if(hideBtn){
+    // 智能标签：全已隐藏→「上架选中」，否则→「隐藏选中」；混合态显示「切换」
+    const selected = ids.map(id=>(PRODUCTS.find(p=>p.id===id)||{})).filter(Boolean);
+    const hiddenCount = selected.filter(p=>p.hidden).length;
+    let label='隐藏选中产品 ('+ids.length+')';
+    if(ids.length>0 && hiddenCount===ids.length) label='上架选中产品 ('+ids.length+')';
+    else if(ids.length>0 && hiddenCount>0 && hiddenCount<ids.length) label='切换隐藏 ('+ids.length+')';
+    hideBtn.textContent=label;
+    hideBtn.disabled=ids.length===0;
+  }
   if(all){ all.checked=PRODUCTS.length>0 && ids.length===PRODUCTS.length; }
 }
 function toggleSelectAll(){
@@ -3103,6 +3142,25 @@ async function batchDelete(){
     catch(e){ console.error('delete',id,e); }
   }
   toast('已删除 '+ok+' / '+ids.length+' 个产品'); load();
+}
+// 一键批量隐藏 / 上架勾选产品。智能判定目标值：全已隐藏则恢复，否则统一隐藏。
+async function batchHide(){
+  const ids=Array.from(document.querySelectorAll('.pm-sel:checked')).map(cb=>cb.value).filter(Boolean);
+  if(!ids.length){ toast('请先勾选要操作的产品'); return; }
+  const selected = ids.map(id=>PRODUCTS.find(p=>p.id===id)).filter(Boolean);
+  const targetHidden = !(selected.length>0 && selected.every(p=>p.hidden));
+  if(!window.confirm('将'+(targetHidden?'隐藏':'上架')+'以下 '+ids.length+' 个产品？\n\n'+selected.map(p=>p.name||p.id).join('\n'))) return;
+  let res;
+  try{ res = await fetch('/api/products/batch-hidden',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids, hidden:targetHidden})}); }
+  catch(e){ toast('批量操作失败：'+e.message); return; }
+  if(!res || !res.ok){
+    let tip='批量操作失败';
+    try{ const d=await res.json(); if(d.error) tip+='：'+d.error; }catch(e){}
+    toast(tip); return;
+  }
+  let d=null; try{ d=await res.json(); }catch(e){}
+  toast((targetHidden?'已隐藏 ':'已上架 ')+(d&&typeof d.updated==='number'?d.updated:ids.length)+' 个产品');
+  load();
 }
 
 // ---------- 图库 ----------

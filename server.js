@@ -1457,6 +1457,28 @@ const server = http.createServer(async (req, res)=>{
         await flushDirtyProducts();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, hidden: products[idx].hidden})); return;
       }
+      // 商家后台：批量隐藏/上架多个产品（买家端立即不可见）。body: {ids:[...], hidden:true|false}
+      if(method==='POST' && pathname==='/api/products/batch-hidden'){
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+        const ids = Array.isArray(body.ids) ? body.ids.map(x=>String(x).trim()).filter(Boolean).slice(0,500) : [];
+        if(!ids.length){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no ids'})); return; }
+        const hidden = body.hidden===true;
+        let updated = 0;
+        await withLock(async()=>{
+          for(const pid of ids){
+            const idx = products.findIndex(x=>x.id===pid);
+            if(idx===-1) continue;
+            if(products[idx].hidden === hidden) continue; // 已经是目标状态就跳过
+            products[idx].hidden = hidden;
+            markProductDirty(pid);
+            updated++;
+          }
+          if(updated) await flushDirtyProducts();
+        });
+        // 操作产品配置触发表，让买家端 / 与详情页缓存失效
+        clearHtmlCache();
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, updated, hidden})); return;
+      }
 
       res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return;
     }
