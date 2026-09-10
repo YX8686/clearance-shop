@@ -422,7 +422,7 @@ function renderSkuCards(p){
     return `<div class="sku-card ${off?'off':''}" ${off?'':`onclick="selectSkuOnPage(P,'${s.id}')"`} data-sku="${s.id}">
       ${best}
       <div class="sc-main">${sn.main}</div>
-      ${s.subtitle?'<div class="sc-subtitle">'+escapeHtml(s.subtitle)+'</div>':''}
+      ${s.subtitle?'<div class="sc-subtitle" style="color:#8a6a4f !important;font-style:italic !important;background:none !important;border:none !important;padding:0 !important;margin:4px 0 0 !important;display:block !important;font-size:11px !important;line-height:1.45 !important">'+escapeHtml(s.subtitle)+'</div>':''}
       ${sn.sub?'<div class="sc-sub">'+sn.sub+'</div>':''}
       <div class="sc-price">${money(s.price||p.price||0)}</div>
       ${perBottleHtml(s)}
@@ -543,7 +543,7 @@ function renderSkuOptions(p){
       <img class="sk-img" src="${escapeHtml(s.image||p.image||'/assets/products/default.svg')}" onerror="this.src='/assets/products/default.svg'" alt="">
       <div class="sk-body">
         <div class="sk-name">${escapeHtml(s.name||'')}</div>
-        ${s.subtitle?'<div class="sk-subtitle">'+escapeHtml(s.subtitle)+'</div>':''}
+        ${s.subtitle?'<div class="sk-subtitle" style="color:#8a6a4f !important;font-style:italic !important;background:none !important;border:none !important;padding:0 !important;margin:4px 0 0 !important;display:block !important;font-size:12px !important;line-height:1.5 !important">'+escapeHtml(s.subtitle)+'</div>':''}
         ${bundleHtml}
         <div class="sk-meta">
           <span class="sk-price">${money(s.price!=null&&s.price!==''?s.price:(p.price||0))}</span>
