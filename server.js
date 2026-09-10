@@ -357,7 +357,18 @@ async function _flushOrderQueue(){
           try { await sb.from('shop_data').upsert({ key:'order:'+o.id, value:o }); } catch(e){}
         }
       }
-    } catch(e){ console.error('[orderFlush] exception:', e.message); }
+    } catch(e){
+      console.error('[orderFlush] exception:', e.message, '| 重新入队防丢单');
+      _orderWriteQueue.push(...batch); // 崩溃/异常时把本批重新放回队列，等下次重试，绝不静默丢弃
+    }
+  } else {
+    // 文件模式：把当前内存全量订单原子落盘（修复前这里完全没写，导致本地模式下订单状态变更重启即丢）
+    try {
+      await withLock(()=> writeJsonAtomic('orders.json', orders));
+    } catch(e){
+      console.error('[orderFlush disk] exception:', e.message, '| 重新入队防丢单');
+      _orderWriteQueue.push(...batch);
+    }
   }
   // 如果队列还有积压，立即排下一批
   if(_orderWriteQueue.length) _scheduleOrderFlush();
@@ -370,12 +381,15 @@ function saveOrderRow(order){
   if(_orderWriteQueue.length >= 50) _flushOrderQueue(); // 满了立即刷
   else _scheduleOrderFlush(); // 500ms 后批量刷
 }
-// 状态变更用（低频管理操作）：内存即时同步 + 立即单条 upsert（确保状态即时落盘）
+// 状态变更用（低频管理操作）：内存即时同步 + 立即单条落盘（确保状态即时持久化，重启不丢）
 async function saveOrderRowSync(order){
   if(USE_SUPABASE){
     const { error } = await sb.from('shop_data').upsert({ key:'order:'+order.id, value: order });
     if(error) throw new Error('Supabase saveOrderRow error: '+error.message);
     kvCache.set('order:'+order.id, { ts:Date.now(), value:order, promise:null });
+  } else {
+    // 文件模式：状态变更后立即原子写盘（修复前只改内存，重启即丢单）
+    await withLock(()=> writeJsonAtomic('orders.json', orders)).catch(e=>console.error('[saveOrderRowSync disk]', e.message));
   }
   const idx = orders.findIndex(o=>o.id===order.id);
   if(idx>=0) orders[idx]=order; else orders.push(order);
@@ -614,11 +628,38 @@ function pickShopShareImage(list){
   }
   return '';
 }
+// 全局唯一订单号：实例分片(2) + 随机(6) + 进程内自增序号，杜绝 Render 多实例碰撞导致的
+// 「同 id 互相覆盖 → 丢单/重复」问题（旧实现仅 8 位随机 + 进程内查重，多实例并发可生成相同 id）。
+const _instanceShard = crypto.randomBytes(2).toString('hex');
+let _orderSeq = 0;
 function genId(){
   let id;
-  do { id = crypto.randomBytes(4).toString('hex').toUpperCase(); }
-  while(orders.find(o=>o.id===id));
+  do {
+    id = (_instanceShard + crypto.randomBytes(3).toString('hex') + (++_orderSeq).toString(36)).toUpperCase();
+  } while(orders.find(o=>o.id===id));
   return id;
+}
+
+// ===== 订单级互斥锁：把「刷新云端→校验状态→改状态→落盘」对同一个订单 id 原子化 =====
+// 旧实现各状态接口各自 refresh→find→mutate→save，全程 await 会让出事件循环；多请求并发改同一单时
+// （如同时 confirm + cancel、双取消、双确认）会丢失更新（库存恢复两次 / 状态部分处理）。
+// 加 per-order Promise 链，使同一单的多次操作严格串行，杜绝竞态。
+const _orderLocks = new Map(); // id -> Promise 链
+function withOrderLock(id, fn){
+  const existing = _orderLocks.get(id) || Promise.resolve();
+  const p = existing.then(()=>fn(), ()=>fn());
+  _orderLocks.set(id, p.catch(()=>{}));
+  p.finally(()=>{ if(_orderLocks.get(id)===p) _orderLocks.delete(id); }).catch(()=>{});
+  return p;
+}
+
+// 状态正向流转守卫：已发货是终态之一，绝不能回退；已取消绝不可复活为已发货（避免重复发货）。
+// 返回 {ok, noop?, code?, error?}
+function shipGuard(o){
+  if(!o) return { ok:false, code:404, error:'no' };
+  if(o.status==='已取消') return { ok:false, code:400, error:'cancelled_cannot_ship' };
+  if(o.status==='已发货') return { ok:true, noop:true }; // 幂等：已发货不再处理
+  return { ok:true };
 }
 
 const MIME = {
@@ -762,7 +803,7 @@ const server = http.createServer(async (req, res)=>{
           }
           return { id:pid, skuId, skuName, name, price, qty:Number(it.qty), image, bundleItems: skuBundle.length?skuBundle:(p&&p.bundleItems?p.bundleItems:[]) };
         });
-        const total = detail.reduce((s,x)=> s + x.price*x.qty, 0);
+        const total = Math.round(detail.reduce((s,x)=> s + x.price*x.qty, 0) * 100) / 100;
 
         // ===== 库存校验与扣减（stock 为数字才限量；null/未填视为不限量）=====
         // 注：products 以内存副本为权威（启动已载入云端最新），不再每单 syncProducts() 往返，
@@ -827,45 +868,56 @@ const server = http.createServer(async (req, res)=>{
       // 客户确认已发送付款截图
       const mPaid = pathname.match(/^\/api\/orders\/([\w-]+)\/paid$/);
       if(method==='POST' && mPaid){
-        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
-        const o = orders.find(o=>o.id===mPaid[1]);
-        if(!o){ res.writeHead(404); res.end('no'); return; }
-        if(o.status==='待付款'){ o.status='待确认'; o.paidScreenshotAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o); }
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        return withOrderLock(mPaid[1], async ()=>{
+          await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
+          const o = orders.find(o=>o.id===mPaid[1]);
+          if(!o){ res.writeHead(404); res.end('no'); return; }
+          if(o.status==='待付款'){ o.status='待确认'; o.paidScreenshotAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o); }
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        });
       }
       // 确认收款
       const mConfirm = pathname.match(/^\/api\/orders\/([\w-]+)\/confirm$/);
       if(method==='POST' && mConfirm){
-        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
-        const o = orders.find(o=>o.id===mConfirm[1]);
-        if(!o){ res.writeHead(404); res.end('no'); return; }
-        if(o.status==='待付款' || o.status==='待确认'){
-          o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o);
-        }
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        return withOrderLock(mConfirm[1], async ()=>{
+          await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
+          const o = orders.find(o=>o.id===mConfirm[1]);
+          if(!o){ res.writeHead(404); res.end('no'); return; }
+          if(o.status==='待付款' || o.status==='待确认'){
+            o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o);
+          }
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        });
       }
-      // 发货
+      // 发货（→已发货，正向终态；已取消绝不复活、已发货幂等）
       const mShip = pathname.match(/^\/api\/orders\/([\w-]+)\/ship$/);
       if(method==='POST' && mShip){
-        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
-        const o = orders.find(o=>o.id===mShip[1]);
-        if(!o){ res.writeHead(404); res.end('no'); return; }
-        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
-        o.status='已发货'; o.tracking=String(body.tracking||'').slice(0,60); o.shippedAt=Date.now(); await saveOrderRowSync(o);
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        return withOrderLock(mShip[1], async ()=>{
+          await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
+          const o = orders.find(o=>o.id===mShip[1]);
+          const g = shipGuard(o);
+          if(!g.ok){ res.writeHead(g.code,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:g.error})); return; }
+          let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+          if(!g.noop){
+            o.status='已发货'; o.tracking=String(body.tracking||'').slice(0,60); o.shippedAt=Date.now(); await saveOrderRowSync(o);
+          }
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        });
       }
       // 允许/禁止发货管家采集（仅待发货状态可设置）
       const mAllowPull = pathname.match(/^\/api\/orders\/([\w-]+)\/allow-pull$/);
       if(method==='POST' && mAllowPull){
-        await syncOrders();
-        const o = orders.find(o=>o.id===mAllowPull[1]);
-        if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
-        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
-        o.allowPull = !!body.allowPull;
-        o.allowPullAt = o.allowPull ? Date.now() : null;
-        await saveOrderRowSync(o);
-        if(!USE_SUPABASE) await saveKV('orders', orders).catch(e=>console.error('[allow-pull disk]',e.message));
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
+        return withOrderLock(mAllowPull[1], async ()=>{
+          await syncOrders();
+          const o = orders.find(o=>o.id===mAllowPull[1]);
+          if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
+          let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+          o.allowPull = !!body.allowPull;
+          o.allowPullAt = o.allowPull ? Date.now() : null;
+          await saveOrderRowSync(o);
+          if(!USE_SUPABASE) await saveKV('orders', orders).catch(e=>console.error('[allow-pull disk]',e.message));
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
+        });
       }
       // 批量允许/禁止（仅操作 status==='待发货' 的订单）
       const mBatchAllow = pathname.match(/^\/api\/orders\/batch-allow-pull$/);
@@ -903,7 +955,22 @@ const server = http.createServer(async (req, res)=>{
       if(method==='POST' && mMallExport){
         let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
         const date = String(body.date||new Date().toISOString().slice(0,10));
-        const exported = Array.isArray(body.orders) ? body.orders.filter(o=>o && o.id && o.phone) : [];
+        // 防重复导出（修复前：仅按客户端传来的 body.orders 标记待回传，但会把同一批订单又塞进新 session，
+        // 导致发货员在两个 session 都看到 → 重复发货）。现在改为「服务端按状态去重」：
+        // 仅接受当前确为「今日可发/待发货」且未被任何历史 session 收录过的订单。
+        const reqIds = Array.isArray(body.orders) ? body.orders.map(o=>o && o.id).filter(Boolean) : [];
+        let existingSessionIds = new Set();
+        try { const arr = await loadKV('mall_sessions', []); (Array.isArray(arr)?arr:[]).forEach(s=>(s.orders||[]).forEach(o=>existingSessionIds.add(o.id))); } catch(e){}
+        await refreshOrdersFromCloud().catch(e=>console.error('[mall-export refresh]', e.message));
+        const exported = [];
+        orders.forEach(o=>{
+          if((o.status==='今日可发' || o.status==='待发货') && reqIds.includes(o.id) && !existingSessionIds.has(o.id)){
+            exported.push({ id:o.id, phone:o.phone, name:o.name, address:o.address });
+          }
+        });
+        if(!exported.length){
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, sessionId:null, ts:Date.now(), count:0, totalSessions:(await loadKV('mall_sessions',[])).length, returnedIds:[], note:'nothing_to_export'})); return;
+        }
         const session = {
           sessionId: 'M'+Date.now().toString(36)+Math.random().toString(36).slice(2,4),
           ts: Date.now(), date, orders: exported
@@ -914,9 +981,6 @@ const server = http.createServer(async (req, res)=>{
           const list = Array.isArray(arr) ? arr : [];
           list.push(session);
           await saveKV('mall_sessions', list);
-          // 关键：先刷新内存订单副本。Render 冷启动/内存可能过期或为空，直接 find 会找不到订单，
-          // 导致「标记为待回传」这一步空转、防重复失效。refreshOrdersFromCloud() 正是 /api/orders 用的那份权威数据源。
-          await refreshOrdersFromCloud().catch(e=>console.error('[mall-export refresh]', e.message));
           // 防重复：把已导出的「今日可发」订单标记为「待回传」，使其离开「今日可发」、进入「等待回传区」
           const byId = new Map(exported.map(o=>[o.id, o]));
           const dirty = [];
@@ -930,10 +994,11 @@ const server = http.createServer(async (req, res)=>{
       // 取消订单（允许待付款 / 待确认 状态，含商家端「未收到该款项」）
       const mCancel = pathname.match(/^\/api\/orders\/([\w-]+)\/cancel$/);
       if(method==='POST' && mCancel){
-        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
-        const o = orders.find(o=>o.id===mCancel[1]);
-        if(!o){ res.writeHead(404); res.end(JSON.stringify({error:'no'})); return; }
-        if(o.status!=='待付款' && o.status!=='待确认'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_pending_or_confirm_can_cancel'})); return; }
+        return withOrderLock(mCancel[1], async ()=>{
+          await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
+          const o = orders.find(o=>o.id===mCancel[1]);
+          if(!o){ res.writeHead(404); res.end(JSON.stringify({error:'no'})); return; }
+          if(o.status!=='待付款' && o.status!=='待确认'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_pending_or_confirm_can_cancel'})); return; }
         let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
         // 恢复库存：仅本功能上线后下单（stockDeducted 标记）的订单才恢复，历史订单不回溯
         let stockRestored = false;
@@ -978,11 +1043,13 @@ const server = http.createServer(async (req, res)=>{
         }
         if(stockRestored) saveProductsDebounced();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        });
       }
       // 恢复已取消订单：商家核实后重新成立，进入待发货（库存恢复后再次扣除）
       const mRestore = pathname.match(/^\/api\/orders\/([\w-]+)\/restore$/);
       if(method==='POST' && mRestore){
-        const o = orders.find(o=>o.id===mRestore[1]);
+        return withOrderLock(mRestore[1], async ()=>{
+          const o = orders.find(o=>o.id===mRestore[1]);
         if(!o){ res.writeHead(404); res.end(JSON.stringify({error:'no'})); return; }
         if(o.status!=='已取消'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_cancelled_can_restore'})); return; }
         // 重新扣减库存：仅本功能上线后下单（stockDeducted 标记）的订单才扣，历史订单不回溯
@@ -1030,15 +1097,17 @@ const server = http.createServer(async (req, res)=>{
         }
         if(stockRededucted) saveProductsDebounced();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        });
       }
       // ---------- 修改订单商品（删除某几项 / 换货补货追加）：重算 total，被删商品恢复库存 ----------
       const mUpdateItems = pathname.match(/^\/api\/orders\/([\w-]+)\/update-items$/);
       if(method==='POST' && mUpdateItems){
-        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本覆盖
-        const o = orders.find(o=>o.id===mUpdateItems[1]);
-        if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
-        // 仅未发货订单可改商品（已发货/已取消不可直接改）
-        if(o.status==='已发货' || o.status==='已取消'){
+        return withOrderLock(mUpdateItems[1], async ()=>{
+          await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本覆盖
+          const o = orders.find(o=>o.id===mUpdateItems[1]);
+          if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
+          // 仅未发货订单可改商品（已发货/已取消不可直接改）
+          if(o.status==='已发货' || o.status==='已取消'){
           res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_unshipped_can_edit'})); return;
         }
         let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
@@ -1069,7 +1138,7 @@ const server = http.createServer(async (req, res)=>{
         });
         const prevItems=o.items, prevTotal=o.total, prevStatus=o.status, prevCancelledAt=o.cancelledAt;
         o.items=newItems;
-        o.total=newItems.reduce((s,x)=>s+(x.isManualAdd?0:x.price*x.qty),0);
+        o.total=Math.round(newItems.reduce((s,x)=>s+(x.isManualAdd?0:x.price*x.qty),0)*100)/100;
         if(newItems.length===0){ o.status='已取消'; o.cancelledAt=Date.now(); }
         try { await saveOrderRowSync(o); }
         catch(e){
@@ -1080,6 +1149,7 @@ const server = http.createServer(async (req, res)=>{
         }
         if(stockRestored) saveProductsDebounced();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
+        });
       }
       // ---------- 新建手工订单（商家后台补单/换货追加）：沿用客户信息，商品可手工填写，不扣系统库存 ----------
       if(method==='POST' && pathname==='/api/orders/manual'){
@@ -1104,7 +1174,7 @@ const server = http.createServer(async (req, res)=>{
             bundleItems: Array.isArray(it.bundleItems)?it.bundleItems:[]
           };
         });
-        const total = detail.reduce((s,x)=>s+x.price*x.qty,0);
+        const total = Math.round(detail.reduce((s,x)=>s+x.price*x.qty,0)*100)/100;
         const id = genId();
         const order = {
           id, items:detail, total,

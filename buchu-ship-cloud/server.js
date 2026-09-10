@@ -158,7 +158,13 @@ async function pullMallConfirm(ids){
 async function writebackTracking(srcId, tracking){
   const mallOrders=await loadMallOrders();
   const o=(mallOrders||[]).find(x=>x.id===srcId);
-  if(o){ o.tracking=tracking; o.status='已发货'; if(USE_SUPABASE){ await sb.from('shop_data').upsert({key:'order:'+srcId, value:o}); } else await saveKV(MALL_ORDERS,mallOrders); }
+  if(o){
+    // 守卫：已取消绝不复活；已发货幂等（已填单号则不再处理）
+    if(o.status==='已取消') return false;
+    if(o.status==='已发货' && o.tracking) return true;
+    o.tracking=tracking; o.status='已发货'; o.shippedAt=Date.now();
+    if(USE_SUPABASE){ await sb.from('shop_data').upsert({key:'order:'+srcId, value:o}); } else await saveKV(MALL_ORDERS,mallOrders);
+  }
   return !!o;
 }
 
@@ -171,6 +177,9 @@ async function writebackMallExportTracking(srcId, tracking){
     if(error) throw new Error(error.message);
     if(!data) return false;
     const o=data.value||{};
+    // 守卫：已取消绝不复活为已发货（避免重复发货）；已发货且已有单号则幂等跳过
+    if(o.status==='已取消') return false;
+    if(o.status==='已发货' && o.tracking) return true;
     o.tracking=tracking; o.status='已发货'; o.shippedAt=Date.now();
     const {error:uerr}=await sb.from('shop_data').upsert({key:'order:'+srcId, value:o});
     if(uerr) throw new Error(uerr.message);
