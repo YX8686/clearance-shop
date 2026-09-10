@@ -579,6 +579,25 @@ async function refreshOrdersFromCloud(){
   } catch(e){ console.error('[refreshOrdersFromCloud]', e.message); }
   return orders;
 }
+// 单笔订单按 id 精确加载（回传/改单高频路径专用）。
+// 比起 refreshOrdersFromCloud 的「全表 select + 整体重赋值 orders」，这里只拉 order:<id> 单行，
+// ① 回传并发下从 O(N) 全表拉取降到 O(1)，大促回传高峰不再把整张订单表反复搬；
+// ② 只把这一行 merge 进内存（orders[idx]=o / push），绝不做整体替换，
+//    从根上消除了「全表重赋值把另一单刚落盘的改动短暂冲掉」的竞态窗口（重复发货的潜在来源）。
+// 不存在时返回 null，交由调用方 shipGuard 判 404。
+async function loadOrderRow(id){
+  if(!USE_SUPABASE) return orders.find(o=>o.id===id) || null;
+  try {
+    const { data, error } = await sb.from('shop_data').select('value').eq('key','order:'+id).single();
+    if(!error && data && data.value){
+      const o = data.value;
+      const idx = orders.findIndex(x=>x.id===id);
+      if(idx>=0) orders[idx]=o; else orders.push(o);
+      return o;
+    }
+  } catch(e){ console.error('[loadOrderRow]', id, e.message); }
+  return orders.find(o=>o.id===id) || null;
+}
 // 订单写入前必须先刷新内存副本：手机端在云端下的订单，本地服务内存里可能没有，
 // 直接 find 内存会 404 静默失败（症状：后台点"确认收款"提示成功但状态不变）
 // ⚠️ 严禁用 loadKV('orders', ...)：那是已废弃的「旧大数组」行，长期不更新——发货管家对
@@ -893,7 +912,7 @@ const server = http.createServer(async (req, res)=>{
       const mShip = pathname.match(/^\/api\/orders\/([\w-]+)\/ship$/);
       if(method==='POST' && mShip){
         return withOrderLock(mShip[1], async ()=>{
-          await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
+          await loadOrderRow(mShip[1]); // 只精确拉本单（O(1)），不再全表重赋值，消除回传并发下的竞态窗口
           const o = orders.find(o=>o.id===mShip[1]);
           const g = shipGuard(o);
           if(!g.ok){ res.writeHead(g.code,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:g.error})); return; }
