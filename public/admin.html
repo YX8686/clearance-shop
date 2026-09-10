@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- BUILD-MARKER: clearance-shop admin 2026-09-10-v3 (隐藏分类即时保存修正 / 批量隐藏保勾选 / SKU副标题强制收集) -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -616,24 +617,35 @@ function refreshCdManualOptions(sel){
 }
 // 隐藏分类：勾选即时落库（防 15s 轮询覆盖、免去「忘记点保存设置」造成错觉）。
 // 仅 POST hiddenCategories 一个字段，不会改动其它配置。
+// 2026-09-10 修正：原实现在「上一次保存还没回来」时直接 return，会把用户后勾的分类
+//   静默丢掉（表现为「只成功隐藏 1 个」）。改为 dirty 排队 + do/while 补跑，一次都不丢。
 let _hiddenSaveTimer = null;
 let _hiddenSaving = false;
+let _hiddenDirty = false;
 function scheduleHiddenCatsSave(){
   if(_hiddenSaveTimer) clearTimeout(_hiddenSaveTimer);
-  _hiddenSaveTimer = setTimeout(saveHiddenCatsNow, 350);
+  _hiddenSaveTimer = setTimeout(saveHiddenCatsNow, 500);
 }
 async function saveHiddenCatsNow(){
   _hiddenSaveTimer = null;
-  if(_hiddenSaving) return; // 防重叠
-  const list = Array.from(document.querySelectorAll('.cat-hide-cb:checked')).map(cb=>cb.value);
-  CONFIG.hiddenCategories = list;
+  if(_hiddenSaving){ _hiddenDirty = true; return; } // 排队，绝不丢弃（原来这里是静默 return，会丢单）
   _hiddenSaving = true;
   try{
-    const res = await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hiddenCategories:list})});
-    if(res && res.ok){ toast(list.length? ('已隐藏 '+list.length+' 个分类（买家端即时生效）') : '已恢复显示全部分类'); }
-    else { toast('隐藏分类保存失败'); }
+    do{
+      _hiddenDirty = false;
+      const list = Array.from(document.querySelectorAll('.cat-hide-cb:checked')).map(cb=>cb.value);
+      CONFIG.hiddenCategories = list;
+      let res = null, lastErr = '';
+      for(let i=0;i<2;i++){ // Supabase 免费层偶发抖动，重试 1 次
+        try{ res = await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hiddenCategories:list})}); if(res && res.ok) break; }
+        catch(e){ lastErr = e.message; res = null; }
+        if(i===0) await new Promise(r=>setTimeout(r,600));
+      }
+      if(res && res.ok){ toast(list.length? ('已隐藏 '+list.length+' 个分类（买家端即时生效）') : '已恢复显示全部分类'); }
+      else { toast('隐藏分类保存失败'+(lastErr?('：'+lastErr):'')); }
+    }while(_hiddenDirty); // 请求期间又有新勾选 → 再跑一轮，保证最终态落库
   }catch(e){ toast('隐藏分类保存失败：'+e.message); }
-  finally{ _hiddenSaving = false; }
+  finally{ _hiddenSaving = false; _hiddenDirty = false; }
 }
 async function loadOthers(){
   const [c,p,g]=await Promise.all([
@@ -2100,10 +2112,13 @@ async function saveSettings(){
 // ---------- 产品管理 ----------
 function renderPM(){
   const wrap=document.getElementById('pmWrap');
+  // 2026-09-10：15s 轮询若数据有变会重绘列表，重建 DOM 会把用户刚勾的多个产品全清掉
+  //   （正好是「大面积批量隐藏」的场景）。重绘前先把已勾 id 存下来，重绘后原样恢复。
+  const prevSel=new Set(Array.from(document.querySelectorAll('.pm-sel:checked')).map(cb=>cb.value));
   const itemsHtml=PRODUCTS.map((p,idx)=>`
     <div class="pm-card" draggable="true" data-id="${p.id}" data-idx="${idx}">
       <label class="pm-check" onclick="event.stopPropagation()" ondragstart="event.stopPropagation();return false" onmousedown="event.stopPropagation()">
-        <input type="checkbox" class="pm-sel" value="${p.id}" onchange="updateBatchDelete()" onclick="event.stopPropagation()">
+        <input type="checkbox" class="pm-sel" value="${p.id}" ${prevSel.has(p.id)?'checked':''} onchange="updateBatchDelete()" onclick="event.stopPropagation()">
       </label>
       <img class="img" src="${p.image||'/assets/products/default.svg'}" ${idx>=6?'loading="lazy"':''} decoding="async" onload="this.classList.add('loaded')" onerror="this.src='/assets/products/default.svg';this.classList.add('loaded')">
       <div class="name">${p.name||'未命名'}</div>
@@ -2129,6 +2144,7 @@ function renderPM(){
     <div class="pm-grid" id="pmGrid">${itemsHtml}</div>
   `;
   bindPMDrag();
+  updateBatchDelete(); // 恢复勾选后同步刷新「隐藏/删除选中产品 (N)」计数与可用态
 }
 function bindPMDrag(){
   const grid=document.getElementById('pmGrid'); if(!grid) return;
@@ -2243,6 +2259,11 @@ function flushSkuBundleTextareas(){
     const idx=Number(row.dataset.idx);
     const ta=row.querySelector('textarea.sku-bundle-text');
     if(ta && editingSkus[idx]) editingSkus[idx].bundleItems=parseBundleText(ta.value);
+    // 2026-09-10：副标题同样不能再只靠 onchange（失焦才触发）。
+    //   用户填完直接点「保存」时 onchange 可能还没跑，导致副标题存不进去。
+    //   这里与发货明细一样，保存前从 DOM 直接抓一次当前值。
+    const si=row.querySelector('input.sku-subtitle-input');
+    if(si && editingSkus[idx]) editingSkus[idx].subtitle=String(si.value||'').trim().slice(0,80);
   });
 }
 
@@ -3154,6 +3175,11 @@ async function batchHide(){
   try{ res = await fetch('/api/products/batch-hidden',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids, hidden:targetHidden})}); }
   catch(e){ toast('批量操作失败：'+e.message); return; }
   if(!res || !res.ok){
+    // 404 not found 几乎必然是「浏览器/服务器还是旧代码」——提示强刷而不是干报错
+    if(res && res.status===404){
+      toast('接口不存在，请按 Ctrl+F5 强刷后台后重试');
+      return;
+    }
     let tip='批量操作失败';
     try{ const d=await res.json(); if(d.error) tip+='：'+d.error; }catch(e){}
     toast(tip); return;
