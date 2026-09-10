@@ -15,6 +15,11 @@ const VIEWS = path.join(ROOT, 'views');
 const GALLERY = path.join(PUBLIC, 'assets', 'gallery');
 const PORT = process.env.PORT || 4100;
 
+// 商家后台构建版本号——每次改了 admin.html 行为/UI 就手动 +1。
+// admin.html 加载时拿这个值和"自己被服务时的嵌入版本"对比，不一致就强制刷一次，
+// 彻底根除"用户卡在旧缓存里导致功能失效"的问题（不再让用户手动清缓存/隐身）。
+const ADMIN_BUILD = 'fix2-2026-09-10-1328';
+
 // ===== 嵌入发货管家（2026-09-09）：把 ship-cloud 的 handler 作为子路由转发 =====
 // 共用 4100 端口、共用 Supabase 数据源；线上访问路径不变（直接访问商城域名的原 ship-cloud 路径即可）
 let shipCloudHandler = null;
@@ -1550,10 +1555,23 @@ const server = http.createServer(async (req, res)=>{
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':html); return;
     }
 
+    if(method==='GET' && pathname==='/api/admin-build'){
+      // 商家后台自检版本端点：admin.html 加载时会 fetch 这里对比自己嵌入的版本号，
+      // 不一致就 location.replace 强制刷一次。no-store 防止任何中间层缓存。
+      res.writeHead(200, {'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store, must-revalidate', 'Pragma':'no-cache'});
+      res.end(JSON.stringify({ v: ADMIN_BUILD, t: Date.now() }));
+      return;
+    }
+
     if(method==='GET' && pathname==='/admin'){
       fs.readFile(path.join(PUBLIC,'admin.html'), (err, buf)=>{
         if(err){ res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'}); res.end('Not found'); return; }
-        res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(buf);
+        // 注入"自检 + 强制刷"脚本：把这个 admin.html 服务时的版本号写进 window.__AB，
+        // 脚本异步 fetch /api/admin-build，对不上就 location.replace 带 _cb 时间戳重新拉。
+        // 这样即使用户浏览器卡在旧缓存，下次打开/刷新时会自动跳到最新版，永久自愈。
+        const inj = '<script>(function(){var my="'+ADMIN_BUILD+'";fetch("/api/admin-build?_t="+Date.now(),{cache:"no-store"}).then(function(r){return r.json();}).then(function(d){if(d&&d.v&&d.v!==my){var u=location.pathname+"?_cb="+Date.now();location.replace(u);}}).catch(function(){});})();</script>';
+        const html = buf.toString('utf8').replace('</head>', inj + '</head>');
+        res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(html);
       });
       return;
     }
