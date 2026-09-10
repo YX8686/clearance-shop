@@ -1378,6 +1378,8 @@ const server = http.createServer(async (req, res)=>{
             price: Math.max(0, Number(s.price)||0),
             stock: Math.max(0, Math.floor(Number(s.stock)||0)),
             image: String(s.image||'').trim().slice(0,300),
+            // 2026-09-10 加：SKU 副标题（客户端橘色小注解展示），不填保持空，前端条件渲染
+            subtitle: String(s.subtitle||'').trim().slice(0,80),
             bundleItems: skuBundle(s.bundleItems)
           })).filter(s=>s.name):[]):(existing.skus||[]),
           // 有 SKU 时，主价格/库存自动以 SKU 最低价和总库存为准，避免列表与 SKU 不同步
