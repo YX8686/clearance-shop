@@ -1340,7 +1340,7 @@ const server = http.createServer(async (req, res)=>{
             allowedSchemes: ['http','https','data'],
             allowedSchemesAppliedToAttributes: ['href','src'],
             allowProtocolRelative: false
-          });
+          }));
         }
         // 降级：库未安装时的自定义过滤（保留格式标签，文本优先保留）
         let s=String(html).trim();
