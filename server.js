@@ -722,7 +722,7 @@ function renderTemplate(name, vars){
 // 微信爬虫超时直接退化为纯文字链接、抓不到 OG 大图卡片。
 // 后台改完产品/配置会主动清缓存（见 saveProducts/saveConfig），兼顾新鲜度与速度。
 const htmlCache = new Map(); // key -> { html, ts }
-const HTML_CACHE_TTL = 5000; // 5 秒（2026-09-11 修正：10 分钟太长导致多实例缓存不同步，后台改完格式/图片后买家端长期看不到更新；产品数据层已有 3 秒缓存 + gzip 压缩避免频繁回源 Supabase）
+const HTML_CACHE_TTL = 30000; // 30 秒（2026-09-11 修正：10 分钟太长导致多实例缓存不同步、格式/图片更新延迟；5 秒又使每次请求都重新渲染、买家端变慢。30 秒折中：后台保存后最多等 30 秒刷新即可同步，且仍保留缓存提速）
 function getCachedHtml(key){
   const c = htmlCache.get(key);
   if(c && Date.now() - c.ts < HTML_CACHE_TTL) return c.html;
@@ -1311,10 +1311,26 @@ const server = http.createServer(async (req, res)=>{
 
       // 富文本描述安全过滤：白名单标签 + 移除脚本/事件属性/危险协议
       const SANITIZE_ALLOWED_TAGS = ['p','br','div','span','b','strong','i','em','u','ul','ol','li','h1','h2','h3','h4','h5','h6','a','img','table','tbody','thead','tr','td','th','hr','sub','sup','small','big','mark','section','article','blockquote','pre','code','font','figure','figcaption','dl','dt','dd','center','strike','del','ins'];
+      // 2026-09-11 修复：把 <font color="X"> 转成 <span style="color:X">。
+      // 原因：买家端 .desc{color:#5b5147} 是样式表规则，优先级高于 <font> 的 HTML 表现属性，
+      // 导致后台设置的红色被强制显示为默认棕色（"改颜色没同步"）。内联 style 优先级最高，可正确显示颜色。
+      function fixDescColor(h){
+        if(!h) return h;
+        return String(h)
+          .replace(/<font\b([^>]*)>/gi, (m, attrs)=>{
+            const color=(attrs.match(/color\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
+            const face=(attrs.match(/face\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
+            const styles=[];
+            if(color) styles.push('color:'+color);
+            if(face) styles.push('font-family:'+face);
+            return '<span'+(styles.length?' style="'+styles.join(';')+'"':'')+'>';
+          })
+          .replace(/<\/font>/gi, '</span>');
+      }
       function sanitizeHtml(html){
         if(!html) return '';
         if(_sanitizeHtml){
-          return _sanitizeHtml(String(html).trim(), {
+          return fixDescColor(_sanitizeHtml(String(html).trim(), {
             allowedTags: SANITIZE_ALLOWED_TAGS,
             allowedAttributes: {
               '*': ['style','class','color'],
@@ -1356,7 +1372,7 @@ const server = http.createServer(async (req, res)=>{
           const colorAttr=(attrs.match(/color\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
           return slash + tag.toLowerCase() + (safeStyle?' style="'+safeStyle.replace(/"/g,'')+'"':'') + (safeCls?' class="'+safeCls+'"':'') + (colorAttr?' color="'+colorAttr.replace(/"/g,'')+'"':'') + '>';
         });
-        return s;
+        return fixDescColor(s);
       }
       // 产品管理：增 / 改
       if(method==='POST' && pathname==='/api/products'){
@@ -1566,7 +1582,7 @@ const server = http.createServer(async (req, res)=>{
           OG_URL: htmlEscape(BASE + '/product/'+p.id),
           OG_PRICE: htmlEscape(p.price || ''),
           HERO_IMAGE: htmlEscape(heroImage),
-          PRODUCT_JSON: jsonForScript(p),
+          PRODUCT_JSON: jsonForScript({ ...p, desc: fixDescColor(p.desc) }),
           PRODUCTS_JSON: jsonForScript(list),
           CONFIG_JSON: jsonForScript(safeConfig)
         });
