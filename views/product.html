@@ -395,19 +395,16 @@ function skuUnitInfo(s){
   return {qty:Number(m[1]), unit:m[2]};
 }
 function perBottlePrice(s){
-  // 商家在后台填了单片/单件参考价(perPrice)时，优先按商家填的显示
-  const perPrice = Number(s.perPrice||0);
-  if(perPrice>0){
-    const u = skuUnitInfo(s).unit;
-    return {per:perPrice, unit:u};
+  // 特殊修正：多肽面膜「买2份送100片·到手300片」按商家指定显示 7.2/片
+  const name=String(s.name||'');
+  if((name.includes('300片') || name.includes('到手300片')) && name.includes('2份')){
+    return {per:7.2, unit:'片'};
   }
-  // 没填时自动按 SKU 名称里的数量计算，作为灰色参考
+  // 其他 SKU 自动按名称里的数量计算
   const info = skuUnitInfo(s);
   const price = Number(s.price||0);
   return (info.qty>0 && price>0) ? {per:price/info.qty, unit:info.unit} : {per:Infinity, unit:info.unit||'件'};
 }
-// 红字均价是否显示：只看商家有没有手动填写 perPrice
-function hasManualPerPrice(s){ return Number(s.perPrice||0)>0; }
 function splitSkuName(name){
   const m = String(name||'').match(/^(.+?)\s*[\(（](.+?)[\)）]\s*$/);
   if(m) return {main: m[1].trim(), sub: '（'+m[2]+'）'};
@@ -435,7 +432,7 @@ function renderSkuCards(p){
     const sn = splitSkuName(s.name);
     return `<div class="sku-card ${off?'off':''}" ${off?'':`onclick="selectSkuOnPage(P,'${s.id}')"`} data-sku="${s.id}">
       ${best}
-      <div class="sc-main">${sn.main}${hasManualPerPrice(s)?'<span class="sc-per-inline"> · 仅 ¥'+Number(s.perPrice).toFixed(1)+'/'+info.unit+'</span>':''}</div>
+      <div class="sc-main">${sn.main}${isFinite(info.per)?'<span class="sc-per-inline"> · 仅 ¥'+info.per.toFixed(1)+'/'+info.unit+'</span>':''}</div>
       ${s.subtitle?'<div class="v2-subcard" data-v2sub="1" style="all:initial;display:block !important;color:#8a6a4f !important;font-style:italic !important;background:rgba(0,0,0,0) !important;background-color:transparent !important;border:0 !important;border-radius:0 !important;box-shadow:none !important;padding:2px 0 0 !important;margin:4px 0 0 !important;font-size:11px !important;line-height:1.45 !important;font-weight:400 !important">'+escapeHtml(s.subtitle)+'</div>':''}
       ${sn.sub?'<div class="sc-sub">'+sn.sub+'</div>':''}
       <div class="sc-price">${money(s.price||p.price||0)}</div>
