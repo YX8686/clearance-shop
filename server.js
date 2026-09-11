@@ -1388,6 +1388,8 @@ const server = http.createServer(async (req, res)=>{
             id: String(s.id||'').trim() || crypto.randomBytes(3).toString('hex').toUpperCase(),
             name: String(s.name||'').trim().slice(0,100),
             price: Math.max(0, Number(s.price)||0),
+            // 2026-09-11 加：商家可填的"单片/单件参考价"，买家端红字均价优先按这个显示
+            perPrice: Math.max(0, Number(s.perPrice)||0),
             stock: Math.max(0, Math.floor(Number(s.stock)||0)),
             image: String(s.image||'').trim().slice(0,300),
             // 2026-09-10 加：SKU 副标题（客户端橘色小注解展示），不填保持空，前端条件渲染
