@@ -5,6 +5,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 let _sanitizeHtml;
 try { _sanitizeHtml = require('sanitize-html'); } catch(e){ _sanitizeHtml = null; }
 
@@ -730,6 +731,17 @@ function getCachedHtml(key){
 }
 function setCachedHtml(key, html){ htmlCache.set(key, { html, ts: Date.now() }); }
 function clearHtmlCache(){ htmlCache.clear(); productReadCache = { ts: 0, value: products, promise: null, failed: false }; }
+
+// ---------- gzip 压缩输出（2026-09-11 提速：153KB 首页原样传输慢，gzip 后约 30KB，传输快 5 倍）----------
+function sendHtml(res, html, extraHeaders){
+  const headers = Object.assign({ 'Content-Type': 'text/html; charset=utf-8' }, extraHeaders || {});
+  const buf = Buffer.from(html, 'utf8');
+  zlib.gzip(buf, (err, gz) => {
+    if (err) { res.writeHead(200, headers); res.end(buf); return; }
+    res.writeHead(200, Object.assign(headers, { 'Content-Encoding': 'gzip', 'Content-Length': gz.length }));
+    res.end(gz);
+  });
+}
 
 // ---------- 路由 ----------
 const server = http.createServer(async (req, res)=>{
@@ -1500,7 +1512,11 @@ const server = http.createServer(async (req, res)=>{
     // ===== 页面 =====
     if((method==='GET'||method==='HEAD') && (pathname==='/' || pathname==='')){
       const cached = getCachedHtml('home');
-      if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':cached); return; }
+      if(cached){
+        if(method==='HEAD'){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(); }
+        else sendHtml(res, cached);
+        return;
+      }
       const list = await getProducts();
       const ogImage = pickShopShareImage(list);
       const safeConfig = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config && !Array.isArray(config) ? config : {}) };
@@ -1515,14 +1531,21 @@ const server = http.createServer(async (req, res)=>{
       });
       html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
       setCachedHtml('home', html);
-      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'}); res.end(method==='HEAD'?'':html); return;
+      const homeHdr = {'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'};
+      if(method==='HEAD'){ res.writeHead(200, Object.assign({'Content-Type':'text/html; charset=utf-8'}, homeHdr)); res.end(); }
+      else sendHtml(res, html, homeHdr);
+      return;
     }
 
       const mProd = pathname.match(/^\/(?:product|p2|p3|p4)\/([\w-]+)$/);
       if((method==='GET'||method==='HEAD') && mProd){
         const pkey = 'product:'+mProd[1];
         const cached = getCachedHtml(pkey);
-        if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'}); res.end(method==='HEAD'?'':cached); return; }
+        if(cached){
+          if(method==='HEAD'){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'}); res.end(); }
+          else sendHtml(res, cached, {'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'});
+          return;
+        }
         const list = await getProducts();
         const p = list.find(p=>p.id===mProd[1]);
         if(!p){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
@@ -1549,7 +1572,10 @@ const server = http.createServer(async (req, res)=>{
         });
       html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
       setCachedHtml(pkey, html);
-      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'}); res.end(method==='HEAD'?'':html); return;
+      const prodHdr = {'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'};
+      if(method==='HEAD'){ res.writeHead(200, Object.assign({'Content-Type':'text/html; charset=utf-8'}, prodHdr)); res.end(); }
+      else sendHtml(res, html, prodHdr);
+      return;
     }
 
     const mOrder = pathname.match(/^\/order\/([\w-]+)$/);
@@ -1561,7 +1587,9 @@ const server = http.createServer(async (req, res)=>{
         ORDER_JSON: jsonForScript(o?enrichOrderBundles(o):o),
         CONFIG_JSON: jsonForScript(config)
       });
-      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':html); return;
+      if(method==='HEAD'){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(); }
+      else sendHtml(res, html);
+      return;
     }
 
     if(method==='GET' && pathname==='/admin'){
