@@ -2211,6 +2211,8 @@ function openProdModal(p){
     id: s.id||generateSkuId(),
     name: s.name||'',
     price: s.price!=null?s.price:'',
+    // 2026-09-11 加：商家可填的"单片/单件参考价"，买家端红字均价优先按这个显示
+    perPrice: s.perPrice!=null?s.perPrice:'',
     stock: s.stock!=null?s.stock:'',
     image: s.image||'',           // 集合链接：每个 SKU 可有自己一张主图
     // 2026-09-10 加：SKU 副标题（客户端橘色小注解），不填保持空
@@ -2286,6 +2288,7 @@ function renderSkuList(){
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <input type="text" placeholder="SKU名称，如：1瓶" value="${escapeHtml(s.name)}" onchange="updateSku(${idx},'name',this.value)" style="flex:1;min-width:120px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px">
         <input type="number" placeholder="价格" value="${s.price!==''?s.price:''}" onchange="updateSku(${idx},'price',this.value)" style="width:90px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px">
+        <input type="number" placeholder="单件均价" value="${s.perPrice!==''?s.perPrice:''}" onchange="updateSku(${idx},'perPrice',this.value)" title="填了才会在客户端红色显示「仅 ¥X/片」；不填不显示" style="width:90px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px;background:#fff8f0">
         <input type="number" placeholder="库存" value="${s.stock!==''?s.stock:''}" onchange="updateSku(${idx},'stock',this.value)" style="width:80px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px">
         <button type="button" onclick="removeSkuRow(${idx})" style="border:none;background:#e74c3c;color:#fff;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer">删除</button>
       </div>
@@ -3026,12 +3029,14 @@ function importWordDoc(input){
   reader.onerror=()=>toast('文件读取失败，请重试');
   if(name.endsWith('.docx')) reader.readAsArrayBuffer(file); else reader.readAsText(file,'UTF-8');
 }
-function addSkuRow(){ editingSkus.push({id:generateSkuId(),name:'',price:'',stock:'',image:'',subtitle:'',bundleItems:[]}); renderSkuList(); }
+function addSkuRow(){ editingSkus.push({id:generateSkuId(),name:'',price:'',perPrice:'',stock:'',image:'',subtitle:'',bundleItems:[]}); renderSkuList(); }
 function removeSkuRow(idx){ editingSkus.splice(idx,1); renderSkuList(); }
 function updateSku(idx, field, value){
   const s=editingSkus[idx];
   if(field==='name') s.name=value.trim();
   if(field==='price') s.price=value===''?'':Math.max(0,Number(value)||0);
+  // 2026-09-11 加：单片/单件参考价（买家端红字"仅 ¥X/片"优先按这个显示）
+  if(field==='perPrice') s.perPrice=value===''?'':Math.max(0,Number(value)||0);
   if(field==='stock') s.stock=value===''?'':Math.max(0,Math.floor(Number(value)||0));
   if(field==='image') s.image=String(value||'').trim();
   if(field==='subtitle') s.subtitle=String(value||'').trim().slice(0,80);
@@ -3042,6 +3047,8 @@ function collectSkus(){
     id: s.id,
     name: String(s.name).trim(),
     price: s.price===''?0:Number(s.price),
+    // 2026-09-11 加：商家填写的单片/单件参考价
+    perPrice: s.perPrice===''?0:Number(s.perPrice),
     stock: s.stock===''?0:Number(s.stock),
     image: String(s.image||'').trim(),   // 集合链接：SKU 独立主图
     subtitle: String(s.subtitle||'').trim().slice(0,80),  // 2026-09-10 加：客户端橘色小注解
