@@ -722,7 +722,7 @@ function renderTemplate(name, vars){
 // 微信爬虫超时直接退化为纯文字链接、抓不到 OG 大图卡片。
 // 后台改完产品/配置会主动清缓存（见 saveProducts/saveConfig），兼顾新鲜度与速度。
 const htmlCache = new Map(); // key -> { html, ts }
-const HTML_CACHE_TTL = 600000; // 10 分钟（2026-09-11 提速：原本 5s 太短，保活间隔外几乎每次都回源 Supabase 导致买家端慢 5-6s；后台保存会 clearHtmlCache 即时失效，故拉长到 10 分钟既秒开又不耽误改价）
+const HTML_CACHE_TTL = 5000; // 5 秒（2026-09-11 修正：10 分钟太长导致多实例缓存不同步，后台改完格式/图片后买家端长期看不到更新；产品数据层已有 3 秒缓存 + gzip 压缩避免频繁回源 Supabase）
 function getCachedHtml(key){
   const c = htmlCache.get(key);
   if(c && Date.now() - c.ts < HTML_CACHE_TTL) return c.html;
