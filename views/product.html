@@ -65,6 +65,7 @@
   .sku-card.off .sc-subtitle{opacity:.55}
   .sku-card .sc-price{font-size:15px;color:#c0392b;font-weight:800;margin-top:4px}
   .sku-card .sc-per{font-size:10px;color:#9a8f82;margin-top:2px}
+  .sku-card .sc-per-inline{font-size:12px;color:#c0392b;font-weight:800;margin-left:4px}
   .sku-card .sc-best{position:absolute;top:-9px;left:50%;transform:translateX(-50%);background:#c0392b;color:#fff;font-size:9px;font-weight:700;padding:2px 6px;border-radius:10px;white-space:nowrap;animation:scbest 1s infinite}
   @keyframes scbest{0%,100%{opacity:1}50%{opacity:.5}}
   .sku-card.off{opacity:.45;cursor:not-allowed}
@@ -421,7 +422,7 @@ function renderSkuCards(p){
     const sn = splitSkuName(s.name);
     return `<div class="sku-card ${off?'off':''}" ${off?'':`onclick="selectSkuOnPage(P,'${s.id}')"`} data-sku="${s.id}">
       ${best}
-      <div class="sc-main">${sn.main}</div>
+      <div class="sc-main">${sn.main}${isFinite(info.per)?'<span class="sc-per-inline"> · 仅 ¥'+info.per.toFixed(1)+'/'+info.unit+'</span>':''}</div>
       ${s.subtitle?'<div class="v2-subcard" data-v2sub="1" style="all:initial;display:block !important;color:#8a6a4f !important;font-style:italic !important;background:rgba(0,0,0,0) !important;background-color:transparent !important;border:0 !important;border-radius:0 !important;box-shadow:none !important;padding:2px 0 0 !important;margin:4px 0 0 !important;font-size:11px !important;line-height:1.45 !important;font-weight:400 !important">'+escapeHtml(s.subtitle)+'</div>':''}
       ${sn.sub?'<div class="sc-sub">'+sn.sub+'</div>':''}
       <div class="sc-price">${money(s.price||p.price||0)}</div>
