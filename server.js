@@ -1582,7 +1582,7 @@ const server = http.createServer(async (req, res)=>{
           OG_URL: htmlEscape(BASE + '/product/'+p.id),
           OG_PRICE: htmlEscape(p.price || ''),
           HERO_IMAGE: htmlEscape(heroImage),
-          PRODUCT_JSON: jsonForScript({ ...p, desc: fixDescColor(p.desc) }),
+          PRODUCT_JSON: jsonForScript({ ...p, desc: sanitizeHtml(p.desc) }),
           PRODUCTS_JSON: jsonForScript(list),
           CONFIG_JSON: jsonForScript(safeConfig)
         });
