@@ -1722,13 +1722,26 @@ async function applyWave(){
   const hours=(document.getElementById('waveHours')||{}).value||'';
   const label=(sel&&sel.selectedOptions&&sel.selectedOptions[0])?sel.selectedOptions[0].text:wave;
   if(!confirm('确认把买家端切换到「'+label+'」？\n本波商品将自动上架，其余商品自动隐藏。')) return;
-  try{
-    const r=await fetch('/api/admin/apply-wave',{method:'POST',headers:{'Content-Type':'application/json','Cache-Control':'no-cache'},cache:'no-store',body:JSON.stringify({wave,hours})});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok||!d.ok){ toast('切换失败：'+(d.error||r.status)); return; }
-    toast('已切换：本波上架 '+d.shown+' 款，隐藏 '+d.hidden+' 款');
-    load();
-  }catch(e){ toast('切换失败：'+e.message); }
+  const btn=document.querySelector('button[onclick="applyWave()"]');
+  const oldTxt=btn?btn.textContent:'';
+  if(btn){ btn.disabled=true; btn.textContent='正在切换…'; }
+  toast('正在切换，请稍候…');
+  let lastErr='', ok=false, shownN=0, hidN=0;
+  for(let i=0;i<2 && !ok;i++){
+    const ctl=new AbortController();
+    const timer=setTimeout(()=>ctl.abort(), 25000);
+    try{
+      const r=await fetch('/api/admin/apply-wave',{method:'POST',headers:{'Content-Type':'application/json','Cache-Control':'no-cache'},cache:'no-store',body:JSON.stringify({wave,hours}),signal:ctl.signal});
+      const d=await r.json().catch(()=>({}));
+      clearTimeout(timer);
+      if(r.ok && d.ok){ ok=true; shownN=d.shown; hidN=d.hidden; break; }
+      lastErr=(d&&d.error)||('HTTP '+r.status);
+    }catch(e){ clearTimeout(timer); lastErr=(e&&e.name==='AbortError')?'请求超时（数据库网络慢）':((e&&e.message)||e); }
+    if(i===0){ toast('首次未成功，正在自动重试…'); await new Promise(r=>setTimeout(r,800)); }
+  }
+  if(btn){ btn.disabled=false; btn.textContent=oldTxt||'应用到买家端'; }
+  if(ok){ toast('已切换：「'+label+'」上架 '+shownN+' 款、隐藏 '+hidN+' 款'); load(); }
+  else { toast('切换失败：'+lastErr+'（可再点一次）'); }
 }
 async function saveSettings(){
   const hiddenCats=Array.from(document.querySelectorAll('.cat-hide-cb:checked')).map(cb=>cb.value);
