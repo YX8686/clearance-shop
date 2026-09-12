@@ -360,7 +360,7 @@ const WAVES = {
   w1:{name:'第一波', dur:'48h', groups:[['全部','全部'],['w1g1','第1组特惠'],['w1g2','第2组特惠'],['w1g3','第3组特惠']]},
   w2:{name:'第二波', dur:'48h', groups:null},
   w3:{name:'第三波', dur:'', groups:null},
-  w4:{name:'返场 · 捡漏 · 爆品', dur:'48h', cats:['特惠单品','明星套装','明星组合','高功效私人定制','特殊']}
+  w4:{name:'最终返场 · 捡漏 · 爆品', dur:'48h', cats:['特惠单品','明星套装','明星组合','高功效私人定制','特殊']}
 };
 function activeWave(){ return (CONFIG && CONFIG.activeWave && WAVES[CONFIG.activeWave]) ? CONFIG.activeWave : ''; }
 function waveName(){ const w=activeWave(); return w?WAVES[w].name:''; }
@@ -379,15 +379,16 @@ function renderCats(){
   const box = $('#catinner'); box.innerHTML = '';
   const bar = document.getElementById('catbar');
   const w = activeWave();
-  // 返场：按活动分类筛选（5 个分类，不含「全部」）
+  // 返场：按活动分类筛选（5 个分类，不含「全部」）。默认不选 → 显示全部产品；
+  // 点某个分类筛选，再点同一个分类可取消筛选回到全部。
   if(w && WAVES[w].cats){
     if(bar) bar.style.display='';
-    if(WAVES[w].cats.indexOf(currentCat)<0) currentCat = WAVES[w].cats[0];
+    if(currentCat && WAVES[w].cats.indexOf(currentCat)<0) currentCat='';
     WAVES[w].cats.forEach(c=>{
       const btn = document.createElement('button');
       btn.className = 'cattab ' + (c===currentCat?'on':'');
       btn.textContent = c;
-      btn.onclick = ()=>{ currentCat = c; renderCats(); renderGrid(); };
+      btn.onclick = ()=>{ currentCat = (currentCat===c) ? '' : c; renderCats(); renderGrid(); };
       box.appendChild(btn);
     });
     return;
@@ -412,6 +413,7 @@ function renderCats(){
     return;
   }
   if(bar) bar.style.display='';
+  if(!currentCat || CATEGORIES.indexOf(currentCat)<0) currentCat='全部';
   const hideSet = new Set(hiddenCategories());
   CATEGORIES.filter(c=>c==='全部' || !hideSet.has(c)).forEach(c=>{
     const btn = document.createElement('button');
@@ -478,7 +480,7 @@ function renderGrid(){
   const w = activeWave();
   let list;
   if(w && WAVES[w].cats){
-    list = visible.filter(p=>String(p.category||'').trim()===currentCat);
+    list = currentCat ? visible.filter(p=>String(p.category||'').trim()===currentCat) : visible;
   } else if(w && WAVES[w].groups){
     list = (currentCat==='全部') ? visible : visible.filter(p=>String(p.waveGroup||'').trim()===currentCat);
   } else if(w){
