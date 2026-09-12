@@ -37,7 +37,7 @@ function convertFontToSpan(desc){
 // 商家后台构建版本号——每次改了 admin.html 行为/UI 就手动 +1。
 // admin.html 加载时拿这个值和"自己被服务时的嵌入版本"对比，不一致就强制刷一次，
 // 彻底根除"用户卡在旧缓存里导致功能失效"的问题（不再让用户手动清缓存/隐身）。
-const ADMIN_BUILD = 'fix2-2026-09-10-1328';
+const ADMIN_BUILD = 'fix3-2026-09-12-0930';
 
 // ===== 嵌入发货管家（2026-09-09）：把 ship-cloud 的 handler 作为子路由转发 =====
 // 共用 4100 端口、共用 Supabase 数据源；线上访问路径不变（直接访问商城域名的原 ship-cloud 路径即可）
@@ -1515,6 +1515,7 @@ const server = http.createServer(async (req, res)=>{
         products[idx].hidden = !products[idx].hidden;
         markProductDirty(pid);
         await flushDirtyProducts();
+        clearHtmlCache(); // 单个隐藏/上架也即时清买家端页面缓存，保证与批量隐藏同步生效
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, hidden: products[idx].hidden})); return;
       }
       // 商家后台：批量隐藏/上架多个产品（买家端立即不可见）。body: {ids:[...], hidden:true|false}
