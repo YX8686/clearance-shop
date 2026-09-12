@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix7-2026-09-12-1150-local';
+const ADMIN_BUILD = 'fix8-2026-09-12-1210-local';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -45,7 +45,7 @@ if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
     const { createClient } = require('@supabase/supabase-js');
     const fetchWithTimeout = (url, opts) => {
       const ctl = new AbortController();
-      const t = setTimeout(() => ctl.abort(), 30000);
+      const t = setTimeout(() => ctl.abort(), 10000);
       return fetch(url, { ...opts, signal: ctl.signal }).finally(() => clearTimeout(t));
     };
     sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, { global: { fetch: fetchWithTimeout } });
@@ -95,7 +95,7 @@ async function withRetry(fn, label, retries=2){
   for(let i=0;i<retries;i++){
     try{
       // 12s 单调用超时：Supabase 免费层偶发 fetch 永久挂起，必须强制释放，防止 withLock 死锁
-      return await Promise.race([fn(), new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')), 12000))]);
+      return await Promise.race([fn(), new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')), 8000))]);
     }
     catch(e){
       lastErr=e;
@@ -360,7 +360,7 @@ async function saveOrderRowSync(order){
 // 进程退出前刷盘，防丢单
 process.on('beforeExit', ()=>{ _flushOrderQueue(); flushDirtyProducts().catch(()=>{}); });
 function saveOrders(){ return withLock(()=> saveKV('orders', orders)); } // 仅作整批备份残留，下单/状态变更已改用 saveOrderRow
-function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config, 5)).then(r=>{ configReadCache.ts = Date.now(); return r; }); }
+function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config, 2)).then(r=>{ configReadCache.ts = Date.now(); return r; }); }
 
 // ===== 产品存储加固：每个产品独立存储为 shop_data 的一行（key=product:<id>）=====
 // 旧方案：所有产品塞进 shop_data 的单行(key='products')，产品描述长、数量多后，
@@ -530,6 +530,20 @@ async function getConfig(){
   const r = await p;
   configReadCache.promise = null;
   return r;
+}
+// 写操作前把内存产品列表与云端对齐：本机后台（或另一个实例）改了产品后，本实例内存会过期；
+// 若直接基于过期内存做"隐藏/切波"，会把旧数据整行写回、覆盖别人的修改（也会造成"无差异→空操作"）。
+async function syncProductsFromCloud(){
+  if(!USE_SUPABASE) return;
+  if(dirtyProductIds.size) return; // 有未落库的本地改动，先不回源，避免丢改动
+  try{
+    const fresh = await loadProductsFromRows(products);
+    if(Array.isArray(fresh) && fresh.length){
+      products.length = 0;
+      for(const x of fresh) products.push(x);
+      productReadCache = { ts: Date.now(), value: products, promise: null, failed: false };
+    }
+  }catch(e){ console.error('[syncProducts] 回源失败:', e.message); }
 }
 // 后台重试：Supabase 免费层偶发 fetch failed 时，单行 flush 可能失败；每 5s 把残留脏行再刷一次，
 // 确保最终一致，且管理员界面因 getProducts 优先返回内存脏行而不受影响。
@@ -1382,6 +1396,7 @@ const server = http.createServer(async (req, res)=>{
         if(!ids.length){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no ids'})); return; }
         const hidden = body.hidden===true;
         let updated = 0;
+        await syncProductsFromCloud();
         await withLock(async()=>{
           for(const pid of ids){
             const idx = products.findIndex(x=>x.id===pid);
@@ -1405,6 +1420,7 @@ const server = http.createServer(async (req, res)=>{
         const prefix = WAVE_PREFIX[wave] || '';
         let shown=0, hid=0;
         try {
+        await syncProductsFromCloud();
         await withLock(async()=>{
           for(const p of products){
             const g=String(p.waveGroup||'').trim();
