@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix10-2026-09-12-1255-local';
+const ADMIN_BUILD = 'fix11-2026-09-12-1310-local';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -1324,7 +1324,8 @@ const server = http.createServer(async (req, res)=>{
         // 否则上一波切波时留下的 hidden=false 会让这个品在当前波次的买家端继续露出
         //（症状：把产品改成「返场爆品」并保存成功，切到第二波却还能看到它）。
         const curWave = String(config.activeWave||'').trim();
-        const WAVE_PREFIX_MAP = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'w4g' };
+        // w4(返场)=全部显示，不需要按分组隐藏；''是假值 → 直接跳过重算
+        const WAVE_PREFIX_MAP = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'' };
         if(WAVE_PREFIX_MAP[curWave] && String(existing.waveGroup||'').trim() !== String(item.waveGroup||'').trim()){
           const pre = WAVE_PREFIX_MAP[curWave];
           item.hidden = !(item.waveGroup && item.waveGroup.indexOf(pre)===0);
@@ -1425,39 +1426,47 @@ const server = http.createServer(async (req, res)=>{
       if(method==='POST' && pathname==='/api/admin/apply-wave'){
         let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
         const wave = String(body.wave||'none').trim();
-        const WAVE_PREFIX = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'w4g' };
-        const prefix = WAVE_PREFIX[wave] || '';
-        let shown=0, hid=0;
-        try {
-        await syncProductsFromCloud();
-        await withLock(async()=>{
-          for(const p of products){
-            const g=String(p.waveGroup||'').trim();
-            let wantHidden;
-            if(!prefix) wantHidden=false;
-            else if(g && g.indexOf(prefix)===0) wantHidden=false;
-            else wantHidden=true;
-            if(!!p.hidden!==wantHidden){ p.hidden=wantHidden; markProductDirty(p.id); }
-            if(wantHidden) hid++; else shown++;
+        // w4(返场) = 「全部返场」：不隐藏任何产品，只切换买家端分类栏与倒计时文案
+        const WAVE_PREFIX = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'' };
+        const prefix = (wave in WAVE_PREFIX) ? WAVE_PREFIX[wave] : '';
+        const h=Number(body.hours);
+        let shown=0, hid=0, lastErr=null;
+        // 幂等重试 3 次：products 与 config 必须都写成功，否则会出现
+        // 「产品已按本波切换、但 activeWave 还是上一波」→ 买家端产品对、倒计时文案错。
+        for(let attempt=0; attempt<3; attempt++){
+          try{
+            await syncProductsFromCloud();
+            shown=0; hid=0;
+            await withLock(async()=>{
+              for(const p of products){
+                const g=String(p.waveGroup||'').trim();
+                let wantHidden;
+                if(!prefix) wantHidden=false;
+                else if(g && g.indexOf(prefix)===0) wantHidden=false;
+                else wantHidden=true;
+                if(!!p.hidden!==wantHidden){ p.hidden=wantHidden; markProductDirty(p.id); }
+                if(wantHidden) hid++; else shown++;
+              }
+              await flushDirtyProducts();
+            });
+            config.activeWave = wave;
+            if(!wave || wave==='none') config.waveDur = '';
+            if(Number.isFinite(h)&&h>0){
+              config.waveEndsAt = Date.now()+Math.round(h*3600*1000);
+              config.activityDeadline = new Date(config.waveEndsAt).toISOString();
+              config.waveDur = Math.round(h)+'h';
+            }
+            await saveConfig();
+            clearHtmlCache();
+            res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, wave, shown, hidden:hid, attempt:attempt+1})); return;
+          }catch(e){
+            lastErr=e;
+            console.error('[apply-wave] 第'+(attempt+1)+'次失败:', e && e.message);
+            if(attempt<2) await new Promise(r=>setTimeout(r,700));
           }
-          await flushDirtyProducts();
-        });
-          config.activeWave = wave;
-          if(!wave || wave==='none') config.waveDur = '';
-          const h=Number(body.hours);
-          if(Number.isFinite(h)&&h>0){
-            config.waveEndsAt = Date.now()+Math.round(h*3600*1000);
-            config.activityDeadline = new Date(config.waveEndsAt).toISOString();
-            config.waveDur = Math.round(h)+'h';
-          }
-        await saveConfig();
-        clearHtmlCache();
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, wave, shown, hidden:hid})); return;
-        } catch(e){
-          console.error('[apply-wave] 失败:', e && e.message);
-          clearHtmlCache();
-          res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, error:'切换失败：'+((e&&e.message)||e)})); return;
         }
+        clearHtmlCache();
+        res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, error:'切换失败（已自动重试3次，产品与波次均未改动）：'+((lastErr&&lastErr.message)||lastErr)})); return;
       }
 
       // 商家后台自检版本端点：admin.html 加载时会 fetch 这里对比自己嵌入的版本号，
