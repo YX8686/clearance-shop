@@ -16,6 +16,24 @@ const VIEWS = path.join(ROOT, 'views');
 const GALLERY = path.join(PUBLIC, 'assets', 'gallery');
 const PORT = process.env.PORT || 4100;
 
+// 2026-09-11 修复：把 <font color="X"> 转成 <span style="color:X">
+// 原因：买家端 .desc{color:#5b5147} 是样式表规则，优先级高于 <font> 的 HTML 表现属性，
+// 导致后台设的红色被强制显示成默认棕色（"改颜色没同步"）。内联 style 优先级最高，必定正确显示。
+// 做成模块级函数（函数声明提升），产品路由/后台保存等任何作用域都能直接调用，避免"is not a function"作用域坑。
+function convertFontToSpan(desc){
+  if(!desc) return desc;
+  return String(desc)
+    .replace(/<font\b([^>]*)>/gi, (m, attrs)=>{
+      const color=(attrs.match(/color\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
+      const face=(attrs.match(/face\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
+      const styles=[];
+      if(color) styles.push('color:'+color);
+      if(face) styles.push('font-family:'+face);
+      return '<span'+(styles.length?' style="'+styles.join(';')+'"':'')+'>';
+    })
+    .replace(/<\/font>/gi, '</span>');
+}
+
 // 商家后台构建版本号——每次改了 admin.html 行为/UI 就手动 +1。
 // admin.html 加载时拿这个值和"自己被服务时的嵌入版本"对比，不一致就强制刷一次，
 // 彻底根除"用户卡在旧缓存里导致功能失效"的问题（不再让用户手动清缓存/隐身）。
@@ -1582,7 +1600,7 @@ const server = http.createServer(async (req, res)=>{
           OG_URL: htmlEscape(BASE + '/product/'+p.id),
           OG_PRICE: htmlEscape(p.price || ''),
           HERO_IMAGE: htmlEscape(heroImage),
-          PRODUCT_JSON: jsonForScript({ ...p, desc: sanitizeHtml(p.desc) }),
+          PRODUCT_JSON: jsonForScript({ ...p, desc: convertFontToSpan(p.desc) }),
           PRODUCTS_JSON: jsonForScript(list),
           CONFIG_JSON: jsonForScript(safeConfig)
         });
