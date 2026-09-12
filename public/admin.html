@@ -197,10 +197,8 @@
   <div class="top"><h1>商家后台</h1><div class="stat" id="stat"></div></div>
   <div class="wrap">
     <details>
-      <summary>⚙️ 店铺设置（店铺名 / 联系人 / 公告 / 收款码）</summary>
+      <summary>⚙️ 店铺设置（店铺名 / 收款码）</summary>
       <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">店铺名</span><input type="text" id="sName"></div>
-      <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">联系人</span><input type="text" id="sContact"></div>
-      <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">公告</span><input type="text" id="sAnn"></div>
       <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">默认收款码</span><input type="file" id="sQr" accept="image/*"><button onclick="uploadQr()">上传</button><img id="sQrPrev" style="display:none"></div>
       <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">微信收款码</span><input type="file" id="sWc" accept="image/*"><button onclick="uploadWechat()">上传</button><img id="sWcPrev" style="display:none"></div>
       <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">支付宝收款码</span><input type="file" id="sAli" accept="image/*"><button onclick="uploadAlipay()">上传</button><img id="sAliPrev" style="display:none"></div>
@@ -580,8 +578,6 @@ async function loadOthers(){
   // 店铺设置表单只回填一次：后续 15s 轮询不再覆盖用户正在编辑的内容
   if(!configFormFilled){
     document.getElementById('sName').value=CONFIG.shopName||'';
-    document.getElementById('sContact').value=CONFIG.contactName||'';
-    document.getElementById('sAnn').value=CONFIG.announcement||'';
     document.getElementById('sBankName').value=CONFIG.bankName||'';
     document.getElementById('sBankAccount').value=CONFIG.bankAccount||'';
     document.getElementById('sBankHolder').value=CONFIG.bankHolder||'';
@@ -1747,8 +1743,6 @@ async function saveSettings(){
   const hiddenCats=Array.from(document.querySelectorAll('.cat-hide-cb:checked')).map(cb=>cb.value);
   const body={
     shopName:document.getElementById('sName').value,
-    contactName:document.getElementById('sContact').value,
-    announcement:document.getElementById('sAnn').value,
     bankName:document.getElementById('sBankName').value,
     bankAccount:document.getElementById('sBankAccount').value,
     bankHolder:document.getElementById('sBankHolder').value,
