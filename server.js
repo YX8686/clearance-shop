@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix9-2026-09-12-1235-local';
+const ADMIN_BUILD = 'fix10-2026-09-12-1255-local';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -1319,6 +1319,15 @@ const server = http.createServer(async (req, res)=>{
         if(item.skus && item.skus.length){
           item.price = Math.min(...item.skus.map(s=>Number(s.price)||0));
           item.stock = item.skus.reduce((sum,s)=>sum+(Number(s.stock)||0),0);
+        }
+        // 关键修复（2026-09-12）：改了「活动分组」必须立刻重算 hidden。
+        // 否则上一波切波时留下的 hidden=false 会让这个品在当前波次的买家端继续露出
+        //（症状：把产品改成「返场爆品」并保存成功，切到第二波却还能看到它）。
+        const curWave = String(config.activeWave||'').trim();
+        const WAVE_PREFIX_MAP = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'w4g' };
+        if(WAVE_PREFIX_MAP[curWave] && String(existing.waveGroup||'').trim() !== String(item.waveGroup||'').trim()){
+          const pre = WAVE_PREFIX_MAP[curWave];
+          item.hidden = !(item.waveGroup && item.waveGroup.indexOf(pre)===0);
         }
         if(isNew){ item.createdAt=item.updatedAt; products.push(item); }
         else { const idx=products.findIndex(x=>x.id===id); item.createdAt=products[idx].createdAt||item.updatedAt; products[idx]=item; }
