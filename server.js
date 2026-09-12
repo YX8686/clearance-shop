@@ -5,7 +5,6 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const zlib = require('zlib');
 let _sanitizeHtml;
 try { _sanitizeHtml = require('sanitize-html'); } catch(e){ _sanitizeHtml = null; }
 
@@ -15,60 +14,11 @@ const PUBLIC = path.join(ROOT, 'public');
 const VIEWS = path.join(ROOT, 'views');
 const GALLERY = path.join(PUBLIC, 'assets', 'gallery');
 const PORT = process.env.PORT || 4100;
-
-// 2026-09-11 修复：把 <font color="X"> 转成 <span style="color:X">
-// 原因：买家端 .desc{color:#5b5147} 是样式表规则，优先级高于 <font> 的 HTML 表现属性，
-// 导致后台设的红色被强制显示成默认棕色（"改颜色没同步"）。内联 style 优先级最高，必定正确显示。
-// 做成模块级函数（函数声明提升），产品路由/后台保存等任何作用域都能直接调用，避免"is not a function"作用域坑。
-function convertFontToSpan(desc){
-  if(!desc) return desc;
-  return String(desc)
-    .replace(/<font\b([^>]*)>/gi, (m, attrs)=>{
-      const color=(attrs.match(/color\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
-      const face=(attrs.match(/face\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
-      const styles=[];
-      if(color) styles.push('color:'+color);
-      if(face) styles.push('font-family:'+face);
-      return '<span'+(styles.length?' style="'+styles.join(';')+'"':'')+'>';
-    })
-    .replace(/<\/font>/gi, '</span>');
-}
-
-// 商家后台构建版本号——每次改了 admin.html 行为/UI 就手动 +1。
-// admin.html 加载时拿这个值和"自己被服务时的嵌入版本"对比，不一致就强制刷一次，
-// 彻底根除"用户卡在旧缓存里导致功能失效"的问题（不再让用户手动清缓存/隐身）。
-const ADMIN_BUILD = 'fix3-2026-09-12-0930';
-
-// ===== 嵌入发货管家（2026-09-09）：把 ship-cloud 的 handler 作为子路由转发 =====
-// 共用 4100 端口、共用 Supabase 数据源；线上访问路径不变（直接访问商城域名的原 ship-cloud 路径即可）
-let shipCloudHandler = null;
-try{
-  shipCloudHandler = require('./buchu-ship-cloud/server.js').handler;
-  console.log('[ship-cloud] handler loaded, embedded into mall server');
-}catch(e){
-  console.error('[ship-cloud] failed to load handler:', e.message);
-}
-const SHIP_CLOUD_PREFIXES = ['/api/shipper/', '/api/manual-session/', '/api/manual-pool/', '/api/manual-raw/'];
-// 精确路径 + 受允许 method（null = 任意 method）。/api/orders 与 /api/products 在商城已有同名端点，
-// 故仅在 ship-cloud 关心的 method（POST）上转发，避免破坏 GET 走商城
-const SHIP_CLOUD_EXACT = {
-  '/api/tracking': 'POST',
-  '/api/pull-mall': 'POST',
-  '/api/pull-mall-confirm': 'POST',
-  '/api/mall-products': 'GET',
-  '/api/pending-tracking': 'GET',
-  '/api/confirm-tracking': 'POST',
-  '/api/pick-list': 'GET',
-  '/api/stock': null,
-  '/api/settings': null,
-};
-function isShipCloudPath(p, m){
-  if(!(p && typeof p==='string')) return false;
-  for(let i=0;i<SHIP_CLOUD_PREFIXES.length;i++) if(p.startsWith(SHIP_CLOUD_PREFIXES[i])) return true;
-  const want = Object.prototype.hasOwnProperty.call(SHIP_CLOUD_EXACT, p) ? SHIP_CLOUD_EXACT[p] : undefined;
-  if(want === undefined) return false;
-  return want === null || want === m;
-}
+// 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
+// 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
+// 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
+const ADMIN_BUILD = 'fix5-2026-09-12-0940-local';
+const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
 function loadEnvLocal(){
@@ -381,18 +331,7 @@ async function _flushOrderQueue(){
           try { await sb.from('shop_data').upsert({ key:'order:'+o.id, value:o }); } catch(e){}
         }
       }
-    } catch(e){
-      console.error('[orderFlush] exception:', e.message, '| 重新入队防丢单');
-      _orderWriteQueue.push(...batch); // 崩溃/异常时把本批重新放回队列，等下次重试，绝不静默丢弃
-    }
-  } else {
-    // 文件模式：把当前内存全量订单原子落盘（修复前这里完全没写，导致本地模式下订单状态变更重启即丢）
-    try {
-      await withLock(()=> writeJsonAtomic('orders.json', orders));
-    } catch(e){
-      console.error('[orderFlush disk] exception:', e.message, '| 重新入队防丢单');
-      _orderWriteQueue.push(...batch);
-    }
+    } catch(e){ console.error('[orderFlush] exception:', e.message); }
   }
   // 如果队列还有积压，立即排下一批
   if(_orderWriteQueue.length) _scheduleOrderFlush();
@@ -405,15 +344,12 @@ function saveOrderRow(order){
   if(_orderWriteQueue.length >= 50) _flushOrderQueue(); // 满了立即刷
   else _scheduleOrderFlush(); // 500ms 后批量刷
 }
-// 状态变更用（低频管理操作）：内存即时同步 + 立即单条落盘（确保状态即时持久化，重启不丢）
+// 状态变更用（低频管理操作）：内存即时同步 + 立即单条 upsert（确保状态即时落盘）
 async function saveOrderRowSync(order){
   if(USE_SUPABASE){
     const { error } = await sb.from('shop_data').upsert({ key:'order:'+order.id, value: order });
     if(error) throw new Error('Supabase saveOrderRow error: '+error.message);
     kvCache.set('order:'+order.id, { ts:Date.now(), value:order, promise:null });
-  } else {
-    // 文件模式：状态变更后立即原子写盘（修复前只改内存，重启即丢单）
-    await withLock(()=> writeJsonAtomic('orders.json', orders)).catch(e=>console.error('[saveOrderRowSync disk]', e.message));
   }
   const idx = orders.findIndex(o=>o.id===order.id);
   if(idx>=0) orders[idx]=order; else orders.push(order);
@@ -603,25 +539,6 @@ async function refreshOrdersFromCloud(){
   } catch(e){ console.error('[refreshOrdersFromCloud]', e.message); }
   return orders;
 }
-// 单笔订单按 id 精确加载（回传/改单高频路径专用）。
-// 比起 refreshOrdersFromCloud 的「全表 select + 整体重赋值 orders」，这里只拉 order:<id> 单行，
-// ① 回传并发下从 O(N) 全表拉取降到 O(1)，大促回传高峰不再把整张订单表反复搬；
-// ② 只把这一行 merge 进内存（orders[idx]=o / push），绝不做整体替换，
-//    从根上消除了「全表重赋值把另一单刚落盘的改动短暂冲掉」的竞态窗口（重复发货的潜在来源）。
-// 不存在时返回 null，交由调用方 shipGuard 判 404。
-async function loadOrderRow(id){
-  if(!USE_SUPABASE) return orders.find(o=>o.id===id) || null;
-  try {
-    const { data, error } = await sb.from('shop_data').select('value').eq('key','order:'+id).single();
-    if(!error && data && data.value){
-      const o = data.value;
-      const idx = orders.findIndex(x=>x.id===id);
-      if(idx>=0) orders[idx]=o; else orders.push(o);
-      return o;
-    }
-  } catch(e){ console.error('[loadOrderRow]', id, e.message); }
-  return orders.find(o=>o.id===id) || null;
-}
 // 订单写入前必须先刷新内存副本：手机端在云端下的订单，本地服务内存里可能没有，
 // 直接 find 内存会 404 静默失败（症状：后台点"确认收款"提示成功但状态不变）
 // ⚠️ 严禁用 loadKV('orders', ...)：那是已废弃的「旧大数组」行，长期不更新——发货管家对
@@ -671,38 +588,11 @@ function pickShopShareImage(list){
   }
   return '';
 }
-// 全局唯一订单号：实例分片(2) + 随机(6) + 进程内自增序号，杜绝 Render 多实例碰撞导致的
-// 「同 id 互相覆盖 → 丢单/重复」问题（旧实现仅 8 位随机 + 进程内查重，多实例并发可生成相同 id）。
-const _instanceShard = crypto.randomBytes(2).toString('hex');
-let _orderSeq = 0;
 function genId(){
   let id;
-  do {
-    id = (_instanceShard + crypto.randomBytes(3).toString('hex') + (++_orderSeq).toString(36)).toUpperCase();
-  } while(orders.find(o=>o.id===id));
+  do { id = crypto.randomBytes(4).toString('hex').toUpperCase(); }
+  while(orders.find(o=>o.id===id));
   return id;
-}
-
-// ===== 订单级互斥锁：把「刷新云端→校验状态→改状态→落盘」对同一个订单 id 原子化 =====
-// 旧实现各状态接口各自 refresh→find→mutate→save，全程 await 会让出事件循环；多请求并发改同一单时
-// （如同时 confirm + cancel、双取消、双确认）会丢失更新（库存恢复两次 / 状态部分处理）。
-// 加 per-order Promise 链，使同一单的多次操作严格串行，杜绝竞态。
-const _orderLocks = new Map(); // id -> Promise 链
-function withOrderLock(id, fn){
-  const existing = _orderLocks.get(id) || Promise.resolve();
-  const p = existing.then(()=>fn(), ()=>fn());
-  _orderLocks.set(id, p.catch(()=>{}));
-  p.finally(()=>{ if(_orderLocks.get(id)===p) _orderLocks.delete(id); }).catch(()=>{});
-  return p;
-}
-
-// 状态正向流转守卫：已发货是终态之一，绝不能回退；已取消绝不可复活为已发货（避免重复发货）。
-// 返回 {ok, noop?, code?, error?}
-function shipGuard(o){
-  if(!o) return { ok:false, code:404, error:'no' };
-  if(o.status==='已取消') return { ok:false, code:400, error:'cancelled_cannot_ship' };
-  if(o.status==='已发货') return { ok:true, noop:true }; // 幂等：已发货不再处理
-  return { ok:true };
 }
 
 const MIME = {
@@ -740,7 +630,7 @@ function renderTemplate(name, vars){
 // 微信爬虫超时直接退化为纯文字链接、抓不到 OG 大图卡片。
 // 后台改完产品/配置会主动清缓存（见 saveProducts/saveConfig），兼顾新鲜度与速度。
 const htmlCache = new Map(); // key -> { html, ts }
-const HTML_CACHE_TTL = 30000; // 30 秒（2026-09-11 修正：10 分钟太长导致多实例缓存不同步、格式/图片更新延迟；5 秒又使每次请求都重新渲染、买家端变慢。30 秒折中：后台保存后最多等 30 秒刷新即可同步，且仍保留缓存提速）
+const HTML_CACHE_TTL = 30000; // 30 秒
 function getCachedHtml(key){
   const c = htmlCache.get(key);
   if(c && Date.now() - c.ts < HTML_CACHE_TTL) return c.html;
@@ -749,17 +639,6 @@ function getCachedHtml(key){
 }
 function setCachedHtml(key, html){ htmlCache.set(key, { html, ts: Date.now() }); }
 function clearHtmlCache(){ htmlCache.clear(); productReadCache = { ts: 0, value: products, promise: null, failed: false }; }
-
-// ---------- gzip 压缩输出（2026-09-11 提速：153KB 首页原样传输慢，gzip 后约 30KB，传输快 5 倍）----------
-function sendHtml(res, html, extraHeaders){
-  const headers = Object.assign({ 'Content-Type': 'text/html; charset=utf-8' }, extraHeaders || {});
-  const buf = Buffer.from(html, 'utf8');
-  zlib.gzip(buf, (err, gz) => {
-    if (err) { res.writeHead(200, headers); res.end(buf); return; }
-    res.writeHead(200, Object.assign(headers, { 'Content-Encoding': 'gzip', 'Content-Length': gz.length }));
-    res.end(gz);
-  });
-}
 
 // ---------- 路由 ----------
 const server = http.createServer(async (req, res)=>{
@@ -777,17 +656,6 @@ const server = http.createServer(async (req, res)=>{
   const BASE = proto + '://' + host;
 
   try {
-    // ===== 发货管家子路由（路径命中则转发，不再走商城分发）=====
-    if(shipCloudHandler && isShipCloudPath(pathname, method)){
-      return shipCloudHandler(req, res);
-    }
-    if(method==='GET' && pathname==='/api/admin-build'){
-      // 商家后台自检版本端点：admin.html 加载时会 fetch 这里对比自己嵌入的版本号，
-      // 不一致就 location.replace 强制刷一次。no-store 防止任何中间层缓存。
-      res.writeHead(200, {'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store, must-revalidate', 'Pragma':'no-cache'});
-      res.end(JSON.stringify({ v: ADMIN_BUILD, t: Date.now() }));
-      return;
-    }
     // ===== API =====
     if(pathname.startsWith('/api/')){
       // 商品 / 配置 / 订单列表（只读）
@@ -864,7 +732,7 @@ const server = http.createServer(async (req, res)=>{
           }
           return { id:pid, skuId, skuName, name, price, qty:Number(it.qty), image, bundleItems: skuBundle.length?skuBundle:(p&&p.bundleItems?p.bundleItems:[]) };
         });
-        const total = Math.round(detail.reduce((s,x)=> s + x.price*x.qty, 0) * 100) / 100;
+        const total = detail.reduce((s,x)=> s + x.price*x.qty, 0);
 
         // ===== 库存校验与扣减（stock 为数字才限量；null/未填视为不限量）=====
         // 注：products 以内存副本为权威（启动已载入云端最新），不再每单 syncProducts() 往返，
@@ -929,56 +797,45 @@ const server = http.createServer(async (req, res)=>{
       // 客户确认已发送付款截图
       const mPaid = pathname.match(/^\/api\/orders\/([\w-]+)\/paid$/);
       if(method==='POST' && mPaid){
-        return withOrderLock(mPaid[1], async ()=>{
-          await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
-          const o = orders.find(o=>o.id===mPaid[1]);
-          if(!o){ res.writeHead(404); res.end('no'); return; }
-          if(o.status==='待付款'){ o.status='待确认'; o.paidScreenshotAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o); }
-          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
-        });
+        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
+        const o = orders.find(o=>o.id===mPaid[1]);
+        if(!o){ res.writeHead(404); res.end('no'); return; }
+        if(o.status==='待付款'){ o.status='待确认'; o.paidScreenshotAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o); }
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
       // 确认收款
       const mConfirm = pathname.match(/^\/api\/orders\/([\w-]+)\/confirm$/);
       if(method==='POST' && mConfirm){
-        return withOrderLock(mConfirm[1], async ()=>{
-          await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
-          const o = orders.find(o=>o.id===mConfirm[1]);
-          if(!o){ res.writeHead(404); res.end('no'); return; }
-          if(o.status==='待付款' || o.status==='待确认'){
-            o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o);
-          }
-          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
-        });
+        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
+        const o = orders.find(o=>o.id===mConfirm[1]);
+        if(!o){ res.writeHead(404); res.end('no'); return; }
+        if(o.status==='待付款' || o.status==='待确认'){
+          o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o);
+        }
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
-      // 发货（→已发货，正向终态；已取消绝不复活、已发货幂等）
+      // 发货
       const mShip = pathname.match(/^\/api\/orders\/([\w-]+)\/ship$/);
       if(method==='POST' && mShip){
-        return withOrderLock(mShip[1], async ()=>{
-          await loadOrderRow(mShip[1]); // 只精确拉本单（O(1)），不再全表重赋值，消除回传并发下的竞态窗口
-          const o = orders.find(o=>o.id===mShip[1]);
-          const g = shipGuard(o);
-          if(!g.ok){ res.writeHead(g.code,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:g.error})); return; }
-          let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
-          if(!g.noop){
-            o.status='已发货'; o.tracking=String(body.tracking||'').slice(0,60); o.shippedAt=Date.now(); await saveOrderRowSync(o);
-          }
-          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
-        });
+        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
+        const o = orders.find(o=>o.id===mShip[1]);
+        if(!o){ res.writeHead(404); res.end('no'); return; }
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+        o.status='已发货'; o.tracking=String(body.tracking||'').slice(0,60); o.shippedAt=Date.now(); await saveOrderRowSync(o);
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
       // 允许/禁止发货管家采集（仅待发货状态可设置）
       const mAllowPull = pathname.match(/^\/api\/orders\/([\w-]+)\/allow-pull$/);
       if(method==='POST' && mAllowPull){
-        return withOrderLock(mAllowPull[1], async ()=>{
-          await syncOrders();
-          const o = orders.find(o=>o.id===mAllowPull[1]);
-          if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
-          let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
-          o.allowPull = !!body.allowPull;
-          o.allowPullAt = o.allowPull ? Date.now() : null;
-          await saveOrderRowSync(o);
-          if(!USE_SUPABASE) await saveKV('orders', orders).catch(e=>console.error('[allow-pull disk]',e.message));
-          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
-        });
+        await syncOrders();
+        const o = orders.find(o=>o.id===mAllowPull[1]);
+        if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+        o.allowPull = !!body.allowPull;
+        o.allowPullAt = o.allowPull ? Date.now() : null;
+        await saveOrderRowSync(o);
+        if(!USE_SUPABASE) await saveKV('orders', orders).catch(e=>console.error('[allow-pull disk]',e.message));
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
       }
       // 批量允许/禁止（仅操作 status==='待发货' 的订单）
       const mBatchAllow = pathname.match(/^\/api\/orders\/batch-allow-pull$/);
@@ -1016,22 +873,7 @@ const server = http.createServer(async (req, res)=>{
       if(method==='POST' && mMallExport){
         let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
         const date = String(body.date||new Date().toISOString().slice(0,10));
-        // 防重复导出（修复前：仅按客户端传来的 body.orders 标记待回传，但会把同一批订单又塞进新 session，
-        // 导致发货员在两个 session 都看到 → 重复发货）。现在改为「服务端按状态去重」：
-        // 仅接受当前确为「今日可发/待发货」且未被任何历史 session 收录过的订单。
-        const reqIds = Array.isArray(body.orders) ? body.orders.map(o=>o && o.id).filter(Boolean) : [];
-        let existingSessionIds = new Set();
-        try { const arr = await loadKV('mall_sessions', []); (Array.isArray(arr)?arr:[]).forEach(s=>(s.orders||[]).forEach(o=>existingSessionIds.add(o.id))); } catch(e){}
-        await refreshOrdersFromCloud().catch(e=>console.error('[mall-export refresh]', e.message));
-        const exported = [];
-        orders.forEach(o=>{
-          if((o.status==='今日可发' || o.status==='待发货') && reqIds.includes(o.id) && !existingSessionIds.has(o.id)){
-            exported.push({ id:o.id, phone:o.phone, name:o.name, address:o.address });
-          }
-        });
-        if(!exported.length){
-          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, sessionId:null, ts:Date.now(), count:0, totalSessions:(await loadKV('mall_sessions',[])).length, returnedIds:[], note:'nothing_to_export'})); return;
-        }
+        const exported = Array.isArray(body.orders) ? body.orders.filter(o=>o && o.id && o.phone) : [];
         const session = {
           sessionId: 'M'+Date.now().toString(36)+Math.random().toString(36).slice(2,4),
           ts: Date.now(), date, orders: exported
@@ -1042,6 +884,9 @@ const server = http.createServer(async (req, res)=>{
           const list = Array.isArray(arr) ? arr : [];
           list.push(session);
           await saveKV('mall_sessions', list);
+          // 关键：先刷新内存订单副本。Render 冷启动/内存可能过期或为空，直接 find 会找不到订单，
+          // 导致「标记为待回传」这一步空转、防重复失效。refreshOrdersFromCloud() 正是 /api/orders 用的那份权威数据源。
+          await refreshOrdersFromCloud().catch(e=>console.error('[mall-export refresh]', e.message));
           // 防重复：把已导出的「今日可发」订单标记为「待回传」，使其离开「今日可发」、进入「等待回传区」
           const byId = new Map(exported.map(o=>[o.id, o]));
           const dirty = [];
@@ -1055,11 +900,10 @@ const server = http.createServer(async (req, res)=>{
       // 取消订单（允许待付款 / 待确认 状态，含商家端「未收到该款项」）
       const mCancel = pathname.match(/^\/api\/orders\/([\w-]+)\/cancel$/);
       if(method==='POST' && mCancel){
-        return withOrderLock(mCancel[1], async ()=>{
-          await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
-          const o = orders.find(o=>o.id===mCancel[1]);
-          if(!o){ res.writeHead(404); res.end(JSON.stringify({error:'no'})); return; }
-          if(o.status!=='待付款' && o.status!=='待确认'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_pending_or_confirm_can_cancel'})); return; }
+        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
+        const o = orders.find(o=>o.id===mCancel[1]);
+        if(!o){ res.writeHead(404); res.end(JSON.stringify({error:'no'})); return; }
+        if(o.status!=='待付款' && o.status!=='待确认'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_pending_or_confirm_can_cancel'})); return; }
         let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
         // 恢复库存：仅本功能上线后下单（stockDeducted 标记）的订单才恢复，历史订单不回溯
         let stockRestored = false;
@@ -1104,13 +948,11 @@ const server = http.createServer(async (req, res)=>{
         }
         if(stockRestored) saveProductsDebounced();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
-        });
       }
       // 恢复已取消订单：商家核实后重新成立，进入待发货（库存恢复后再次扣除）
       const mRestore = pathname.match(/^\/api\/orders\/([\w-]+)\/restore$/);
       if(method==='POST' && mRestore){
-        return withOrderLock(mRestore[1], async ()=>{
-          const o = orders.find(o=>o.id===mRestore[1]);
+        const o = orders.find(o=>o.id===mRestore[1]);
         if(!o){ res.writeHead(404); res.end(JSON.stringify({error:'no'})); return; }
         if(o.status!=='已取消'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_cancelled_can_restore'})); return; }
         // 重新扣减库存：仅本功能上线后下单（stockDeducted 标记）的订单才扣，历史订单不回溯
@@ -1158,17 +1000,15 @@ const server = http.createServer(async (req, res)=>{
         }
         if(stockRededucted) saveProductsDebounced();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
-        });
       }
       // ---------- 修改订单商品（删除某几项 / 换货补货追加）：重算 total，被删商品恢复库存 ----------
       const mUpdateItems = pathname.match(/^\/api\/orders\/([\w-]+)\/update-items$/);
       if(method==='POST' && mUpdateItems){
-        return withOrderLock(mUpdateItems[1], async ()=>{
-          await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本覆盖
-          const o = orders.find(o=>o.id===mUpdateItems[1]);
-          if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
-          // 仅未发货订单可改商品（已发货/已取消不可直接改）
-          if(o.status==='已发货' || o.status==='已取消'){
+        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本覆盖
+        const o = orders.find(o=>o.id===mUpdateItems[1]);
+        if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
+        // 仅未发货订单可改商品（已发货/已取消不可直接改）
+        if(o.status==='已发货' || o.status==='已取消'){
           res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_unshipped_can_edit'})); return;
         }
         let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
@@ -1199,7 +1039,7 @@ const server = http.createServer(async (req, res)=>{
         });
         const prevItems=o.items, prevTotal=o.total, prevStatus=o.status, prevCancelledAt=o.cancelledAt;
         o.items=newItems;
-        o.total=Math.round(newItems.reduce((s,x)=>s+(x.isManualAdd?0:x.price*x.qty),0)*100)/100;
+        o.total=newItems.reduce((s,x)=>s+(x.isManualAdd?0:x.price*x.qty),0);
         if(newItems.length===0){ o.status='已取消'; o.cancelledAt=Date.now(); }
         try { await saveOrderRowSync(o); }
         catch(e){
@@ -1210,7 +1050,6 @@ const server = http.createServer(async (req, res)=>{
         }
         if(stockRestored) saveProductsDebounced();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
-        });
       }
       // ---------- 新建手工订单（商家后台补单/换货追加）：沿用客户信息，商品可手工填写，不扣系统库存 ----------
       if(method==='POST' && pathname==='/api/orders/manual'){
@@ -1235,7 +1074,7 @@ const server = http.createServer(async (req, res)=>{
             bundleItems: Array.isArray(it.bundleItems)?it.bundleItems:[]
           };
         });
-        const total = Math.round(detail.reduce((s,x)=>s+x.price*x.qty,0)*100)/100;
+        const total = detail.reduce((s,x)=>s+x.price*x.qty,0);
         const id = genId();
         const order = {
           id, items:detail, total,
@@ -1270,6 +1109,9 @@ const server = http.createServer(async (req, res)=>{
           const arr=Array.isArray(body.hiddenCategories)?body.hiddenCategories:[];
           config.hiddenCategories=arr.map(x=>String(x).trim().slice(0,50)).filter(Boolean);
         }
+        // 2026-09-12 加：当前活动波次（none=日常 / w1=第一波 / w2 / w3 / w4=返场）
+        if(body.activeWave!=null) config.activeWave=String(body.activeWave).trim().slice(0,10);
+        if(body.hours!=null){ const h=Number(body.hours); if(Number.isFinite(h)&&h>0){ config.waveEndsAt=Date.now()+Math.round(h*3600*1000); config.activityDeadline=new Date(config.waveEndsAt).toISOString(); } }
         if(body.paymentQrBase64){ const url=await saveImage(body.paymentQrBase64,'payment-qr'); if(url) config.paymentQr=url; }
         if(body.paymentWechatQrBase64){ const url=await saveImage(body.paymentWechatQrBase64,'payment-wechat'); if(url) config.paymentWechatQr=url; }
         if(body.paymentAlipayQrBase64){ const url=await saveImage(body.paymentAlipayQrBase64,'payment-alipay'); if(url) config.paymentAlipayQr=url; }
@@ -1329,26 +1171,10 @@ const server = http.createServer(async (req, res)=>{
 
       // 富文本描述安全过滤：白名单标签 + 移除脚本/事件属性/危险协议
       const SANITIZE_ALLOWED_TAGS = ['p','br','div','span','b','strong','i','em','u','ul','ol','li','h1','h2','h3','h4','h5','h6','a','img','table','tbody','thead','tr','td','th','hr','sub','sup','small','big','mark','section','article','blockquote','pre','code','font','figure','figcaption','dl','dt','dd','center','strike','del','ins'];
-      // 2026-09-11 修复：把 <font color="X"> 转成 <span style="color:X">。
-      // 原因：买家端 .desc{color:#5b5147} 是样式表规则，优先级高于 <font> 的 HTML 表现属性，
-      // 导致后台设置的红色被强制显示为默认棕色（"改颜色没同步"）。内联 style 优先级最高，可正确显示颜色。
-      function fixDescColor(h){
-        if(!h) return h;
-        return String(h)
-          .replace(/<font\b([^>]*)>/gi, (m, attrs)=>{
-            const color=(attrs.match(/color\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
-            const face=(attrs.match(/face\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
-            const styles=[];
-            if(color) styles.push('color:'+color);
-            if(face) styles.push('font-family:'+face);
-            return '<span'+(styles.length?' style="'+styles.join(';')+'"':'')+'>';
-          })
-          .replace(/<\/font>/gi, '</span>');
-      }
       function sanitizeHtml(html){
         if(!html) return '';
         if(_sanitizeHtml){
-          return fixDescColor(_sanitizeHtml(String(html).trim(), {
+          return _sanitizeHtml(String(html).trim(), {
             allowedTags: SANITIZE_ALLOWED_TAGS,
             allowedAttributes: {
               '*': ['style','class','color'],
@@ -1358,7 +1184,7 @@ const server = http.createServer(async (req, res)=>{
             allowedSchemes: ['http','https','data'],
             allowedSchemesAppliedToAttributes: ['href','src'],
             allowProtocolRelative: false
-          }));
+          });
         }
         // 降级：库未安装时的自定义过滤（保留格式标签，文本优先保留）
         let s=String(html).trim();
@@ -1390,7 +1216,7 @@ const server = http.createServer(async (req, res)=>{
           const colorAttr=(attrs.match(/color\s*=\s*("|')([^"']*)\1/i)||[])[2]||'';
           return slash + tag.toLowerCase() + (safeStyle?' style="'+safeStyle.replace(/"/g,'')+'"':'') + (safeCls?' class="'+safeCls+'"':'') + (colorAttr?' color="'+colorAttr.replace(/"/g,'')+'"':'') + '>';
         });
-        return fixDescColor(s);
+        return s;
       }
       // 产品管理：增 / 改
       if(method==='POST' && pathname==='/api/products'){
@@ -1423,6 +1249,8 @@ const server = http.createServer(async (req, res)=>{
           stock: p.stock!==undefined?Math.max(0, Number(p.stock)||0):(existing.stock||0),
           forceSoldOut: p.forceSoldOut!==undefined?!!p.forceSoldOut:(existing.forceSoldOut||false), // 后台弹窗没提供该字段，必须与旧数据合并，防止被清空
           hidden: p.hidden!==undefined?!!p.hidden:(existing.hidden||false),
+          // 2026-09-12 加：活动分组（第一波1/2/3组、第二波A/B组、第三波定制/盲盒、返场）
+          waveGroup: String(p.waveGroup!==undefined?p.waveGroup:(existing.waveGroup||'')).trim().slice(0,30),
           category: String(p.category!==undefined?p.category:(existing.category||'')).trim().slice(0,50),
           desc: p.desc!==undefined?sanitizeHtml(String(p.desc).trim()).slice(0,30000):(existing.desc||''),
           image: String(p.image!==undefined?p.image:(existing.image||'/assets/products/default.svg')).trim(),
@@ -1433,13 +1261,10 @@ const server = http.createServer(async (req, res)=>{
           skus: p.skus!==undefined?(Array.isArray(p.skus)?p.skus.slice(0,20).map(s=>({
             id: String(s.id||'').trim() || crypto.randomBytes(3).toString('hex').toUpperCase(),
             name: String(s.name||'').trim().slice(0,100),
+            subtitle: String(s.subtitle!==undefined?s.subtitle:(existing.skus&&existing.skus.find(es=>es.id===s.id)?existing.skus.find(es=>es.id===s.id).subtitle:'')).trim().slice(0,80),
             price: Math.max(0, Number(s.price)||0),
-            // 2026-09-11 加：商家可填的"单片/单件参考价"，买家端红字均价优先按这个显示
-            perPrice: Math.max(0, Number(s.perPrice)||0),
             stock: Math.max(0, Math.floor(Number(s.stock)||0)),
             image: String(s.image||'').trim().slice(0,300),
-            // 2026-09-10 加：SKU 副标题（客户端橘色小注解展示），不填保持空，前端条件渲染
-            subtitle: String(s.subtitle||'').trim().slice(0,80),
             bundleItems: skuBundle(s.bundleItems)
           })).filter(s=>s.name):[]):(existing.skus||[]),
           // 有 SKU 时，主价格/库存自动以 SKU 最低价和总库存为准，避免列表与 SKU 不同步
@@ -1540,6 +1365,44 @@ const server = http.createServer(async (req, res)=>{
         clearHtmlCache();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, updated, hidden})); return;
       }
+      // 商家后台：一键切换活动波次。自动上架本波商品、隐藏非本波商品，并把买家端分类栏切成该波分组。
+      if(method==='POST' && pathname==='/api/admin/apply-wave'){
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+        const wave = String(body.wave||'none').trim();
+        const WAVE_PREFIX = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'w4g' };
+        const prefix = WAVE_PREFIX[wave] || '';
+        let shown=0, hid=0;
+        await withLock(async()=>{
+          for(const p of products){
+            const g=String(p.waveGroup||'').trim();
+            let wantHidden;
+            if(!prefix) wantHidden=false;
+            else if(g && g.indexOf(prefix)===0) wantHidden=false;
+            else wantHidden=true;
+            if(!!p.hidden!==wantHidden){ p.hidden=wantHidden; markProductDirty(p.id); }
+            if(wantHidden) hid++; else shown++;
+          }
+          await flushDirtyProducts();
+        });
+        config.activeWave = wave;
+        const h=Number(body.hours);
+        if(Number.isFinite(h)&&h>0){
+          config.waveEndsAt = Date.now()+Math.round(h*3600*1000);
+          config.activityDeadline = new Date(config.waveEndsAt).toISOString();
+        }
+        await saveConfig();
+        clearHtmlCache();
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, wave, shown, hidden:hid})); return;
+      }
+
+      // 商家后台自检版本端点：admin.html 加载时会 fetch 这里对比自己嵌入的版本号，
+      // 不一致就 location.replace 强制刷一次。no-store 防止任何中间层缓存。
+      // 必须放在 /api/* 块内部，避免被 1340 行兜底 404 吃掉。
+      if(method==='GET' && pathname==='/api/admin-build'){
+        res.writeHead(200, {'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store, must-revalidate', 'Pragma':'no-cache'});
+        res.end(JSON.stringify({ v: ADMIN_BUILD, t: Date.now() }));
+        return;
+      }
 
       res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return;
     }
@@ -1547,11 +1410,7 @@ const server = http.createServer(async (req, res)=>{
     // ===== 页面 =====
     if((method==='GET'||method==='HEAD') && (pathname==='/' || pathname==='')){
       const cached = getCachedHtml('home');
-      if(cached){
-        if(method==='HEAD'){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(); }
-        else sendHtml(res, cached);
-        return;
-      }
+      if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':cached); return; }
       const list = await getProducts();
       const ogImage = pickShopShareImage(list);
       const safeConfig = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config && !Array.isArray(config) ? config : {}) };
@@ -1566,21 +1425,14 @@ const server = http.createServer(async (req, res)=>{
       });
       html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
       setCachedHtml('home', html);
-      const homeHdr = {'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'};
-      if(method==='HEAD'){ res.writeHead(200, Object.assign({'Content-Type':'text/html; charset=utf-8'}, homeHdr)); res.end(); }
-      else sendHtml(res, html, homeHdr);
-      return;
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;
     }
 
-      const mProd = pathname.match(/^\/(?:product|p2|p3|p4)\/([\w-]+)$/);
+      const mProd = pathname.match(/^\/product\/([\w-]+)$/);
       if((method==='GET'||method==='HEAD') && mProd){
         const pkey = 'product:'+mProd[1];
         const cached = getCachedHtml(pkey);
-        if(cached){
-          if(method==='HEAD'){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'}); res.end(); }
-          else sendHtml(res, cached, {'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'});
-          return;
-        }
+        if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':cached); return; }
         const list = await getProducts();
         const p = list.find(p=>p.id===mProd[1]);
         if(!p){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
@@ -1591,8 +1443,6 @@ const server = http.createServer(async (req, res)=>{
         }
         const ogImage = inferShareImage(p) || pickShopShareImage(list);
         const safeConfig = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config && !Array.isArray(config) ? config : {}) };
-        // 2026-09-09 22:30 加：服务端预填主图，让浏览器在 HTML 解析时就并行下载（之前是 src="" 等 JS 再设，等几秒才出图）
-        const heroImage = p.image || (Array.isArray(p.skus) && p.skus.length && p.skus[0].image) || '/assets/product-placeholder.svg';
         let html = renderTemplate('product.html', {
           SHOP_NAME: htmlEscape(safeConfig.shopName),
           OG_TITLE: htmlEscape(p.name),
@@ -1600,17 +1450,13 @@ const server = http.createServer(async (req, res)=>{
           OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
           OG_URL: htmlEscape(BASE + '/product/'+p.id),
           OG_PRICE: htmlEscape(p.price || ''),
-          HERO_IMAGE: htmlEscape(heroImage),
-          PRODUCT_JSON: jsonForScript({ ...p, desc: convertFontToSpan(p.desc) }),
+          PRODUCT_JSON: jsonForScript(p),
           PRODUCTS_JSON: jsonForScript(list),
           CONFIG_JSON: jsonForScript(safeConfig)
         });
       html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
       setCachedHtml(pkey, html);
-      const prodHdr = {'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'};
-      if(method==='HEAD'){ res.writeHead(200, Object.assign({'Content-Type':'text/html; charset=utf-8'}, prodHdr)); res.end(); }
-      else sendHtml(res, html, prodHdr);
-      return;
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;
     }
 
     const mOrder = pathname.match(/^\/order\/([\w-]+)$/);
@@ -1622,19 +1468,13 @@ const server = http.createServer(async (req, res)=>{
         ORDER_JSON: jsonForScript(o?enrichOrderBundles(o):o),
         CONFIG_JSON: jsonForScript(config)
       });
-      if(method==='HEAD'){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(); }
-      else sendHtml(res, html);
-      return;
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':html); return;
     }
 
     if(method==='GET' && pathname==='/admin'){
       fs.readFile(path.join(PUBLIC,'admin.html'), (err, buf)=>{
         if(err){ res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'}); res.end('Not found'); return; }
-        // 注入"自检 + 强制刷"脚本：把这个 admin.html 服务时的版本号写进 window.__AB，
-        // 脚本异步 fetch /api/admin-build，对不上就 location.replace 带 _cb 时间戳重新拉。
-        // 这样即使用户浏览器卡在旧缓存，下次打开/刷新时会自动跳到最新版，永久自愈。
-        const inj = '<script>(function(){var my="'+ADMIN_BUILD+'";fetch("/api/admin-build?_t="+Date.now(),{cache:"no-store"}).then(function(r){return r.json();}).then(function(d){if(d&&d.v&&d.v!==my){var u=location.pathname+"?_cb="+Date.now();location.replace(u);}}).catch(function(){});})();</script>';
-        const html = buf.toString('utf8').replace('</head>', inj + '</head>');
+        const html = buf.toString('utf8').replace('</head>', ADMIN_SELF_CHECK + '</head>');
         res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(html);
       });
       return;
