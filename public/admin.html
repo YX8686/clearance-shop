@@ -1729,19 +1729,19 @@ async function applyWave(){
   let lastErr='', ok=false, shownN=0, hidN=0;
   for(let i=0;i<2 && !ok;i++){
     const ctl=new AbortController();
-    const timer=setTimeout(()=>ctl.abort(), 25000);
+    const timer=setTimeout(()=>ctl.abort(), 45000);
     try{
       const r=await fetch('/api/admin/apply-wave',{method:'POST',headers:{'Content-Type':'application/json','Cache-Control':'no-cache'},cache:'no-store',body:JSON.stringify({wave,hours}),signal:ctl.signal});
       const d=await r.json().catch(()=>({}));
       clearTimeout(timer);
       if(r.ok && d.ok){ ok=true; shownN=d.shown; hidN=d.hidden; break; }
       lastErr=(d&&d.error)||('HTTP '+r.status);
-    }catch(e){ clearTimeout(timer); lastErr=(e&&e.name==='AbortError')?'请求超时（数据库网络慢）':((e&&e.message)||e); }
+    }catch(e){ clearTimeout(timer); lastErr=(e&&e.name==='AbortError')?'云端数据库连不上（本机网络/代理问题），换个时间再试或改用线上后台':((e&&e.message)||e); }
     if(i===0){ toast('首次未成功，正在自动重试…'); await new Promise(r=>setTimeout(r,800)); }
   }
   if(btn){ btn.disabled=false; btn.textContent=oldTxt||'应用到买家端'; }
   if(ok){ toast('已切换：「'+label+'」上架 '+shownN+' 款、隐藏 '+hidN+' 款'); load(); }
-  else { toast('切换失败：'+lastErr+'（可再点一次）'); }
+  else { toast('切换失败：'+lastErr); }
 }
 async function saveSettings(){
   const hiddenCats=Array.from(document.querySelectorAll('.cat-hide-cb:checked')).map(cb=>cb.value);
