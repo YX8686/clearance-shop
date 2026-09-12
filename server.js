@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix5-2026-09-12-0940-local';
+const ADMIN_BUILD = 'fix7-2026-09-12-1150-local';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -93,7 +93,10 @@ const kvCache = new Map(); // key -> { ts, value, promise }
 async function withRetry(fn, label, retries=2){
   let lastErr;
   for(let i=0;i<retries;i++){
-    try{ return await fn(); }
+    try{
+      // 12s 单调用超时：Supabase 免费层偶发 fetch 永久挂起，必须强制释放，防止 withLock 死锁
+      return await Promise.race([fn(), new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')), 12000))]);
+    }
     catch(e){
       lastErr=e;
       console.error(`[${label}] 云端第${i+1}/${retries}次调用失败:`, e.message);
@@ -357,7 +360,7 @@ async function saveOrderRowSync(order){
 // 进程退出前刷盘，防丢单
 process.on('beforeExit', ()=>{ _flushOrderQueue(); flushDirtyProducts().catch(()=>{}); });
 function saveOrders(){ return withLock(()=> saveKV('orders', orders)); } // 仅作整批备份残留，下单/状态变更已改用 saveOrderRow
-function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config, 5)); }
+function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config, 5)).then(r=>{ configReadCache.ts = Date.now(); return r; }); }
 
 // ===== 产品存储加固：每个产品独立存储为 shop_data 的一行（key=product:<id>）=====
 // 旧方案：所有产品塞进 shop_data 的单行(key='products')，产品描述长、数量多后，
@@ -384,16 +387,18 @@ async function flushDirtyProducts(){
     await withLock(()=> writeJsonAtomic('products.json', products));
     return;
   }
-  // 云端模式：逐行 upsert；失败的 id 重新加入 dirty 待下次窗口重试
-  const failed = [];
-  for(const id of ids){
+  // 云端模式：批量 upsert，把 N 次单条网络往返合并为 1 次，显著降低 Supabase 免费层抖动概率
+  const rows = ids.map(id=>{
     const p = products.find(x=>x.id===id);
-    if(!p) continue;
+    return p ? { key:'product:'+id, value:p } : null;
+  }).filter(Boolean);
+  const failed = [];
+  if(rows.length){
     try {
-      await sbRun(()=>sb.from('shop_data').upsert({ key:'product:'+id, value:p }), 'saveProductRow:'+id);
+      await sbRun(()=>sb.from('shop_data').upsert(rows), 'saveProductRows:'+rows.length);
     } catch(e) {
-      console.error('[saveProductRow] 失败:', id, e.message);
-      failed.push(id);
+      console.error('[saveProductRows] 批量失败:', e.message);
+      ids.forEach(id=>failed.push(id));
     }
   }
   failed.forEach(id=>dirtyProductIds.add(id));
@@ -498,6 +503,33 @@ async function getProducts(){
   const result = await promise;
   productReadCache.promise = null;
   return result;
+}
+// ===== 配置回源（与 getProducts 同策略）=====
+// 云端买家端(Render)与本机商家后台(4301)共用同一 Supabase。config 若只在启动时读一次，
+// 本机后台切波/改公告后云端永远读的是旧值 —— 症状正是「后台点了应用，买家端毫无变化」。
+// 这里每 3 秒回源一次；原地 Object.assign 保持 config 引用不变，避免打断正在进行的写入。
+let configReadCache = { ts: 0, promise: null };
+const CONFIG_READ_TTL_MS = 3000;
+function cfgSafe(c){ return (c && typeof c==='object' && !Array.isArray(c)) ? c : {}; }
+async function getConfig(){
+  if(!USE_SUPABASE) return config;
+  if(configReadCache.promise) return configReadCache.promise;
+  const now = Date.now();
+  if(configReadCache.ts > 0 && now - configReadCache.ts < CONFIG_READ_TTL_MS) return config;
+  const p = (async()=>{
+    try{
+      const fresh = await loadKV('config', config);
+      if(fresh && typeof fresh==='object' && !Array.isArray(fresh)) Object.assign(config, fresh);
+    }catch(e){
+      console.error('[getConfig] 读云端失败，使用内存副本：', e.message);
+    }
+    configReadCache.ts = Date.now();
+    return config;
+  })();
+  configReadCache.promise = p;
+  const r = await p;
+  configReadCache.promise = null;
+  return r;
 }
 // 后台重试：Supabase 免费层偶发 fetch failed 时，单行 flush 可能失败；每 5s 把残留脏行再刷一次，
 // 确保最终一致，且管理员界面因 getProducts 优先返回内存脏行而不受影响。
@@ -664,7 +696,7 @@ const server = http.createServer(async (req, res)=>{
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(list)); return;
       }
       if(method==='GET' && pathname==='/api/config'){
-        const out = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config && !Array.isArray(config) ? config : {}) };
+        const out = { ...DEFAULT_CONFIG, ...cfgSafe(await getConfig()) };
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(out)); return;
       }
       if(method==='GET' && pathname==='/api/orders'){
@@ -1372,6 +1404,7 @@ const server = http.createServer(async (req, res)=>{
         const WAVE_PREFIX = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'w4g' };
         const prefix = WAVE_PREFIX[wave] || '';
         let shown=0, hid=0;
+        try {
         await withLock(async()=>{
           for(const p of products){
             const g=String(p.waveGroup||'').trim();
@@ -1393,6 +1426,11 @@ const server = http.createServer(async (req, res)=>{
         await saveConfig();
         clearHtmlCache();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, wave, shown, hidden:hid})); return;
+        } catch(e){
+          console.error('[apply-wave] 失败:', e && e.message);
+          clearHtmlCache();
+          res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, error:'切换失败：'+((e&&e.message)||e)})); return;
+        }
       }
 
       // 商家后台自检版本端点：admin.html 加载时会 fetch 这里对比自己嵌入的版本号，
@@ -1413,7 +1451,7 @@ const server = http.createServer(async (req, res)=>{
       if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':cached); return; }
       const list = await getProducts();
       const ogImage = pickShopShareImage(list);
-      const safeConfig = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config && !Array.isArray(config) ? config : {}) };
+      const safeConfig = { ...DEFAULT_CONFIG, ...cfgSafe(await getConfig()) };
       let html = renderTemplate('home.html', {
         SHOP_NAME: htmlEscape(safeConfig.shopName),
         OG_TITLE: htmlEscape(safeConfig.shopName),
@@ -1437,12 +1475,13 @@ const server = http.createServer(async (req, res)=>{
         const p = list.find(p=>p.id===mProd[1]);
         if(!p){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
         // 隐藏产品或被隐藏分类下的产品：买家端详情页直接返回不存在
-        const hiddenCats = Array.isArray(config.hiddenCategories)?config.hiddenCategories:[];
+        const cfgNow = await getConfig();
+        const hiddenCats = Array.isArray(cfgNow.hiddenCategories)?cfgNow.hiddenCategories:[];
         if(p.hidden || (p.category && hiddenCats.includes(p.category))){
           res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return;
         }
         const ogImage = inferShareImage(p) || pickShopShareImage(list);
-        const safeConfig = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config && !Array.isArray(config) ? config : {}) };
+        const safeConfig = { ...DEFAULT_CONFIG, ...cfgSafe(cfgNow) };
         let html = renderTemplate('product.html', {
           SHOP_NAME: htmlEscape(safeConfig.shopName),
           OG_TITLE: htmlEscape(p.name),
@@ -1463,10 +1502,11 @@ const server = http.createServer(async (req, res)=>{
     if(method==='GET' && mOrder){
       const list = await getOrders();
       const o = list.find(o=>o.id===mOrder[1]) || null;
+      const cfgNow = await getConfig();
       const html = renderTemplate('order.html', {
-        SHOP_NAME: htmlEscape(config.shopName),
+        SHOP_NAME: htmlEscape(cfgNow.shopName),
         ORDER_JSON: jsonForScript(o?enrichOrderBundles(o):o),
-        CONFIG_JSON: jsonForScript(config)
+        CONFIG_JSON: jsonForScript(cfgNow)
       });
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':html); return;
     }
