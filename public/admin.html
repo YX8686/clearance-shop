@@ -3089,6 +3089,34 @@ async function compressImage(file, opts={}){
 load();
 // 15s 轮询：失败时静默重试，不在页面上弹大红报错
 setInterval(()=>load(true), 15000);
+
+// ===== 切回后台自动刷新（用户确认要做的第 4 项功能）=====
+// 切去微信 / 最小化再切回来时，立刻静默刷新一遍；
+// 若这段时间新增了「待确认」订单，弹绿色提示「🔄 已自动刷新 · 发现 N 笔新订单」。
+let _pendingBaseline = -1;      // 切走前记录的待确认笔数；-1 = 尚未记录
+let _lastAutoRefresh = 0;       // 防抖：focus 与 visibilitychange 可能同时触发
+const _pageLoadTs = Date.now();
+function _pendingWaitCount(){ return ORDERS.filter(o=>o.status==='待确认').length; }
+async function _autoRefreshOnReturn(){
+  const now = Date.now();
+  if(now - _lastAutoRefresh < 2000) return;       // 2 秒内不重复触发
+  if(now - _pageLoadTs < 3000) return;            // 首次打开 3 秒内不抢刷
+  _lastAutoRefresh = now;
+  const before = _pendingBaseline >= 0 ? _pendingBaseline : _pendingWaitCount();
+  try{ await load(true); }catch(e){ return; }     // 静默刷新（无 loading 提示）
+  const after = _pendingWaitCount();
+  const diff = after - before;
+  if(diff > 0) toast('🔄 已自动刷新 · 发现 '+diff+' 笔新订单');
+  _pendingBaseline = after;
+}
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState === 'hidden'){
+    _pendingBaseline = _pendingWaitCount();        // 切走瞬间记录基线
+  }else{
+    _autoRefreshOnReturn();
+  }
+});
+window.addEventListener('focus', ()=>{ _autoRefreshOnReturn(); });
 </script>
 </body>
 </html>
