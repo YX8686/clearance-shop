@@ -545,21 +545,34 @@ function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg
 function money(n){ return '¥'+Number(n).toLocaleString('zh-CN'); }
 
 let isLoading=false;
+let loadingTick=null, loadingStart=0;
 function setLoading(v){
   isLoading=v;
   const list=document.getElementById('list');
-  if(v){ list.innerHTML='<div class="empty" id="loadingTip">⏳ 正在从云端同步订单数据，请稍候…</div>'; }
+  if(v){
+    list.innerHTML='<div class="empty" id="loadingTip">⏳ 正在从云端同步订单数据，请稍候… <span id="loadSec">0</span> 秒</div>';
+    loadingStart=Date.now();
+    if(loadingTick) clearInterval(loadingTick);
+    loadingTick=setInterval(()=>{
+      const sec=Math.floor((Date.now()-loadingStart)/1000);
+      const el=document.getElementById('loadSec');
+      if(el) el.textContent=sec;
+    }, 1000);
+  } else {
+    if(loadingTick){ clearInterval(loadingTick); loadingTick=null; }
+  }
 }
 let firstLoad=true;
 let loadTimer=null;
-async function load(silent){
+async function load(silent, isRetry){
   // 第一优先：订单数据（商家最关心），先渲染，不等设置/产品/图库
   // 仅首次打开显示 loading 提示；后续刷新（自动轮询/操作后）静默更新，避免页面闪烁
-  if(firstLoad && !silent){ setLoading(true); }
+  if(firstLoad && !silent && !isRetry){ setLoading(true); }
   // 若上一轮询还没完成，先 abort 掉，避免并发请求堆积
   if(loadTimer){ clearTimeout(loadTimer); loadTimer=null; }
   const _ctrl=new AbortController();
-  loadTimer = setTimeout(()=>{ _ctrl.abort(); loadTimer=null; },25000);
+  const timeoutMs = (firstLoad && !silent) ? 45000 : 25000;
+  loadTimer = setTimeout(()=>{ _ctrl.abort(); loadTimer=null; }, timeoutMs);
   try{
     const res=await fetch('/api/orders',{signal:_ctrl.signal});
     clearTimeout(loadTimer); loadTimer=null;
@@ -569,6 +582,12 @@ async function load(silent){
     ORDERS = o.map(s => pendingIds.has(s.id) ? (ORDERS.find(l=>l.id===s.id) || s) : s);
   }catch(e){
     clearTimeout(loadTimer); loadTimer=null;
+    // 首次加载失败自动重试一次（Supabase 免费层冷启动常抖动）
+    if(firstLoad && !silent && !isRetry){
+      console.log('首次加载失败，2s 后自动重试：', e.message || e);
+      setTimeout(()=>load(silent, true), 2000);
+      return;
+    }
     // 轮询失败时静默保留旧数据，只有首次加载/用户手动刷新才显示错误
     if(firstLoad && !silent){
       const list=document.getElementById('list');
@@ -1228,7 +1247,13 @@ function closeModal(){ if(modalEl){ modalEl.remove(); modalEl=null; } }
 
 // 乐观更新订单商品并同步云端（统一入口：删商品/换货/补货都走这）
 async function applyOrderItems(o, newItems, okMsg){
+  pendingIds.add(o.id); // 关键保护：防止 15s 轮询把刚改的商品冲掉
   const prev=JSON.parse(JSON.stringify(o));
+  const updateLocal=(order)=>{
+    const idx=ORDERS.findIndex(x=>x.id===order.id);
+    if(idx>=0) ORDERS[idx]=order; else ORDERS.push(order);
+    Object.assign(o, order); // 保持当前引用也同步
+  };
   o.items=newItems.map(x=>({id:String(x.id||''),skuId:String(x.skuId||''),skuName:String(x.skuName||''),name:String(x.name||''),price:Number(x.price)||0,qty:Math.max(0,Math.floor(Number(x.qty)||0)),unit:String(x.unit||'').slice(0,10),image:String(x.image||''),bundleItems:Array.isArray(x.bundleItems)?x.bundleItems:[],isManualAdd:!!x.isManualAdd})).filter(x=>x.qty>0&&(x.id||x.name));
   o.total=o.items.reduce((s,x)=>s+(x.isManualAdd?0:x.price*x.qty),0);
   if(o.items.length===0){ o.status='已取消'; o.cancelledAt=Date.now(); }
@@ -1237,13 +1262,15 @@ async function applyOrderItems(o, newItems, okMsg){
     const r=await fetch('/api/orders/'+encodeURIComponent(o.id)+'/update-items',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:o.items})});
     const d=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(d.error||'save_failed');
-    Object.assign(o,d.order);
+    updateLocal(d.order || o);
     render();
     toast(okMsg||'已更新订单');
   }catch(e){
-    Object.assign(o,prev);
+    updateLocal(prev);
     render();
     toast('更新失败：'+(e.message||e));
+  }finally{
+    pendingIds.delete(o.id);
   }
 }
 
