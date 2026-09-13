@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix16-2026-09-13-1640-loading-pending';
+const ADMIN_BUILD = 'fix17-2026-09-13-2220-wave-multi-contact-note';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -1097,6 +1097,23 @@ const server = http.createServer(async (req, res)=>{
         if(stockRestored) saveProductsDebounced();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
       }
+      // ---------- 修改订单联系信息 / 备注（微信号、备注等） ----------
+      const mContact = pathname.match(/^\/api\/orders\/([\w-]+)\/contact$/);
+      if(method==='POST' && mContact){
+        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本覆盖
+        const o = orders.find(o=>o.id===mContact[1]);
+        if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+        const prev = { wechat:o.wechat, note:o.note };
+        if(body.wechat!=null) o.wechat = String(body.wechat).trim().slice(0,50);
+        if(body.note!=null) o.note = String(body.note).trim().slice(0,500);
+        try { await saveOrderRowSync(o); }
+        catch(e){
+          o.wechat = prev.wechat; o.note = prev.note;
+          res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'save_failed', message:e.message})); return;
+        }
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
+      }
       // ---------- 新建手工订单（商家后台补单/换货追加）：沿用客户信息，商品可手工填写，不扣系统库存 ----------
       if(method==='POST' && pathname==='/api/orders/manual'){
         let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
@@ -1323,12 +1340,14 @@ const server = http.createServer(async (req, res)=>{
         // 关键修复（2026-09-12）：改了「活动分组」必须立刻重算 hidden。
         // 否则上一波切波时留下的 hidden=false 会让这个品在当前波次的买家端继续露出
         //（症状：把产品改成「返场爆品」并保存成功，切到第二波却还能看到它）。
-        const curWave = String(config.activeWave||'').trim();
-        // w4(返场)=全部显示，不需要按分组隐藏；''是假值 → 直接跳过重算
+        // 2026-09-13 升级：支持多波次同时开启（如 w2,w3），waveGroup 变化时按当前所有生效波次重算 hidden。
+        const curWaves = String(config.activeWave||'').split(',').map(s=>s.trim()).filter(Boolean);
         const WAVE_PREFIX_MAP = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'' };
-        if(WAVE_PREFIX_MAP[curWave] && String(existing.waveGroup||'').trim() !== String(item.waveGroup||'').trim()){
-          const pre = WAVE_PREFIX_MAP[curWave];
-          item.hidden = !(item.waveGroup && item.waveGroup.indexOf(pre)===0);
+        const activePrefixes = curWaves.map(w=>WAVE_PREFIX_MAP[w]).filter((p,i,arr)=>p!=null && arr.indexOf(p)===i);
+        const hasAllPrefix = activePrefixes.some(p=>!p);
+        if(activePrefixes.length && !hasAllPrefix && String(existing.waveGroup||'').trim() !== String(item.waveGroup||'').trim()){
+          const wg = String(item.waveGroup||'').trim();
+          item.hidden = !activePrefixes.some(pre=>wg.indexOf(pre)===0);
         }
         if(isNew){ item.createdAt=item.updatedAt; products.push(item); }
         else { const idx=products.findIndex(x=>x.id===id); item.createdAt=products[idx].createdAt||item.updatedAt; products[idx]=item; }
@@ -1423,12 +1442,17 @@ const server = http.createServer(async (req, res)=>{
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, updated, hidden})); return;
       }
       // 商家后台：一键切换活动波次。自动上架本波商品、隐藏非本波商品，并把买家端分类栏切成该波分组。
+      // 2026-09-13 升级：支持同时选择多个波次（如第二波+第三波同时上）。
       if(method==='POST' && pathname==='/api/admin/apply-wave'){
         let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
-        const wave = String(body.wave||'none').trim();
-        // w4(返场) = 「全部返场」：不隐藏任何产品，只切换买家端分类栏与倒计时文案
+        // 支持 {waves:['w2','w3']} 或向后兼容 {wave:'w2'}
+        let waves = Array.isArray(body.waves) ? body.waves.map(String).map(s=>s.trim()).filter(Boolean) : [];
+        if(!waves.length && body.wave!=null) waves = [String(body.wave||'none').trim()];
         const WAVE_PREFIX = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'' };
-        const prefix = (wave in WAVE_PREFIX) ? WAVE_PREFIX[wave] : '';
+        // none / 空 = 全部显示
+        const wantsNone = waves.includes('none') || waves.length===0;
+        const activePrefixes = wantsNone ? [] : waves.map(w=>WAVE_PREFIX[w]).filter((p,i,arr)=>p!=null && arr.indexOf(p)===i);
+        const hasAllPrefix = activePrefixes.some(p=>!p); // 含 w4 或空 prefix 时全部显示
         const h=Number(body.hours);
         let shown=0, hid=0, lastErr=null;
         // 幂等重试 3 次：products 与 config 必须都写成功，否则会出现
@@ -1441,16 +1465,16 @@ const server = http.createServer(async (req, res)=>{
               for(const p of products){
                 const g=String(p.waveGroup||'').trim();
                 let wantHidden;
-                if(!prefix) wantHidden=false;
-                else if(g && g.indexOf(prefix)===0) wantHidden=false;
-                else wantHidden=true;
+                if(wantsNone || hasAllPrefix) wantHidden=false;
+                else if(!g) wantHidden=true;
+                else wantHidden = !activePrefixes.some(pre=>g.indexOf(pre)===0);
                 if(!!p.hidden!==wantHidden){ p.hidden=wantHidden; markProductDirty(p.id); }
                 if(wantHidden) hid++; else shown++;
               }
               await flushDirtyProducts();
             });
-            config.activeWave = wave;
-            if(!wave || wave==='none') config.waveDur = '';
+            config.activeWave = wantsNone ? 'none' : waves.join(',');
+            if(wantsNone) config.waveDur = '';
             if(Number.isFinite(h)&&h>0){
               config.waveEndsAt = Date.now()+Math.round(h*3600*1000);
               config.activityDeadline = new Date(config.waveEndsAt).toISOString();
@@ -1458,7 +1482,7 @@ const server = http.createServer(async (req, res)=>{
             }
             await saveConfig();
             clearHtmlCache();
-            res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, wave, shown, hidden:hid, attempt:attempt+1})); return;
+            res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, wave:config.activeWave, shown, hidden:hid, attempt:attempt+1})); return;
           }catch(e){
             lastErr=e;
             console.error('[apply-wave] 第'+(attempt+1)+'次失败:', e && e.message);

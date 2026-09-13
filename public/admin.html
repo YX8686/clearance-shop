@@ -262,18 +262,18 @@
       <div class="setrow" style="align-items:flex-start">
         <span style="font-size:13px;color:#7a6f62;width:80px;flex-shrink:0;padding-top:6px">活动排期</span>
         <div style="flex:1;display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:13px;color:#5b5147">
-          <select id="waveSelect" style="border:1px solid #e0d6c8;border-radius:6px;padding:6px;font-size:13px;min-width:170px">
-            <option value="none">日常（不开波次）</option>
-            <option value="w1">第一波（3组特惠）</option>
-            <option value="w2">第二波（A组 / B组）</option>
-            <option value="w3">第三波（定制 / 盲盒）</option>
-            <option value="w4">返场捡漏</option>
-          </select>
+          <div id="waveSelect" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;border:1px solid #e0d6c8;border-radius:6px;padding:5px 10px;background:#fff"><input type="checkbox" value="none" class="wave-cb" onchange="onWaveChange(this)"> 日常</label>
+            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;border:1px solid #e0d6c8;border-radius:6px;padding:5px 10px;background:#fff"><input type="checkbox" value="w1" class="wave-cb"> 第一波</label>
+            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;border:1px solid #e0d6c8;border-radius:6px;padding:5px 10px;background:#fff"><input type="checkbox" value="w2" class="wave-cb"> 第二波</label>
+            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;border:1px solid #e0d6c8;border-radius:6px;padding:5px 10px;background:#fff"><input type="checkbox" value="w3" class="wave-cb"> 第三波</label>
+            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;border:1px solid #e0d6c8;border-radius:6px;padding:5px 10px;background:#fff"><input type="checkbox" value="w4" class="wave-cb" onchange="onWaveChange(this)"> 返场</label>
+          </div>
           <input id="waveHours" type="number" min="1" step="1" placeholder="本波时长(小时)" style="border:1px solid #e0d6c8;border-radius:6px;padding:6px;font-size:13px;width:140px">
           <button onclick="applyWave()" style="border:1px solid #b8743f;background:#b8743f;color:#fff;border-radius:6px;padding:7px 14px;font-size:13px;cursor:pointer">应用到买家端</button>
         </div>
       </div>
-      <div style="font-size:12px;color:#9a8f82;padding:0 0 8px 88px">切换波次：本波商品自动上架、其余自动隐藏，买家端分类栏只显示本波分组。填了时长会同步生成倒计时（不填则沿用原倒计时）。</div>
+      <div style="font-size:12px;color:#9a8f82;padding:0 0 8px 88px">切换波次：选中的波次商品自动上架、其余自动隐藏，买家端分类栏只显示本波分组。可同时选择多个波次（如第二波+第三波），倒计时文案显示第一个选中的波次。填了时长会同步生成倒计时（不填则沿用原倒计时）。</div>
       <div class="setrow"><button onclick="saveSettings()">保存设置</button></div>
     </details>
 
@@ -633,8 +633,8 @@ async function loadOthers(){
     document.getElementById('sCdSeg').value=CONFIG.countdownSegmentHours||12;
     refreshCdManualOptions(CONFIG.countdownManualIndex);
     document.getElementById('sCdPhrases').addEventListener('input', refreshCdManualOptions);
-    const ws=document.getElementById('waveSelect');
-    if(ws) ws.value=CONFIG.activeWave||'none';
+    const activeWaves=String(CONFIG.activeWave||'none').split(',').map(s=>s.trim()).filter(Boolean);
+    document.querySelectorAll('.wave-cb').forEach(cb=>{ cb.checked=activeWaves.includes(cb.value); });
     configFormFilled=true;
   }
   const hiddenCats=Array.isArray(CONFIG.hiddenCategories)?CONFIG.hiddenCategories:[];
@@ -867,6 +867,7 @@ function render(){
     if(o.status==='已取消') acts=`<button class="btn-restore" onclick="restoreOrder('${o.id}')">核实重新成立，进入待发货</button>`;
     if(o.status==='已发货') acts=`<button class="btn-copy" onclick="copyShip('${o.id}')">复制发货信息</button>`;
     if(editable) acts+=swapBtnHtml(o.id);
+    acts+=`<button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${o.id}')">备注</button>`;
     const div=document.createElement('div'); div.className='card';
     const showPayTime = o.status==='待确认' || o.status==='待发货' || o.status==='待回传' || o.status==='已发货';
     const payLine=showPayTime?`<div class="line"><span class="k">付款时间</span>${fmtTime(o.paidAt)}</div>`:'';
@@ -874,11 +875,12 @@ function render(){
       <div class="h"><span class="oid">${o.id}</span><span class="st ${cls}">${lab}</span></div>
       <div class="line"><span class="k">下单时间</span>${fmtTime(o.createdAt)}</div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(o.name||'')}</div>
-      <div class="line"><span class="k">微信号</span>${o.wechat?`<b style="color:#b8743f">${escapeHtml(o.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">微信号</span>${wechatHtml(o,[o.id])}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(o.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${o.address}</div>
       ${payLine}
       <div class="items">${items}<div style="border-top:1px dashed #e0d6c8;margin-top:6px;padding-top:6px;font-weight:700">合计 ${money(o.total)}</div></div>
+      ${noteHtml(o)}
       ${o.status==='已发货'?('<div class="line"><span class="k">单号</span><b style="color:#1f9d55">'+o.tracking+'</b></div>'):''}
       <div class="acts">${acts}</div>`;
     list.appendChild(div);
@@ -961,12 +963,13 @@ function renderMergedPending(){
     div.innerHTML=`
       <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-wait">待确认</span></div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
-      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">微信号</span>${wechatHtml(first,ids)}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       ${progressHtml}
       <div class="items">${orderBlocks}</div>
-      <div class="acts" style="flex-wrap:wrap;gap:8px">${swapBtnHtml(first.id)}<button class="btn-confirm" onclick="confirmPaidGroup(['${ids.join("','")}'])">客户已发截图，确认收款${group.length>1?`（${group.length}笔一起）`:''}</button></div>`;
+      ${noteHtml(first)}
+      <div class="acts" style="flex-wrap:wrap;gap:8px">${swapBtnHtml(first.id)}<button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button><button class="btn-confirm" onclick="confirmPaidGroup(['${ids.join("','")}'])">客户已发截图，确认收款${group.length>1?`（${group.length}笔一起）`:''}</button></div>`;
     list.appendChild(div);
   });
 }
@@ -1084,11 +1087,12 @@ function renderMergedShip(){
         </label>
       </div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
-      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">微信号</span>${wechatHtml(first,ids)}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       ${orderBlocks}
-      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-ship" onclick="shipGroup(['${ids.join("','")}'])">填写单号发货</button> ${swapBtnHtml(first.id)}</div>`;
+      ${noteHtml(first)}
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-ship" onclick="shipGroup(['${ids.join("','")}'])">填写单号发货</button> ${swapBtnHtml(first.id)}<button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
     list.appendChild(div);
   });
   // 设置 indeterminate 状态（HTML 属性不会自动反映）
@@ -1147,11 +1151,12 @@ function renderTodayShip(){
     div.innerHTML=`
       <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-ship">今日可发</span></div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
-      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">微信号</span>${wechatHtml(first,ids)}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       <div class="items">${itemsHtml}</div>
-      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button></div>`;
+      ${noteHtml(first)}
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
     list.appendChild(div);
   });
 }
@@ -1191,15 +1196,31 @@ function renderReturnZone(){
     div.innerHTML=`
       <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-ship">等待回传</span></div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
-      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">微信号</span>${wechatHtml(first,ids)}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       <div class="items">${itemsHtml}</div>
-      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button></div>`;
+      ${noteHtml(first)}
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
     list.appendChild(div);
   });
 }
 // 获取订单项对应的 bundleItems（发货明细）：优先用订单自带，其次按产品/SKU 反查
+// 渲染订单卡片的「微信号」行：有就显示；没有则提供输入框让商家手动填写
+function wechatHtml(o, ids){
+  const id=ids[0];
+  if(o.wechat && String(o.wechat).trim()){
+    return `<b style="color:#b8743f">${escapeHtml(String(o.wechat).trim())}</b>`;
+  }
+  return `<span style="color:#c0392b">（买家未填写）</span>
+          <input id="wechat-${id}" placeholder="手动填写微信号" style="margin-left:6px;padding:4px 8px;border:1px solid #e0d6c8;border-radius:6px;font-size:13px;width:120px;vertical-align:middle">
+          <button type="button" onclick="saveWechat(['${ids.join("','")}'])" style="margin-left:4px;padding:4px 10px;border:1px solid #b8743f;background:#fff;color:#b8743f;border-radius:6px;font-size:12px;cursor:pointer;vertical-align:middle">保存</button>`;
+}
+// 渲染订单卡片的「备注」行（有备注才显示）
+function noteHtml(o){
+  if(!o.note || !String(o.note).trim()) return '';
+  return `<div class="line"><span class="k">备注</span><span style="color:#b8743f">${escapeHtml(String(o.note).trim())}</span></div>`;
+}
 function getBundleItems(i){
   let bi = i.bundleItems || [];
   if(!bi.length){
@@ -1244,6 +1265,63 @@ function showModal(innerHtml){
   document.body.appendChild(modalEl);
 }
 function closeModal(){ if(modalEl){ modalEl.remove(); modalEl=null; } }
+
+// 手动填写/修改订单微信号，保存到云端
+async function saveWechat(ids){
+  ids=Array.isArray(ids)?ids:[ids];
+  const id=ids[0];
+  const input=document.getElementById('wechat-'+id);
+  if(!input) return;
+  const v=input.value.trim().slice(0,50);
+  if(!v){ toast('请填写微信号'); return; }
+  const updates=ids.map(i=>ORDERS.find(o=>o.id===i)).filter(Boolean);
+  const prevMap={}; updates.forEach(o=>{ prevMap[o.id]=JSON.parse(JSON.stringify(o)); o.wechat=v; });
+  render();
+  try{
+    for(const o of updates){
+      const r=await fetch('/api/orders/'+o.id+'/contact',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({wechat:v})});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok) throw new Error(d.error||'保存失败');
+      if(d.order){ const idx=ORDERS.findIndex(x=>x.id===o.id); if(idx>=0) ORDERS[idx]=d.order; }
+    }
+    toast('微信号已保存');
+  }catch(e){
+    updates.forEach(o=>{ const idx=ORDERS.findIndex(x=>x.id===o.id); if(idx>=0) ORDERS[idx]=prevMap[o.id]; });
+    render();
+    toast('微信号保存失败：'+e.message);
+  }
+}
+
+// 编辑订单备注
+function editNote(id){
+  const o=ORDERS.find(x=>x.id===id);
+  if(!o) return;
+  showModal(`
+    <h3>订单备注</h3>
+    <div class="modal-sub">订单 ${o.id} · ${escapeHtml(o.name||'')}</div>
+    <div class="modal-fld"><label>备注内容（生成发货文本时会附在最下方）</label><textarea id="noteText" rows="3" style="width:100%;resize:vertical">${escapeHtml(o.note||'')}</textarea></div>
+    <div class="modal-actions">
+      <button class="btn-modal-cancel" onclick="closeModal()">取消</button>
+      <button class="btn-modal-ok" onclick="__saveNote('${o.id}')">保存</button>
+    </div>
+  `);
+}
+window.__saveNote=async(id)=>{
+  const o=ORDERS.find(x=>x.id===id); if(!o) return;
+  const note=String(document.getElementById('noteText').value||'').trim().slice(0,500);
+  const prev=JSON.parse(JSON.stringify(o));
+  o.note=note; render();
+  try{
+    const r=await fetch('/api/orders/'+id+'/contact',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.error||'保存失败');
+    if(d.order){ const idx=ORDERS.findIndex(x=>x.id===id); if(idx>=0) ORDERS[idx]=d.order; }
+    closeModal(); toast('备注已保存');
+  }catch(e){
+    Object.assign(o,prev); render();
+    toast('备注保存失败：'+e.message);
+  }
+};
 
 // 乐观更新订单商品并同步云端（统一入口：删商品/换货/补货都走这）
 async function applyOrderItems(o, newItems, okMsg){
@@ -1671,6 +1749,8 @@ function copyShipGroup(ids){
       text+=formatShipItem(i)+'\n';
     });
   });
+  const notes=group.map(o=>o.note).filter(Boolean);
+  if(notes.length) text+=`\n备注：${notes.join('；')}`;
   navigator.clipboard.writeText(text).then(()=>toast('发货文本已复制，去微信粘贴')).catch(()=>{ window.prompt('复制下面内容：',text); });
 }
 // 金额核对：合并填写单号前必须展示每笔子订单金额及合并合计，详见 business_rules.md §2
@@ -1824,6 +1904,7 @@ function copyShip(id){
   } else {
     text=`${o.name} ${o.phone}\n${o.address}\n\n${o.items.map(i=>i.name+' ×'+i.qty).join('\n')}`;
   }
+  if(o.note && String(o.note).trim()) text+=`\n\n备注：${String(o.note).trim()}`;
   navigator.clipboard.writeText(text).then(()=>toast('发货文本已复制，去微信粘贴')).catch(()=>{ window.prompt('复制下面内容：',text); });
 }
 // 金额核对：填写单号前必须展示金额明细，详见 business_rules.md §2
@@ -1856,11 +1937,23 @@ function readFileToPrev(inputId, imgId){
 function uploadQr(){ readFileToPrev('sQr','sQrPrev'); }
 function uploadWechat(){ readFileToPrev('sWc','sWcPrev'); }
 function uploadAlipay(){ readFileToPrev('sAli','sAliPrev'); }
+function onWaveChange(el){
+  const all = document.querySelectorAll('.wave-cb');
+  if(el.checked && (el.value==='none' || el.value==='w4')){
+    // 「日常」或「返场」是独立模式：选中后取消其他波次
+    all.forEach(cb=>{ if(cb!==el) cb.checked=false; });
+  } else if(el.checked){
+    // 选普通波次时，取消日常/返场
+    all.forEach(cb=>{ if(cb.value==='none' || cb.value==='w4') cb.checked=false; });
+  }
+}
 async function applyWave(){
-  const sel=document.getElementById('waveSelect');
-  const wave=(sel&&sel.value)||'none';
+  const cbs=Array.from(document.querySelectorAll('.wave-cb:checked'));
+  const waves=cbs.map(cb=>cb.value);
   const hours=(document.getElementById('waveHours')||{}).value||'';
-  const label=(sel&&sel.selectedOptions&&sel.selectedOptions[0])?sel.selectedOptions[0].text:wave;
+  if(!waves.length){ toast('请至少选择一个波次'); return; }
+  const labelMap={'none':'日常','w1':'第一波','w2':'第二波','w3':'第三波','w4':'返场捡漏'};
+  const label=waves.map(v=>labelMap[v]||v).join(' + ');
   if(!confirm('确认把买家端切换到「'+label+'」？\n本波商品将自动上架，其余商品自动隐藏。')) return;
   const btn=document.querySelector('button[onclick="applyWave()"]');
   const oldTxt=btn?btn.textContent:'';
@@ -1871,7 +1964,7 @@ async function applyWave(){
     const ctl=new AbortController();
     const timer=setTimeout(()=>ctl.abort(), 45000);
     try{
-      const r=await fetch('/api/admin/apply-wave',{method:'POST',headers:{'Content-Type':'application/json','Cache-Control':'no-cache'},cache:'no-store',body:JSON.stringify({wave,hours}),signal:ctl.signal});
+      const r=await fetch('/api/admin/apply-wave',{method:'POST',headers:{'Content-Type':'application/json','Cache-Control':'no-cache'},cache:'no-store',body:JSON.stringify({waves,hours}),signal:ctl.signal});
       const d=await r.json().catch(()=>({}));
       clearTimeout(timer);
       if(r.ok && d.ok){ ok=true; shownN=d.shown; hidN=d.hidden; break; }

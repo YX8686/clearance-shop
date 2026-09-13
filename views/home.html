@@ -375,7 +375,8 @@ const WAVES = {
   w3:{name:'第三波', dur:'', groups:null},
   w4:{name:'最终返场 · 捡漏 · 爆品', dur:'48h', cats:['特惠单品','明星套装','明星组合','高功效私人定制','特殊']}
 };
-function activeWave(){ return (CONFIG && CONFIG.activeWave && WAVES[CONFIG.activeWave]) ? CONFIG.activeWave : ''; }
+function activeWaves(){ return (CONFIG && CONFIG.activeWave) ? String(CONFIG.activeWave).split(',').map(s=>s.trim()).filter(s=>WAVES[s]) : []; }
+function activeWave(){ const arr=activeWaves(); return arr[0]||''; }
 function waveName(){ const w=activeWave(); return w?WAVES[w].name:''; }
 function waveDur(){ const w=activeWave(); if(!w) return ''; const c=(CONFIG&&CONFIG.waveDur)?String(CONFIG.waveDur).trim():''; return c||WAVES[w].dur||''; }
 function waveLabel(){ const w=activeWave(); if(!w) return ''; return WAVES[w].name + waveDur(); }
@@ -391,13 +392,16 @@ function isProductHidden(p){
 function renderCats(){
   const box = $('#catinner'); box.innerHTML = '';
   const bar = document.getElementById('catbar');
-  const w = activeWave();
+  const waves = activeWaves();
+  const first = waves[0] || '';
   // 返场：按活动分类筛选（5 个分类，不含「全部」）。默认不选 → 显示全部产品；
   // 点某个分类筛选，再点同一个分类可取消筛选回到全部。
-  if(w && WAVES[w].cats){
+  const hasCats = waves.some(w=>WAVES[w].cats);
+  if(hasCats){
     if(bar) bar.style.display='';
-    if(currentCat && WAVES[w].cats.indexOf(currentCat)<0) currentCat='';
-    WAVES[w].cats.forEach(c=>{
+    const cats = WAVES[waves.find(w=>WAVES[w].cats)].cats;
+    if(currentCat && cats.indexOf(currentCat)<0) currentCat='';
+    cats.forEach(c=>{
       const btn = document.createElement('button');
       btn.className = 'cattab ' + (c===currentCat?'on':'');
       btn.textContent = c;
@@ -407,10 +411,12 @@ function renderCats(){
     return;
   }
   // 第一波：全部 + 本波分组
-  if(w && WAVES[w].groups){
+  const hasGroups = waves.some(w=>WAVES[w].groups);
+  if(hasGroups){
     if(bar) bar.style.display='';
-    if(currentCat!=='全部' && !WAVES[w].groups.some(g=>g[0]===currentCat)) currentCat='全部';
-    WAVES[w].groups.forEach(g=>{
+    const groups = WAVES[waves.find(w=>WAVES[w].groups)].groups;
+    if(currentCat!=='全部' && !groups.some(g=>g[0]===currentCat)) currentCat='全部';
+    groups.forEach(g=>{
       const btn = document.createElement('button');
       btn.className = 'cattab ' + (g[0]===currentCat?'on':'');
       btn.textContent = g[1];
@@ -419,8 +425,8 @@ function renderCats(){
     });
     return;
   }
-  // 第二波 / 第三波：整条分类栏不显示
-  if(w){
+  // 第二波 / 第三波（或组合）：整条分类栏不显示
+  if(waves.length){
     if(bar) bar.style.display='none';
     currentCat = '全部';
     return;
@@ -490,13 +496,14 @@ function productTierTag(p){
 function renderGrid(){
   const g = $('#grid'); g.innerHTML='';
   const visible = PRODUCTS.filter(p=>!isProductHidden(p));
+  const waves = activeWaves();
   const w = activeWave();
   let list;
-  if(w && WAVES[w].cats){
+  if(waves.some(w=>WAVES[w].cats)){
     list = currentCat ? visible.filter(p=>String(p.category||'').trim()===currentCat) : visible;
-  } else if(w && WAVES[w].groups){
+  } else if(waves.some(w=>WAVES[w].groups)){
     list = (currentCat==='全部') ? visible : visible.filter(p=>String(p.waveGroup||'').trim()===currentCat);
-  } else if(w){
+  } else if(waves.length){
     list = visible;
   } else {
     list = (currentCat==='全部') ? visible : visible.filter(p=>String(p.category||'').trim()===currentCat);
