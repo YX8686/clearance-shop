@@ -1304,7 +1304,19 @@ function openSwapModal(orderId){
   };
   window.__swapDel=i=>{ tmp=tmp.filter((_,j)=>j!==i); draw(); };
   window.__swapAddManual=()=>{ const name=document.getElementById('swapName').value.trim(); const q=parseQtyUnit(document.getElementById('swapQty2').value); if(!name){ toast('请填写商品名称'); return; } tmp.push({id:'',skuId:'',skuName:'',name,price:0,qty:q.qty,unit:q.unit,isManualAdd:true,image:'',bundleItems:[]}); document.getElementById('swapName').value=''; document.getElementById('swapQty2').value=''; draw(); };
-  window.__swapSave=async()=>{ closeModal(); await applyOrderItems(o,tmp,`已更新订单 ${orderId}`); };
+  window.__swapSave=async()=>{
+    // 兜底：用户填了名称但没点「添加」就按保存 —— 自动把它加进清单，避免「显示成功但其实没加上」
+    const leftName=(document.getElementById('swapName')?.value||'').trim();
+    const leftQty=(document.getElementById('swapQty2')?.value||'').trim();
+    if(leftName){
+      const q=parseQtyUnit(leftQty);
+      tmp.push({id:'',skuId:'',skuName:'',name:leftName,price:0,qty:q.qty,unit:q.unit,isManualAdd:true,image:'',bundleItems:[]});
+      closeModal();
+      await applyOrderItems(o,tmp,`已更新订单 ${orderId}（已自动加入你刚填的「${leftName} ${q.qty}${q.unit||'件'}」）`);
+      return;
+    }
+    closeModal(); await applyOrderItems(o,tmp,`已更新订单 ${orderId}`);
+  };
   draw();
 }
 
