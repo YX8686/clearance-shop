@@ -14,6 +14,11 @@ const PUBLIC = path.join(ROOT, 'public');
 const VIEWS = path.join(ROOT, 'views');
 const GALLERY = path.join(PUBLIC, 'assets', 'gallery');
 const PORT = process.env.PORT || 4100;
+// 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
+// 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
+// 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
+const ADMIN_BUILD = 'fix15-2026-09-13-1551-auto-refresh';
+const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
 function loadEnvLocal(){
@@ -40,7 +45,7 @@ if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
     const { createClient } = require('@supabase/supabase-js');
     const fetchWithTimeout = (url, opts) => {
       const ctl = new AbortController();
-      const t = setTimeout(() => ctl.abort(), 30000);
+      const t = setTimeout(() => ctl.abort(), 10000);
       return fetch(url, { ...opts, signal: ctl.signal }).finally(() => clearTimeout(t));
     };
     sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, { global: { fetch: fetchWithTimeout } });
@@ -88,7 +93,10 @@ const kvCache = new Map(); // key -> { ts, value, promise }
 async function withRetry(fn, label, retries=2){
   let lastErr;
   for(let i=0;i<retries;i++){
-    try{ return await fn(); }
+    try{
+      // 12s 单调用超时：Supabase 免费层偶发 fetch 永久挂起，必须强制释放，防止 withLock 死锁
+      return await Promise.race([fn(), new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')), 8000))]);
+    }
     catch(e){
       lastErr=e;
       console.error(`[${label}] 云端第${i+1}/${retries}次调用失败:`, e.message);
@@ -352,7 +360,7 @@ async function saveOrderRowSync(order){
 // 进程退出前刷盘，防丢单
 process.on('beforeExit', ()=>{ _flushOrderQueue(); flushDirtyProducts().catch(()=>{}); });
 function saveOrders(){ return withLock(()=> saveKV('orders', orders)); } // 仅作整批备份残留，下单/状态变更已改用 saveOrderRow
-function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config, 5)); }
+function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config, 2)).then(r=>{ configReadCache.ts = Date.now(); return r; }); }
 
 // ===== 产品存储加固：每个产品独立存储为 shop_data 的一行（key=product:<id>）=====
 // 旧方案：所有产品塞进 shop_data 的单行(key='products')，产品描述长、数量多后，
@@ -379,16 +387,18 @@ async function flushDirtyProducts(){
     await withLock(()=> writeJsonAtomic('products.json', products));
     return;
   }
-  // 云端模式：逐行 upsert；失败的 id 重新加入 dirty 待下次窗口重试
-  const failed = [];
-  for(const id of ids){
+  // 云端模式：批量 upsert，把 N 次单条网络往返合并为 1 次，显著降低 Supabase 免费层抖动概率
+  const rows = ids.map(id=>{
     const p = products.find(x=>x.id===id);
-    if(!p) continue;
+    return p ? { key:'product:'+id, value:p } : null;
+  }).filter(Boolean);
+  const failed = [];
+  if(rows.length){
     try {
-      await sbRun(()=>sb.from('shop_data').upsert({ key:'product:'+id, value:p }), 'saveProductRow:'+id);
+      await sbRun(()=>sb.from('shop_data').upsert(rows), 'saveProductRows:'+rows.length);
     } catch(e) {
-      console.error('[saveProductRow] 失败:', id, e.message);
-      failed.push(id);
+      console.error('[saveProductRows] 批量失败:', e.message);
+      ids.forEach(id=>failed.push(id));
     }
   }
   failed.forEach(id=>dirtyProductIds.add(id));
@@ -493,6 +503,47 @@ async function getProducts(){
   const result = await promise;
   productReadCache.promise = null;
   return result;
+}
+// ===== 配置回源（与 getProducts 同策略）=====
+// 云端买家端(Render)与本机商家后台(4301)共用同一 Supabase。config 若只在启动时读一次，
+// 本机后台切波/改公告后云端永远读的是旧值 —— 症状正是「后台点了应用，买家端毫无变化」。
+// 这里每 3 秒回源一次；原地 Object.assign 保持 config 引用不变，避免打断正在进行的写入。
+let configReadCache = { ts: 0, promise: null };
+const CONFIG_READ_TTL_MS = 3000;
+function cfgSafe(c){ return (c && typeof c==='object' && !Array.isArray(c)) ? c : {}; }
+async function getConfig(){
+  if(!USE_SUPABASE) return config;
+  if(configReadCache.promise) return configReadCache.promise;
+  const now = Date.now();
+  if(configReadCache.ts > 0 && now - configReadCache.ts < CONFIG_READ_TTL_MS) return config;
+  const p = (async()=>{
+    try{
+      const fresh = await loadKV('config', config);
+      if(fresh && typeof fresh==='object' && !Array.isArray(fresh)) Object.assign(config, fresh);
+    }catch(e){
+      console.error('[getConfig] 读云端失败，使用内存副本：', e.message);
+    }
+    configReadCache.ts = Date.now();
+    return config;
+  })();
+  configReadCache.promise = p;
+  const r = await p;
+  configReadCache.promise = null;
+  return r;
+}
+// 写操作前把内存产品列表与云端对齐：本机后台（或另一个实例）改了产品后，本实例内存会过期；
+// 若直接基于过期内存做"隐藏/切波"，会把旧数据整行写回、覆盖别人的修改（也会造成"无差异→空操作"）。
+async function syncProductsFromCloud(){
+  if(!USE_SUPABASE) return;
+  if(dirtyProductIds.size) return; // 有未落库的本地改动，先不回源，避免丢改动
+  try{
+    const fresh = await loadProductsFromRows(products);
+    if(Array.isArray(fresh) && fresh.length){
+      products.length = 0;
+      for(const x of fresh) products.push(x);
+      productReadCache = { ts: Date.now(), value: products, promise: null, failed: false };
+    }
+  }catch(e){ console.error('[syncProducts] 回源失败:', e.message); }
 }
 // 后台重试：Supabase 免费层偶发 fetch failed 时，单行 flush 可能失败；每 5s 把残留脏行再刷一次，
 // 确保最终一致，且管理员界面因 getProducts 优先返回内存脏行而不受影响。
@@ -659,7 +710,7 @@ const server = http.createServer(async (req, res)=>{
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(list)); return;
       }
       if(method==='GET' && pathname==='/api/config'){
-        const out = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config && !Array.isArray(config) ? config : {}) };
+        const out = { ...DEFAULT_CONFIG, ...cfgSafe(await getConfig()) };
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(out)); return;
       }
       if(method==='GET' && pathname==='/api/orders'){
@@ -1104,6 +1155,9 @@ const server = http.createServer(async (req, res)=>{
           const arr=Array.isArray(body.hiddenCategories)?body.hiddenCategories:[];
           config.hiddenCategories=arr.map(x=>String(x).trim().slice(0,50)).filter(Boolean);
         }
+        // 2026-09-12 加：当前活动波次（none=日常 / w1=第一波 / w2 / w3 / w4=返场）
+        if(body.activeWave!=null) config.activeWave=String(body.activeWave).trim().slice(0,10);
+        if(body.hours!=null){ const h=Number(body.hours); if(Number.isFinite(h)&&h>0){ config.waveEndsAt=Date.now()+Math.round(h*3600*1000); config.activityDeadline=new Date(config.waveEndsAt).toISOString(); } }
         if(body.paymentQrBase64){ const url=await saveImage(body.paymentQrBase64,'payment-qr'); if(url) config.paymentQr=url; }
         if(body.paymentWechatQrBase64){ const url=await saveImage(body.paymentWechatQrBase64,'payment-wechat'); if(url) config.paymentWechatQr=url; }
         if(body.paymentAlipayQrBase64){ const url=await saveImage(body.paymentAlipayQrBase64,'payment-alipay'); if(url) config.paymentAlipayQr=url; }
@@ -1241,6 +1295,8 @@ const server = http.createServer(async (req, res)=>{
           stock: p.stock!==undefined?Math.max(0, Number(p.stock)||0):(existing.stock||0),
           forceSoldOut: p.forceSoldOut!==undefined?!!p.forceSoldOut:(existing.forceSoldOut||false), // 后台弹窗没提供该字段，必须与旧数据合并，防止被清空
           hidden: p.hidden!==undefined?!!p.hidden:(existing.hidden||false),
+          // 2026-09-12 加：活动分组（第一波1/2/3组、第二波A/B组、第三波定制/盲盒、返场）
+          waveGroup: String(p.waveGroup!==undefined?p.waveGroup:(existing.waveGroup||'')).trim().slice(0,30),
           category: String(p.category!==undefined?p.category:(existing.category||'')).trim().slice(0,50),
           desc: p.desc!==undefined?sanitizeHtml(String(p.desc).trim()).slice(0,30000):(existing.desc||''),
           image: String(p.image!==undefined?p.image:(existing.image||'/assets/products/default.svg')).trim(),
@@ -1251,6 +1307,7 @@ const server = http.createServer(async (req, res)=>{
           skus: p.skus!==undefined?(Array.isArray(p.skus)?p.skus.slice(0,20).map(s=>({
             id: String(s.id||'').trim() || crypto.randomBytes(3).toString('hex').toUpperCase(),
             name: String(s.name||'').trim().slice(0,100),
+            subtitle: String(s.subtitle!==undefined?s.subtitle:(existing.skus&&existing.skus.find(es=>es.id===s.id)?existing.skus.find(es=>es.id===s.id).subtitle:'')).trim().slice(0,80),
             price: Math.max(0, Number(s.price)||0),
             stock: Math.max(0, Math.floor(Number(s.stock)||0)),
             image: String(s.image||'').trim().slice(0,300),
@@ -1262,6 +1319,16 @@ const server = http.createServer(async (req, res)=>{
         if(item.skus && item.skus.length){
           item.price = Math.min(...item.skus.map(s=>Number(s.price)||0));
           item.stock = item.skus.reduce((sum,s)=>sum+(Number(s.stock)||0),0);
+        }
+        // 关键修复（2026-09-12）：改了「活动分组」必须立刻重算 hidden。
+        // 否则上一波切波时留下的 hidden=false 会让这个品在当前波次的买家端继续露出
+        //（症状：把产品改成「返场爆品」并保存成功，切到第二波却还能看到它）。
+        const curWave = String(config.activeWave||'').trim();
+        // w4(返场)=全部显示，不需要按分组隐藏；''是假值 → 直接跳过重算
+        const WAVE_PREFIX_MAP = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'' };
+        if(WAVE_PREFIX_MAP[curWave] && String(existing.waveGroup||'').trim() !== String(item.waveGroup||'').trim()){
+          const pre = WAVE_PREFIX_MAP[curWave];
+          item.hidden = !(item.waveGroup && item.waveGroup.indexOf(pre)===0);
         }
         if(isNew){ item.createdAt=item.updatedAt; products.push(item); }
         else { const idx=products.findIndex(x=>x.id===id); item.createdAt=products[idx].createdAt||item.updatedAt; products[idx]=item; }
@@ -1329,7 +1396,86 @@ const server = http.createServer(async (req, res)=>{
         products[idx].hidden = !products[idx].hidden;
         markProductDirty(pid);
         await flushDirtyProducts();
+        clearHtmlCache(); // 单个隐藏/上架也即时清买家端页面缓存，保证与批量隐藏同步生效
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, hidden: products[idx].hidden})); return;
+      }
+      // 商家后台：批量隐藏/上架多个产品（买家端立即不可见）。body: {ids:[...], hidden:true|false}
+      if(method==='POST' && pathname==='/api/products/batch-hidden'){
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+        const ids = Array.isArray(body.ids) ? body.ids.map(x=>String(x).trim()).filter(Boolean).slice(0,500) : [];
+        if(!ids.length){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no ids'})); return; }
+        const hidden = body.hidden===true;
+        let updated = 0;
+        await syncProductsFromCloud();
+        await withLock(async()=>{
+          for(const pid of ids){
+            const idx = products.findIndex(x=>x.id===pid);
+            if(idx===-1) continue;
+            if(products[idx].hidden === hidden) continue; // 已经是目标状态就跳过
+            products[idx].hidden = hidden;
+            markProductDirty(pid);
+            updated++;
+          }
+          if(updated) await flushDirtyProducts();
+        });
+        // 操作产品配置触发表，让买家端 / 与详情页缓存失效
+        clearHtmlCache();
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, updated, hidden})); return;
+      }
+      // 商家后台：一键切换活动波次。自动上架本波商品、隐藏非本波商品，并把买家端分类栏切成该波分组。
+      if(method==='POST' && pathname==='/api/admin/apply-wave'){
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+        const wave = String(body.wave||'none').trim();
+        // w4(返场) = 「全部返场」：不隐藏任何产品，只切换买家端分类栏与倒计时文案
+        const WAVE_PREFIX = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'' };
+        const prefix = (wave in WAVE_PREFIX) ? WAVE_PREFIX[wave] : '';
+        const h=Number(body.hours);
+        let shown=0, hid=0, lastErr=null;
+        // 幂等重试 3 次：products 与 config 必须都写成功，否则会出现
+        // 「产品已按本波切换、但 activeWave 还是上一波」→ 买家端产品对、倒计时文案错。
+        for(let attempt=0; attempt<3; attempt++){
+          try{
+            await syncProductsFromCloud();
+            shown=0; hid=0;
+            await withLock(async()=>{
+              for(const p of products){
+                const g=String(p.waveGroup||'').trim();
+                let wantHidden;
+                if(!prefix) wantHidden=false;
+                else if(g && g.indexOf(prefix)===0) wantHidden=false;
+                else wantHidden=true;
+                if(!!p.hidden!==wantHidden){ p.hidden=wantHidden; markProductDirty(p.id); }
+                if(wantHidden) hid++; else shown++;
+              }
+              await flushDirtyProducts();
+            });
+            config.activeWave = wave;
+            if(!wave || wave==='none') config.waveDur = '';
+            if(Number.isFinite(h)&&h>0){
+              config.waveEndsAt = Date.now()+Math.round(h*3600*1000);
+              config.activityDeadline = new Date(config.waveEndsAt).toISOString();
+              config.waveDur = Math.round(h)+'h';
+            }
+            await saveConfig();
+            clearHtmlCache();
+            res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, wave, shown, hidden:hid, attempt:attempt+1})); return;
+          }catch(e){
+            lastErr=e;
+            console.error('[apply-wave] 第'+(attempt+1)+'次失败:', e && e.message);
+            if(attempt<2) await new Promise(r=>setTimeout(r,700));
+          }
+        }
+        clearHtmlCache();
+        res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, error:'切换失败（已自动重试3次，产品与波次均未改动）：'+((lastErr&&lastErr.message)||lastErr)})); return;
+      }
+
+      // 商家后台自检版本端点：admin.html 加载时会 fetch 这里对比自己嵌入的版本号，
+      // 不一致就 location.replace 强制刷一次。no-store 防止任何中间层缓存。
+      // 必须放在 /api/* 块内部，避免被 1340 行兜底 404 吃掉。
+      if(method==='GET' && pathname==='/api/admin-build'){
+        res.writeHead(200, {'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store, must-revalidate', 'Pragma':'no-cache'});
+        res.end(JSON.stringify({ v: ADMIN_BUILD, t: Date.now() }));
+        return;
       }
 
       res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return;
@@ -1341,7 +1487,7 @@ const server = http.createServer(async (req, res)=>{
       if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':cached); return; }
       const list = await getProducts();
       const ogImage = pickShopShareImage(list);
-      const safeConfig = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config && !Array.isArray(config) ? config : {}) };
+      const safeConfig = { ...DEFAULT_CONFIG, ...cfgSafe(await getConfig()) };
       let html = renderTemplate('home.html', {
         SHOP_NAME: htmlEscape(safeConfig.shopName),
         OG_TITLE: htmlEscape(safeConfig.shopName),
@@ -1365,12 +1511,13 @@ const server = http.createServer(async (req, res)=>{
         const p = list.find(p=>p.id===mProd[1]);
         if(!p){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
         // 隐藏产品或被隐藏分类下的产品：买家端详情页直接返回不存在
-        const hiddenCats = Array.isArray(config.hiddenCategories)?config.hiddenCategories:[];
+        const cfgNow = await getConfig();
+        const hiddenCats = Array.isArray(cfgNow.hiddenCategories)?cfgNow.hiddenCategories:[];
         if(p.hidden || (p.category && hiddenCats.includes(p.category))){
           res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return;
         }
         const ogImage = inferShareImage(p) || pickShopShareImage(list);
-        const safeConfig = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config && !Array.isArray(config) ? config : {}) };
+        const safeConfig = { ...DEFAULT_CONFIG, ...cfgSafe(cfgNow) };
         let html = renderTemplate('product.html', {
           SHOP_NAME: htmlEscape(safeConfig.shopName),
           OG_TITLE: htmlEscape(p.name),
@@ -1391,10 +1538,11 @@ const server = http.createServer(async (req, res)=>{
     if(method==='GET' && mOrder){
       const list = await getOrders();
       const o = list.find(o=>o.id===mOrder[1]) || null;
+      const cfgNow = await getConfig();
       const html = renderTemplate('order.html', {
-        SHOP_NAME: htmlEscape(config.shopName),
+        SHOP_NAME: htmlEscape(cfgNow.shopName),
         ORDER_JSON: jsonForScript(o?enrichOrderBundles(o):o),
-        CONFIG_JSON: jsonForScript(config)
+        CONFIG_JSON: jsonForScript(cfgNow)
       });
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':html); return;
     }
@@ -1402,7 +1550,8 @@ const server = http.createServer(async (req, res)=>{
     if(method==='GET' && pathname==='/admin'){
       fs.readFile(path.join(PUBLIC,'admin.html'), (err, buf)=>{
         if(err){ res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'}); res.end('Not found'); return; }
-        res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(buf);
+        const html = buf.toString('utf8').replace('</head>', ADMIN_SELF_CHECK + '</head>');
+        res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(html);
       });
       return;
     }
