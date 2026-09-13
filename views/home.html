@@ -375,7 +375,17 @@ const WAVES = {
   w3:{name:'第三波', dur:'', groups:null},
   w4:{name:'最终返场 · 捡漏 · 爆品', dur:'48h', cats:['特惠单品','明星套装','明星组合','高功效私人定制','特殊']}
 };
+// 多波同时上架时的组合分类栏（目前仅支持 w2+w3）
+const WAVE_COMBOS = {
+  'w2,w3':{ cats:['全部产品','明星套组','高功效私人定制'], map:{'全部产品':'全部','明星套组':'明星套装','高功效私人定制':'高功效私人定制'} }
+};
 function activeWaves(){ return (CONFIG && CONFIG.activeWave) ? String(CONFIG.activeWave).split(',').map(s=>s.trim()).filter(s=>WAVES[s]) : []; }
+function activeCombo(){
+  const waves=activeWaves();
+  if(waves.length<2) return null;
+  const key=waves.slice().sort().join(',');
+  return WAVE_COMBOS[key]||null;
+}
 function activeWave(){ const arr=activeWaves(); return arr[0]||''; }
 function waveName(){ const w=activeWave(); return w?WAVES[w].name:''; }
 function waveDur(){ const w=activeWave(); if(!w) return ''; const c=(CONFIG&&CONFIG.waveDur)?String(CONFIG.waveDur).trim():''; return c||WAVES[w].dur||''; }
@@ -393,7 +403,20 @@ function renderCats(){
   const box = $('#catinner'); box.innerHTML = '';
   const bar = document.getElementById('catbar');
   const waves = activeWaves();
-  const first = waves[0] || '';
+  const combo = activeCombo();
+  // 多波组合：显示组合专用分类按钮（目前 w2+w3）
+  if(combo){
+    if(bar) bar.style.display='';
+    if(!combo.cats.includes(currentCat)) currentCat='全部产品';
+    combo.cats.forEach(c=>{
+      const btn = document.createElement('button');
+      btn.className = 'cattab ' + (c===currentCat?'on':'');
+      btn.textContent = c;
+      btn.onclick = ()=>{ currentCat = (currentCat===c) ? '全部产品' : c; renderCats(); renderGrid(); };
+      box.appendChild(btn);
+    });
+    return;
+  }
   // 返场：按活动分类筛选（5 个分类，不含「全部」）。默认不选 → 显示全部产品；
   // 点某个分类筛选，再点同一个分类可取消筛选回到全部。
   const hasCats = waves.some(w=>WAVES[w].cats);
@@ -425,7 +448,7 @@ function renderCats(){
     });
     return;
   }
-  // 第二波 / 第三波（或组合）：整条分类栏不显示
+  // 第二波 / 第三波单波：整条分类栏不显示
   if(waves.length){
     if(bar) bar.style.display='none';
     currentCat = '全部';
@@ -497,9 +520,11 @@ function renderGrid(){
   const g = $('#grid'); g.innerHTML='';
   const visible = PRODUCTS.filter(p=>!isProductHidden(p));
   const waves = activeWaves();
-  const w = activeWave();
+  const combo = activeCombo();
   let list;
-  if(waves.some(w=>WAVES[w].cats)){
+  if(combo){
+    list = (currentCat==='全部产品') ? visible : visible.filter(p=>String(p.category||'').trim()===combo.map[currentCat]);
+  } else if(waves.some(w=>WAVES[w].cats)){
     list = currentCat ? visible.filter(p=>String(p.category||'').trim()===currentCat) : visible;
   } else if(waves.some(w=>WAVES[w].groups)){
     list = (currentCat==='全部') ? visible : visible.filter(p=>String(p.waveGroup||'').trim()===currentCat);
