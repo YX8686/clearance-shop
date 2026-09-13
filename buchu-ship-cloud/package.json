@@ -1,0 +1,9 @@
+{
+  "name": "buchu-ship-cloud",
+  "version": "1.0.0",
+  "description": "不初发货管家云端版：订单/配货/回填单号/库存/结账，Supabase 双模式",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "@supabase/supabase-js": "^2.45.4" },
+  "engines": { "node": ">=18" }
+}

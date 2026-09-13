@@ -1,0 +1,44 @@
+{
+  "version": "2.0",
+  "envId": "buchu-ship-env",
+  "functionRoot": ".",
+  "functions": [
+    {
+      "name": "buchu-ship",
+      "timeout": 30,
+      "runtime": "Nodejs18.15",
+      "memorySize": 256,
+      "handler": "server.main",
+      "installDependency": true,
+      "exclude": [
+        ".env.local",
+        ".git",
+        "node_modules",
+        "data",
+        "*.log",
+        ".gitignore",
+        "render.yaml",
+        "deploy*.bat",
+        "deploy*.sh",
+        "部署说明.md",
+        "缓存修复说明.md"
+      ],
+      "envVariables": {
+        "SUPABASE_URL": "https://pzhblcoszvkbnmolkkxf.supabase.co",
+        "SUPABASE_ANON_KEY": "sb_publishable_AT0jjmkKEHk3PJThm9aG1w_q2hSfV4y",
+        "PORT": "4501",
+        "TENCENTCLOUD_RUNENV": "SCF"
+      },
+      "triggers": [
+        {
+          "name": "buchu-ship-http",
+          "type": "http",
+          "config": {
+            "path": "/",
+            "method": "ANY"
+          }
+        }
+      ]
+    }
+  ]
+}
