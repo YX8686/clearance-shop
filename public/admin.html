@@ -25,8 +25,7 @@
   .line{font-size:13px;line-height:1.7;padding:2px 0;border-bottom:1px dashed #f0ece4}
   .line .k{color:#9a8f82;display:inline-block;width:54px}
   .items{font-size:13px;color:#5b5147;margin:6px 0;padding:8px;background:#faf7f2;border-radius:8px}
-  .items > div:not(.suborder){display:flex;justify-content:space-between}
-  .items .suborder{display:block}
+  .items>.it-line{display:flex;justify-content:space-between}
   .acts{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
   .acts button{border:none;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer}
   .btn-confirm{background:#1f9d55;color:#fff}
@@ -174,12 +173,38 @@
 
   /* 合并订单 */
   .merge-card{border:2px solid #f0d9c4}
-  .suborder{background:#faf7f2;border-radius:8px;padding:8px 10px;margin:8px 0}
+  .suborder{background:#faf7f2;border-radius:8px;padding:8px 10px;margin:8px 0;transition:all .25s}
+  .suborder.done{background:#e8f6ed;border-left:3px solid #1f9d55}
+  .suborder.cancel{background:#fce6e3;border-left:3px solid #c0392b}
   .so-h{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#b8743f;font-weight:700;margin-bottom:4px}
   .so-h .so-paytime{font-size:11px;color:#9a8f82;font-weight:400;margin-left:6px}
+  .so-status{font-size:10px;padding:2px 7px;border-radius:4px;margin-left:6px;font-weight:600;letter-spacing:.5px}
+  .so-status.paid{background:#1f9d55;color:#fff}
+  .so-status.unpaid{background:#c0392b;color:#fff}
   .so-item{display:flex;justify-content:space-between;font-size:13px;color:#5b5147;padding:2px 0}
-  .so-total{text-align:right;font-size:12px;color:#7a6f62;margin-top:4px;font-weight:600}
+  .so-total{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#7a6f62;margin-top:6px;font-weight:600;padding-top:4px;border-top:1px dashed #e0d6c8}
+  .so-actions{display:flex;gap:6px;flex-shrink:0}
+  .btn-so{padding:4px 12px;font-size:12px;border-radius:6px;cursor:pointer;font-weight:600;transition:all .15s;border:1.5px solid;font-family:inherit}
+  .btn-so-yes{background:#fff;color:#1f9d55;border-color:#1f9d55}
+  .btn-so-yes:hover{background:#1f9d55;color:#fff}
+  .btn-so-no{background:#fff;color:#c0392b;border-color:#c0392b}
+  .btn-so-no:hover{background:#c0392b;color:#fff}
   .bundle-inline{font-size:11px;color:#9a6b3f;padding:2px 0 2px 2px;line-height:1.5}
+  /* 合并组进度条（待处理合并单用） */
+  .progress{display:flex;align-items:center;gap:10px;background:#faf7f2;border:1px solid #ede5d8;border-radius:8px;padding:6px 10px;margin:8px 0;font-size:12px}
+  .progress-bar{flex:1;height:6px;background:#ede5d8;border-radius:3px;overflow:hidden}
+  .progress-bar-fill{height:100%;background:linear-gradient(90deg,#1f9d55,#b8743f);transition:width .35s}
+  .progress-txt{color:#7a6f62;font-weight:600;white-space:nowrap}
+  .progress-txt b{color:#b8743f}
+  .progress-empty{color:#1f9d55;font-weight:600;padding:8px 0;text-align:center;font-size:13px}
+  /* 手动填单号弹窗 */
+  .modal-sub-list{max-height:300px;overflow-y:auto;border:1px solid #ede5d8;border-radius:6px;padding:6px;margin:8px 0;background:#faf7f2}
+  .modal-sub-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;font-size:13px}
+  .modal-sub-row:hover{background:#fff}
+  .modal-sub-row input{flex-shrink:0}
+  .modal-sub-row .msr-id{color:#b8743f;font-weight:600;font-size:11px}
+  .modal-sub-row .msr-time{color:#9a8f82;font-size:11px}
+  .modal-sub-row .msr-total{margin-left:auto;color:#7a6f62;font-weight:600}
   .it-line{display:flex;justify-content:space-between;font-size:13px;color:#5b5147;padding:2px 0}
   .manual-tag{color:#b8743f;font-size:10px;margin-left:4px;white-space:nowrap;opacity:.85}
   /* 允许发货管家采集 */
@@ -506,6 +531,7 @@ let PRODUCTS=[];
 let GALLERY=[];
 let curTab='待确认';
 let shipPhoneFilter=''; // 待发货栏按电话搜索
+let pendingPhoneFilter=''; // 待处理（待确认）栏按电话搜索
 let editingProdId=null;
 let pickerMode='main'; // 'main' | 'detail' | 'sku'
 let galPickSkuIdx=-1; // pickerMode==='sku' 时，正在为哪个 SKU 选主图
@@ -845,30 +871,73 @@ function render(){
 function renderMergedPending(){
   const list=document.getElementById('list');
   const pending=ORDERS.filter(o=>o.status==='待确认');
-  if(!pending.length){ list.innerHTML='<div class="empty">暂无订单</div>'; return; }
+  // 顶部快捷条 + 按电话搜索（参照 renderMergedShip 搜索框样式）
+  const topBar=document.createElement('div'); topBar.className='allow-pull-top';
+  topBar.innerHTML=`
+    <span>📋 待处理 <b>${pending.length}</b> 笔</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;margin-left:auto">
+      <span style="font-size:12px;color:#7a6f62">按电话搜：</span>
+      <input type="tel" id="pendingPhoneInput" value="${escapeHtml(pendingPhoneFilter)}" placeholder="输入电话后按回车" style="padding:5px 8px;border:1px solid #e0d6c8;border-radius:6px;font-size:13px;width:150px" onkeydown="if(event.key==='Enter'){event.preventDefault();onPendingPhoneSearch(this.value.trim());}">
+      <button type="button" onclick="onPendingPhoneSearch(document.getElementById('pendingPhoneInput').value.trim())" style="padding:5px 10px;border:1px solid #b8743f;background:#fff;color:#b8743f;border-radius:6px;font-size:12px;cursor:pointer">搜索</button>
+      ${pendingPhoneFilter?`<button type="button" onclick="onPendingPhoneSearch('')" style="padding:5px 10px;border:1px solid #c0392b;background:#fff;color:#c0392b;border-radius:6px;font-size:12px;cursor:pointer;margin-left:4px">清除</button>`:''}
+    </span>
+    ${pending.length?'':'<span style="color:#888">（暂无待处理订单）</span>'}
+  `;
+  list.appendChild(topBar);
+  if(!pending.length){
+    const empty=document.createElement('div'); empty.className='empty'; empty.textContent='暂无订单';
+    list.appendChild(empty); return;
+  }
+  const filtered=pending.filter(o=>{
+    if(!pendingPhoneFilter) return true;
+    const ph=String(o.phone||'');
+    return ph.includes(pendingPhoneFilter);
+  });
+  if(!filtered.length){
+    const empty=document.createElement('div');
+    empty.className='empty';
+    empty.innerHTML=pendingPhoneFilter?`没有找到电话包含「${escapeHtml(pendingPhoneFilter)}」的待处理订单。<br><br><span style="font-size:13px;color:#999">请检查号码是否输对；清除搜索可显示全部。</span>`:`暂无订单。`;
+    list.appendChild(empty);
+    return;
+  }
   const groups={};
-  pending.forEach(o=>{ const key=BUSINESS_RULES.merge.makeKey(o); (groups[key]=groups[key]||[]).push(o); });
+  filtered.forEach(o=>{ const key=BUSINESS_RULES.merge.makeKey(o); (groups[key]=groups[key]||[]).push(o); });
   Object.values(groups).forEach(group=>{
     group.sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
     const ids=group.map(o=>o.id);
     const first=group[0];
-    const total=group.reduce((s,o)=>s+(Number(o.total)||0),0);
-    // 每笔子订单用 .suborder 块：下单时间 + 每个产品一行 + 本笔总价
+    // 每笔子订单用 .suborder 块：下单时间 + 每个产品一行 + 本笔总价 + 逐笔确认按钮
     const orderBlocks=group.map(o=>{
+      const itemsHtml=o.items.map((i,idx)=>{
+        let h=`<div class="so-item"><span>${renderItemName(i)}</span><span>${renderItemQty(i)}${itemDelBtn(o.id,idx)}</span></div>`;
+        const bi=getBundleItems(i);
+        if(bi && bi.length && !i.isManualAdd){
+          h+=`<div class="bundle-inline">实发为：${bi.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('、')}</div>`;
+        }
+        return h;
+      }).join('');
+      // 子订单逐笔按钮：仅当 status==='待确认' 时显示（理论上 group 内都满足，保险起见判断一下）
+      const actionBtns = (o.status==='待确认')
+        ? `<div class="so-actions">
+             <button class="btn-so btn-so-yes" onclick="subConfirmPaid('${o.id}')" title="该笔已收款 → 转入待发货">✓ 已收</button>
+             <button class="btn-so btn-so-no" onclick="subMarkNotPaid('${o.id}')" title="该笔未收到款项 → 转入已取消（自动退库存）">✕ 未收</button>
+           </div>`
+        : `<span class="so-status">已处置</span>`;
       return `
-      <div class="suborder">
+      <div class="suborder" data-id="${o.id}">
         <div class="so-h"><span>${o.id}<span class="so-paytime">下单 ${fmtTime(o.createdAt)}</span></span></div>
-        ${o.items.map((i,idx)=>{
-          let h=`<div class="so-item"><span>${renderItemName(i)}</span><span>${renderItemQty(i)}${itemDelBtn(o.id,idx)}</span></div>`;
-          const bi=getBundleItems(i);
-          if(bi && bi.length && !i.isManualAdd){
-            h+=`<div class="bundle-inline">实发为：${bi.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('、')}</div>`;
-          }
-          return h;
-        }).join('')}
-        <div class="so-total">本笔合计 ${money(o.total)}</div>
+        ${itemsHtml}
+        <div class="so-total"><span>本笔合计 ${money(o.total)}</span>${actionBtns}</div>
       </div>`;
     }).join('');
+    // 顶部进度条：合并组已处置 / 共 N 笔（实时显示剩余子订单数）
+    const remainCount = group.length; // 渲染时全部都还是「待确认」
+    const progressHtml = group.length>1 ? `
+      <div class="progress">
+        <span class="progress-txt">共 <b>${group.length}</b> 笔 · 剩余 <b>${remainCount}</b> 笔</span>
+        <div class="progress-bar"><div class="progress-bar-fill" style="width:0%"></div></div>
+        <span class="progress-txt">处置进度 <b>0</b>/${group.length}</span>
+      </div>` : '';
     const div=document.createElement('div'); div.className='card merge-card';
     div.innerHTML=`
       <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-wait">待确认</span></div>
@@ -876,10 +945,45 @@ function renderMergedPending(){
       <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
-      <div class="items">${orderBlocks}<div style="border-top:1px dashed #e0d6c8;margin-top:6px;padding-top:6px;font-weight:700">合计 ${money(total)}</div></div>
-      <div class="acts"><button class="btn-confirm" onclick="confirmPaidGroup(['${ids.join("','")}'])">客户已发截图，确认收款${group.length>1?`（${group.length}笔一起）`:''}</button><button class="btn-cancel" onclick="markNotPaidGroup(['${ids.join("','")}'])">未收到该款项</button></div>`;
+      ${progressHtml}
+      <div class="items">${orderBlocks}</div>
+      <div class="acts" style="flex-wrap:wrap;gap:8px">${swapBtnHtml(first.id)}<button class="btn-confirm" onclick="confirmPaidGroup(['${ids.join("','")}'])">客户已发截图，确认收款${group.length>1?`（${group.length}笔一起）`:''}</button></div>`;
     list.appendChild(div);
   });
+}
+function onPendingPhoneSearch(v){
+  pendingPhoneFilter=String(v||'').trim();
+  if(curTab==='待确认') renderMergedPending();
+}
+// ===== 合并订单 · 子订单逐笔处置（不切换 tab，让用户继续在「待处理」处理其他子订单） =====
+// 点 [✓ 已收]：该笔 status='待发货'，自动从当前「待处理」组消失，剩余子订单合并组自然重组
+// 点 [✕ 未收]：该笔 status='已取消'，自动退库存；剩余子订单合并组自然重组
+async function subConfirmPaid(id){
+  const o=ORDERS.find(x=>x.id===id);
+  if(!o) return;
+  if(o.status!=='待确认'){ toast('该订单已处置：'+o.status); return; }
+  if(!window.confirm(`确认该笔已收款？\n订单 ${id} · ${escapeHtml(o.name||'')} · ${money(o.total)}\n\n（仅标记这一笔，已合并组内其他笔不会变；标完后合并组会自动缩小）`)) return;
+  const prev=JSON.parse(JSON.stringify(o));
+  o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now();
+  ORDERS=ORDERS.map(x=>x.id===id?o:x);
+  // 乐观更新：不切 tab，让用户继续在「待处理」处理其他子订单
+  render();
+  toast('✓ '+id+' 已转入待发货');
+  await syncOrder(id,'/confirm',{},prev);
+}
+function subMarkNotPaid(id){
+  const o=ORDERS.find(x=>x.id===id);
+  if(!o) return;
+  if(o.status!=='待确认'){ toast('该订单已处置：'+o.status); return; }
+  if(pendingIds.has(id)){ toast('操作进行中，请稍候'); return; }
+  if(!window.confirm(`确认「未收到该款项」？\n订单 ${id} · ${escapeHtml(o.name||'')} · ${money(o.total)}\n\n（仅标记这一笔；该笔将标记为已取消并退回库存；合并组内其他笔不会变）`)) return;
+  const prev=JSON.parse(JSON.stringify(o));
+  o.status='已取消'; o.cancelledAt=Date.now();
+  ORDERS=ORDERS.map(x=>x.id===id?o:x);
+  // 乐观更新：不切 tab
+  render();
+  toast('✕ '+id+' 已转入已取消');
+  syncOrder(id,'/cancel',{},prev);
 }
 // 待发货：按 姓名+电话+地址+微信 4项完全一致合并为同一个客户
 // 详见 business_rules.md §1 自动合并规则
