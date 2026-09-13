@@ -2,6 +2,7 @@
 // 本地双击图标零依赖即可跑；配置 SUPABASE_URL + SUPABASE_ANON_KEY 后自动切云端，数据持久化不丢。
 // Render 云端启动：先 listen 端口再异步 boot，避免健康检查超时。
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -17,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix18-2026-09-13-2248-w2w3-combo-cats';
+const ADMIN_BUILD = 'fix20-2026-09-13-2359-net-auto-proxy';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -45,7 +46,7 @@ if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
     const { createClient } = require('@supabase/supabase-js');
     const fetchWithTimeout = (url, opts) => {
       const ctl = new AbortController();
-      const t = setTimeout(() => ctl.abort(), 10000);
+      const t = setTimeout(() => ctl.abort(), 12000);
       return fetch(url, { ...opts, signal: ctl.signal }).finally(() => clearTimeout(t));
     };
     sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, { global: { fetch: fetchWithTimeout } });
@@ -54,6 +55,59 @@ if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
   }
 }
 const USE_SUPABASE = !!sb;
+
+// ---------- 网络路径自适应（2026-09-13 修复「本地后台点应用/保存一直卡住或失败」） ----------
+// 根因：柒木本机开着 Clash。TUN(虚拟网卡) 模式会把 DNS 劫持成 fake-ip，Node 直连 Supabase 直接失败；
+// 而 Node 默认也不读系统的"系统代理"，于是本地 4301 所有写库操作（活动排期/保存设置/确认收款）全部超时。
+// 方案：启动时先用 node:https 探一次直连（不走 undici，绝不污染后续 fetch 的 dispatcher）：
+//   · 直连可用（Clash 关闭 / 只是系统代理）→ 不启用代理，避免"代理端口不在"反而连不上；
+//   · 直连不可用（Clash TUN 开着）→ 启用 NODE_USE_ENV_PROXY + HTTP(S)_PROXY 走本机代理。
+// 这样柒木无论开不开 Clash，本地后台都能写库，不需要他手动调网络设置。
+let NET_MODE = 'direct';
+function enableEnvProxy(proxy){
+  // Node 22.21+ 支持：设 NODE_USE_ENV_PROXY=1 后，全局 fetch 会读 HTTP_PROXY/HTTPS_PROXY
+  process.env.NODE_USE_ENV_PROXY = '1';
+  if(!process.env.HTTP_PROXY) process.env.HTTP_PROXY = proxy;
+  if(!process.env.HTTPS_PROXY) process.env.HTTPS_PROXY = proxy;
+  NET_MODE = 'proxy';
+}
+function probeDirect(baseUrl, timeoutMs){
+  return new Promise(resolve=>{
+    let done = false;
+    const finish = v => { if(!done){ done = true; resolve(v); } };
+    let u;
+    try { u = new URL(String(baseUrl).replace(/\/+$/, '') + '/rest/v1/'); }
+    catch(e){ return finish(false); }
+    const mod = u.protocol === 'http:' ? http : https;
+    let r;
+    try {
+      r = mod.request({
+        hostname: u.hostname,
+        port: u.port || (u.protocol === 'http:' ? 80 : 443),
+        path: u.pathname,
+        method: 'HEAD',
+        timeout: timeoutMs
+      }, res=>{ res.resume(); finish(true); });
+    } catch(e){ return finish(false); }
+    r.on('timeout', ()=>{ try{ r.destroy(); }catch(e){} finish(false); });
+    r.on('error', ()=>{ finish(false); });
+    r.end();
+  });
+}
+async function decideNetwork(){
+  if(!USE_SUPABASE) return;
+  const proxy = String(process.env.SUPABASE_PROXY || '').trim();
+  if(!proxy){ NET_MODE = 'direct'; return; }
+  if(process.env.SUPABASE_FORCE_PROXY === '1'){
+    enableEnvProxy(proxy);
+    console.log('[Net] 已按 SUPABASE_FORCE_PROXY 强制走代理：' + proxy);
+    return;
+  }
+  const directOk = await probeDirect(process.env.SUPABASE_URL, 3500);
+  if(directOk){ NET_MODE = 'direct'; console.log('[Net] Supabase 直连可用，不启用代理'); return; }
+  enableEnvProxy(proxy);
+  console.log('[Net] Supabase 直连不可用（Clash TUN？），已启用代理：' + proxy);
+}
 
 function ensureDir(d){ if(!fs.existsSync(d)) fs.mkdirSync(d, {recursive:true}); }
 ensureDir(DATA); ensureDir(PUBLIC); ensureDir(VIEWS); ensureDir(GALLERY);
@@ -95,7 +149,8 @@ async function withRetry(fn, label, retries=2){
   for(let i=0;i<retries;i++){
     try{
       // 12s 单调用超时：Supabase 免费层偶发 fetch 永久挂起，必须强制释放，防止 withLock 死锁
-      return await Promise.race([fn(), new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')), 8000))]);
+      // （2026-09-13 从 8s 放宽到 12s：走本机代理首次建连/TLS 握手较慢，8s 会误判失败）
+      return await Promise.race([fn(), new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')), 12000))]);
     }
     catch(e){
       lastErr=e;
@@ -253,6 +308,9 @@ function ensureBoot(){
 }
 
 async function boot(){
+  // 必须在任何 Supabase 请求之前决定网络路径（undici 的全局 dispatcher 一旦用过就固定了）
+  try { await decideNetwork(); }
+  catch(e){ console.error('[boot] 网络探测失败，按直连处理：', e.message); }
   const seedProducts = readJson('products.json', []);
   const seedConfig = readJson('config.json', DEFAULT_CONFIG);
   const seedOrders = readJson('orders.json', []);
@@ -1491,6 +1549,25 @@ const server = http.createServer(async (req, res)=>{
         }
         clearHtmlCache();
         res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, error:'切换失败（已自动重试3次，产品与波次均未改动）：'+((lastErr&&lastErr.message)||lastErr)})); return;
+      }
+
+      // 网络自检：用于排查「本地后台保存/切换活动一直失败」是网络还是数据问题。
+      // 返回当前网络模式 + 一次真实的 Supabase 读探测用时。
+      if(method==='GET' && pathname==='/api/diag'){
+        const out = { netMode: NET_MODE, useSupabase: USE_SUPABASE, host: null, proxy: null, readOk: null, readMs: null, error: null };
+        try { out.host = process.env.SUPABASE_URL ? new URL(process.env.SUPABASE_URL).host : null; } catch(e){}
+        out.proxy = String(process.env.SUPABASE_PROXY || '') || null;
+        if(USE_SUPABASE){
+          const t0 = Date.now();
+          try {
+            const { error } = await withRetry(()=>sb.from('shop_data').select('key').limit(1), 'diag');
+            if(error) throw new Error(error.message);
+            out.readOk = true;
+          } catch(e){ out.readOk = false; out.error = e.message; }
+          out.readMs = Date.now() - t0;
+        }
+        res.writeHead(200, { 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' });
+        res.end(JSON.stringify(out)); return;
       }
 
       // 商家后台自检版本端点：admin.html 加载时会 fetch 这里对比自己嵌入的版本号，
