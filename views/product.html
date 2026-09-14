@@ -103,7 +103,7 @@
   .bundle .name{flex:1}
   .bundle .qty{font-weight:700;color:#3a322b}
   .bar{position:fixed;left:0;right:0;bottom:0;z-index:20;background:#fff;display:flex;gap:10px;padding:12px 14px;box-shadow:0 -2px 10px rgba(0,0,0,.06)}
-  .bar .home{background:#f3ece2;color:#7a5230;border:none;border-radius:24px;padding:0 16px;font-size:13px;cursor:pointer}
+  .bar .home{background:#f3ece2;color:#7a5230;border:none;border-radius:24px;padding:0 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;display:flex;align-items:center;justify-content:center;min-width:72px;letter-spacing:.5px}
   .bar .buy{flex:1;background:#b8743f;color:#fff;border:none;border-radius:24px;padding:13px;font-size:15px;font-weight:700;cursor:pointer}
   .bar .buy:disabled{background:#d8ccba;color:#fff;cursor:not-allowed}
   .bar .buy span.from{font-size:13px;font-weight:400;margin-right:3px}
@@ -144,7 +144,8 @@
   .sku-foot .buy-now{background:#f3c96a;color:#5b3d1b}
   .sku-foot .add-cart{background:#c0392b;color:#fff}
   /* 购物车右侧抽屉 */
-  .fab{position:fixed;right:16px;bottom:90px;z-index:30;background:#b8743f;color:#fff;width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:24px;box-shadow:0 4px 14px rgba(184,116,63,.5);cursor:pointer}
+  .fab{position:fixed;right:16px;bottom:90px;z-index:30;background:#b8743f;color:#fff;width:60px;height:60px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:26px;box-shadow:0 0 0 3px #fff,0 6px 20px rgba(184,116,63,.6);cursor:pointer;animation:fabPulse 2.2s infinite}
+@keyframes fabPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
   .badge{position:absolute;top:-2px;right:-2px;background:#c0392b;color:#fff;font-size:11px;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 4px}
   .mask{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40;display:none}
   .mask.show{display:block}
@@ -210,7 +211,7 @@
   </div>
 
   <div class="bar">
-    <button class="home" onclick="location.href='/'">🏠</button>
+    <button class="home" onclick="location.href='/'">进入店铺</button>
     <button class="add2cart" id="addBtn" onclick="addToCartSelected(false)">加入购物车</button>
     <button class="buynow" id="buyNowBtn" onclick="addToCartSelected(true)">直接购买</button>
   </div>
