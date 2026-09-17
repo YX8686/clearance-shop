@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix33-2026-09-18-0400-page-browser-cache';
+const ADMIN_BUILD = 'fix34-2026-09-18-0500-page-cache-by-data-fingerprint';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -809,44 +809,81 @@ function renderTemplate(name, vars){
 // 让微信/QQ/TIM 等爬虫与真实用户秒开页面：避免「冷启动 + 每次打云端 Supabase」导致首页十几秒、
 // 微信爬虫超时直接退化为纯文字链接、抓不到 OG 大图卡片。
 // 后台改完产品/配置会主动清缓存（见 saveProducts/saveConfig），兼顾新鲜度与速度。
-const htmlCache = new Map();     // key -> { html, ts }
+const htmlCache = new Map();     // key -> { html, ts, fp }
 // 页面缓存是「跨请求共享」的，所以 OG 里的站址必须用固定的公网正式域名，
 // 不能再用每个请求的 Host（否则会把 A 域名渲染出来的页面发给 B 域名）。
 const PUBLIC_BASE = (process.env.PUBLIC_BASE_URL || 'https://buchu-shop.onrender.com').replace(/\/+$/,'');
-// 买家页面允许浏览器短缓存：顾客「返回列表 / 来回看商品」时不再重复打到 Render 免费实例，
-// 免费额度下的有效承载能力可放大 2~3 倍。代价：后台改完最多 30 秒后才对「已打开过页面的顾客」生效。
-const PAGE_CACHE_CC = 'public, max-age=30, stale-while-revalidate=120';
 const htmlInflight = new Map();  // key -> Promise<string>：同一页面同一时刻只允许一次渲染（请求合并）
 let htmlGen = 0;                 // 缓存代次：后台改数据后 +1，让"改动前发起的渲染"结果作废
-const HTML_CACHE_TTL = 60000;               // 60 秒内视为新鲜，直接命中
-const HTML_STALE_MAX = 6 * 60 * 60 * 1000;  // 过期后 6 小时内仍可「先给旧页面、后台静默刷新」
+const HTML_REFRESH_MAX = 10 * 60 * 1000;      // 兜底：指纹没变也最多 10 分钟后台刷一次
+const HTML_STALE_MAX   = 6 * 60 * 60 * 1000;  // 旧页面最多留 6 小时当兜底，超了就重新渲染
 const PAGE_MISSING = '\u0001__page_missing__';  // 详情页不存在/已隐藏的哨兵值（也缓存，避免反复查库）
+
+// ★★★ 页面缓存铁律（2026-09-18 踩坑后重写，改这里之前请看完）★★★
+// ① 一次「全量渲染」= 读 Supabase + 渲染 230KB 模板，本地 2.9 秒，线上 0.1 核要十几秒
+//    → 绝不能让 N 个并发各自渲染一次，必须用 single-flight 合并。
+// ② 但**绝不能只靠固定 TTL 判断页面是否该刷新**：
+//    本机商家后台(4301) 和云端(Render) 是**两个进程**、共用同一个 Supabase。
+//    本机改完产品，云端那个进程根本不知道数据变了 → 买家端会一直看到旧页面。
+//    曾经写成「60 秒 TTL + stale-while-revalidate」，而且回写条件写成 `!htmlCache.has(key)`，
+//    导致后台刷新出来的新页面被直接丢弃 → **买家端彻底不再更新**（这是 2026-09-18 的真实故障）。
+// ③ 正确做法：**缓存是否有效由「数据指纹」决定，而不是时间**
+//    · 指纹没变 → 直接命中（最多 10 分钟兜底刷一次）
+//    · 指纹变了 → 立刻返回旧页面（访客不用等），同时后台只刷新一次，几秒后全站就都是新的
+//    · 完全没有旧页面 → 并发请求共享同一份在途渲染
 function peekHtml(key, maxAge){
   const c = htmlCache.get(key);
   return (c && Date.now() - c.ts < maxAge) ? c.html : null;
 }
-function getCachedHtml(key){ return peekHtml(key, HTML_CACHE_TTL); }
-function setCachedHtml(key, html){ if(html) htmlCache.set(key, { html, ts: Date.now() }); }
-function clearHtmlCache(){ htmlGen++; htmlCache.clear(); productReadCache = { ts: 0, value: products, promise: null, failed: false }; }
+function getCachedHtml(key){ return peekHtml(key, HTML_REFRESH_MAX); }
+function setCachedHtml(key, html){ if(html) htmlCache.set(key, { html, ts: Date.now(), fp: '' }); }
+function clearHtmlCache(){
+  htmlGen++;
+  for(const v of htmlCache.values()) v.fp = '';   // 旧页面留着兜底，只把指纹作废 → 下次访问后台刷新（访客不用等渲染）
+  fpCache.ts = 0;
+  productReadCache = { ts: 0, value: products, promise: null, failed: false };
+}
 
-// ★★★ 性能铁律（2026-09-18 压测得出，改动前请想清楚）★★★
-// 一次「全量渲染」= 读 Supabase + 渲染 230KB 模板，本地就要 2.9 秒，线上 0.1 核会放大到十几秒。
-// 以前缓存只保 30 秒，且过期瞬间 N 个并发请求会各自渲一次（没有请求合并）——几百人同时在线必炸。
-// 现在统一为三步：
-//   ① 60 秒内 → 直接命中（毫秒级）
-//   ② 已过期但还有旧页面 → 立即返回旧页面，同时后台只刷新一次（stale-while-revalidate）
-//   ③ 完全没有缓存 → 所有并发请求共享同一份在途渲染（single-flight），绝不重复渲染
-// 后台保存产品/配置会 clearHtmlCache()，所以买家端改动仍在数秒内生效。
+// 数据指纹：把「所有会影响买家页面的数据」压成一个短字符串。
+// 每 3 秒最多算一次（与 getProducts/getConfig 的回源节流对齐）+ 单飞，开销可忽略。
+let fpCache = { ts: 0, val: '', promise: null };
+const FP_TTL_MS = 3000;
+async function dataFingerprint(){
+  if(fpCache.ts && Date.now() - fpCache.ts < FP_TTL_MS) return fpCache.val;
+  if(fpCache.promise) return fpCache.promise;
+  const p = (async()=>{
+    try{
+      const list = await getProducts();
+      const cfg  = cfgSafe(await getConfig());
+      const src  = JSON.stringify(list) + '\u0000' + JSON.stringify(cfg);
+      let h = 2166136261;
+      for(let i=0;i<src.length;i++){ h ^= src.charCodeAt(i); h = Math.imul(h, 16777619); }
+      fpCache = { ts: Date.now(), val: (h>>>0).toString(36) + ':' + src.length, promise: null };
+    }catch(e){
+      fpCache = { ts: Date.now(), val: fpCache.val, promise: null };  // 读失败就沿用旧指纹，继续用旧页面兜底
+    }
+    return fpCache.val;
+  })();
+  fpCache.promise = p;
+  try{ return await p; } finally { fpCache.promise = null; }
+}
+
 async function renderPageCached(key, build){
-  const fresh = peekHtml(key, HTML_CACHE_TTL);
-  if(fresh) return fresh;
-  const stale = peekHtml(key, HTML_STALE_MAX);
+  const fp  = await dataFingerprint();
+  const cur = htmlCache.get(key);
+  // ① 数据没变（且未超过 10 分钟兜底窗口）→ 直接命中
+  if(cur && cur.fp && cur.fp === fp && Date.now() - cur.ts < HTML_REFRESH_MAX) return cur.html;
   const startRender = ()=>{
-    const gen = htmlGen;
+    const gen = htmlGen, startedAt = Date.now();
     const p = Promise.resolve()
       .then(build)
       .then(h=>{
-        if(h && gen === htmlGen && !htmlCache.has(key)) htmlCache.set(key, { html:h, ts:Date.now() });
+        if(!h || gen !== htmlGen) return h;
+        const now = htmlCache.get(key);
+        // ★ 只有「比本次渲染更早写入」的缓存才允许被覆盖。
+        //   旧写法是 `!htmlCache.has(key)` —— 而「先给旧页、后台刷新」时缓存里一直有旧页，
+        //   于是新渲染结果永远写不进去，买家端就永远停在旧页面。别再改回去。
+        if(!now || !now.fp || now.ts <= startedAt) htmlCache.set(key, { html:h, ts:Date.now(), fp });
         return h;
       })
       .catch(e=>{ console.error('[renderPage]', key, e.message); return null; })
@@ -855,8 +892,10 @@ async function renderPageCached(key, build){
     return p;
   };
   const inflight = htmlInflight.get(key);
-  if(stale){ if(!inflight) startRender(); return stale; }   // 先给旧的，后台刷新
-  if(inflight) return inflight;                             // 合并并发请求
+  // ② 有旧页面 → 先给旧的，后台刷新（访客零等待）
+  if(cur && Date.now() - cur.ts < HTML_STALE_MAX){ if(!inflight) startRender(); return cur.html; }
+  // ③ 完全没有缓存 → 合并并发请求，只渲染一次
+  if(inflight) return inflight;
   return startRender();
 }
 
@@ -1831,7 +1870,7 @@ const server = http.createServer(async (req, res)=>{
     if((method==='GET'||method==='HEAD') && (pathname==='/' || pathname==='')){
       const html = await renderPageCached('home', buildHomeHtml);
       if(!html || html===PAGE_MISSING){ res.writeHead(503,{'Content-Type':'text/html; charset=utf-8'}); res.end('页面生成中，请稍后重试'); return; }
-      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':PAGE_CACHE_CC}); res.end(method==='HEAD'?'':html); return;
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;
     }
 
       const mProd = pathname.match(/^\/product\/([\w-]+)$/);
@@ -1840,7 +1879,7 @@ const server = http.createServer(async (req, res)=>{
         const html = await renderPageCached('product:'+pid, ()=>buildProductHtml(pid));
         if(html === PAGE_MISSING){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
         if(!html){ res.writeHead(503,{'Content-Type':'text/html; charset=utf-8'}); res.end('页面生成中，请稍后重试'); return; }
-        res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':PAGE_CACHE_CC}); res.end(method==='HEAD'?'':html); return;
+        res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;
     }
 
     const mOrder = pathname.match(/^\/order\/([\w-]+)$/);
