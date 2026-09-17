@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix32-2026-09-18-0330-page-cache-singleflight';
+const ADMIN_BUILD = 'fix33-2026-09-18-0400-page-browser-cache';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -813,6 +813,9 @@ const htmlCache = new Map();     // key -> { html, ts }
 // 页面缓存是「跨请求共享」的，所以 OG 里的站址必须用固定的公网正式域名，
 // 不能再用每个请求的 Host（否则会把 A 域名渲染出来的页面发给 B 域名）。
 const PUBLIC_BASE = (process.env.PUBLIC_BASE_URL || 'https://buchu-shop.onrender.com').replace(/\/+$/,'');
+// 买家页面允许浏览器短缓存：顾客「返回列表 / 来回看商品」时不再重复打到 Render 免费实例，
+// 免费额度下的有效承载能力可放大 2~3 倍。代价：后台改完最多 30 秒后才对「已打开过页面的顾客」生效。
+const PAGE_CACHE_CC = 'public, max-age=30, stale-while-revalidate=120';
 const htmlInflight = new Map();  // key -> Promise<string>：同一页面同一时刻只允许一次渲染（请求合并）
 let htmlGen = 0;                 // 缓存代次：后台改数据后 +1，让"改动前发起的渲染"结果作废
 const HTML_CACHE_TTL = 60000;               // 60 秒内视为新鲜，直接命中
@@ -1828,7 +1831,7 @@ const server = http.createServer(async (req, res)=>{
     if((method==='GET'||method==='HEAD') && (pathname==='/' || pathname==='')){
       const html = await renderPageCached('home', buildHomeHtml);
       if(!html || html===PAGE_MISSING){ res.writeHead(503,{'Content-Type':'text/html; charset=utf-8'}); res.end('页面生成中，请稍后重试'); return; }
-      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':PAGE_CACHE_CC}); res.end(method==='HEAD'?'':html); return;
     }
 
       const mProd = pathname.match(/^\/product\/([\w-]+)$/);
@@ -1837,7 +1840,7 @@ const server = http.createServer(async (req, res)=>{
         const html = await renderPageCached('product:'+pid, ()=>buildProductHtml(pid));
         if(html === PAGE_MISSING){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
         if(!html){ res.writeHead(503,{'Content-Type':'text/html; charset=utf-8'}); res.end('页面生成中，请稍后重试'); return; }
-        res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;
+        res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':PAGE_CACHE_CC}); res.end(method==='HEAD'?'':html); return;
     }
 
     const mOrder = pathname.match(/^\/order\/([\w-]+)$/);
