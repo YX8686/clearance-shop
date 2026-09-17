@@ -268,6 +268,16 @@ function normalizeTrackingSrv(raw){
   let t=m?m[0]:s.replace(/[^A-Za-z0-9]/g,'');
   return t.replace(/-/g,'');
 }
+// 清洗发货编号（A3 / B12 / a3 → A3）
+function normalizeShipCode(raw){
+  const m=String(raw||'').trim().toUpperCase().match(/^[A-Z]\d{1,3}$/);
+  return m?m[0]:'';
+}
+// 从任意文本里提取第一个看起来像发货编号的片段
+function extractShipCode(text){
+  const m=String(text||'').toUpperCase().match(/\b[A-Z]\d{1,3}\b/);
+  return m?m[0]:'';
+}
 
 /* ---------- HTTP ---------- */
 const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css','.json':'application/json'};
@@ -328,32 +338,45 @@ async function shipCloudHandler(req,res){
       return send(res,200,await loadKV(MALL_PRODUCTS,[]));
     }
     /* /api/shipper/tables 已移除（2026-08-31 发货员视图下线，店主端 index.html 直接读 /api/pick-list） */
-    // 发货员上传 Excel → 按手机号匹配商城 session 中的订单 → 暂存待店主确认
+    // 发货员上传 Excel → 优先按发货编号 shipCode（A3/B4…）匹配商城 session 中的订单，
+    // 编号匹配不到再按手机号兜底匹配 → 暂存待店主确认
     // （2026-09-04 改版：手工订单的回传不再走这里，统一进「手工订单汇总区」manual_pool）
     if(p==='/api/shipper/upload-tracking' && req.method==='POST'){
       const b=await readBody(req);
       const rows=Array.isArray(b.rows)?b.rows:[];
       if(!rows.length) return send(res,400,{ok:false,message:'没有数据'});
       const flatMall=[]; (await loadMallSessions()).forEach(s=>(s.orders||[]).forEach(o=>flatMall.push({sessionId:s.sessionId, ts:s.ts, o})));
-      const matched=[], unmatched=[];
+      const matched=[], unmatched=[], reasons=[];
       for(const r of rows){
-        const phone=String(r.phone||'').replace(/\D/g,'').slice(-11);
-        const tracking=String(r.tracking||'').trim();
-        if(!phone||!tracking){ unmatched.push(r); continue; }
-        // 2026-09-09 修复：合并客户（同电话）一次回传单号要全笔生效。
-        // 原代码用 .find() 只匹配第一笔，后续笔永远落不到 matched，导致「三笔合并只第一笔发货、另两笔还在等待回传区」。
-        // 改用 .filter() 取所有未发货的同电话订单，逐笔写入 matched。
-        const ms = flatMall.filter(x=>String(x.o.phone||'').replace(/\D/g,'').slice(-11)===phone && !x.o.tracking);
-        if(ms.length){
-          for(const m of ms){
-            matched.push({kind:'mall', sessionId:m.sessionId, srcId:m.o.id, orderId:null, no:m.o.id, name:m.o.name||r.name, phone, tracking, address:m.o.address||''});
+        const tracking=normalizeTrackingSrv(r.tracking);
+        if(!tracking){ unmatched.push(r); reasons.push('缺单号'); continue; }
+        // 优先取前端已解析好的 shipCode；没有则从任意字段文本里再抓一次
+        let shipCode=normalizeShipCode(r.shipCode) || extractShipCode(r.shipCode) || extractShipCode(r.detail) || extractShipCode(r.remark) || extractShipCode(r.name);
+        if(shipCode){
+          const ms=flatMall.filter(x=>normalizeShipCode(x.o.shipCode)===shipCode && !x.o.tracking);
+          if(ms.length){
+            for(const m of ms){
+              matched.push({kind:'mall', sessionId:m.sessionId, srcId:m.o.id, orderId:null, no:m.o.id, name:m.o.name||r.name, phone:m.o.phone||'', tracking, address:m.o.address||'', shipCode});
+            }
+            continue;
           }
-          continue;
+        }
+        // 兜底：按手机号匹配（兼容旧格式/无编号）
+        const phone=String(r.phone||'').replace(/\D/g,'').slice(-11);
+        if(phone){
+          const ms=flatMall.filter(x=>String(x.o.phone||'').replace(/\D/g,'').slice(-11)===phone && !x.o.tracking);
+          if(ms.length){
+            for(const m of ms){
+              matched.push({kind:'mall', sessionId:m.sessionId, srcId:m.o.id, orderId:null, no:m.o.id, name:m.o.name||r.name, phone, tracking, address:m.o.address||''});
+            }
+            continue;
+          }
         }
         unmatched.push(r);
+        reasons.push(shipCode?('编号 '+shipCode+' 无匹配'):(phone?('手机 '+phone+' 无匹配'):'无编号/手机号可匹配'));
       }
       await savePendingTracking(matched);
-      return send(res,200,{ok:true, matched:matched.length, unmatched:unmatched.length, pending:matched});
+      return send(res,200,{ok:true, matched:matched.length, unmatched:unmatched.length, reasons, pending:matched});
     }
     if(p==='/api/pending-tracking' && req.method==='GET'){
       return send(res,200,{ok:true, pending:await loadPendingTracking()});

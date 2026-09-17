@@ -1488,6 +1488,7 @@ function openManualModal(){
 function toExportOrder(o){
   return {
     id:o.id, name:o.name, phone:o.phone, address:o.address, wechat:o.wechat||'',
+    shipCode:o.shipCode||'',   // 发货编号（A3/B4…），发货管家按编号匹配回传单号
     createdAt:o.createdAt||o.paidAt||null,   // 下单时间（毫秒时间戳），供发货管家显示「9/8 晚上 7:28」
     items:(o.items||[]).map(i=>{
       const bi = getBundleItems(i);
