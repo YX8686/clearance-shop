@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix36-2026-09-18-0545-clear-cache-on-save-and-await-render';
+const ADMIN_BUILD = 'fix37-2026-09-18-0600-config-dirty-guard';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -429,7 +429,13 @@ process.on('beforeExit', ()=>{ _flushOrderQueue(); flushDirtyProducts().catch(()
 process.on('uncaughtException', e=>{ console.error('[uncaughtException]', (e && e.stack) || e); });
 process.on('unhandledRejection', e=>{ console.error('[unhandledRejection]', (e && e.stack) || e); });
 function saveOrders(){ return withLock(()=> saveKV('orders', orders)); } // 仅作整批备份残留，下单/状态变更已改用 saveOrderRow
-function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config, 2)).then(r=>{ configReadCache.ts = Date.now(); return r; }); }
+function saveConfig(){
+  clearHtmlCache();
+  configDirty = true;
+  return withLock(()=> saveKV('config', config, 2))
+    .then(r=>{ configReadCache.ts = Date.now(); configDirty = false; return r; })
+    .catch(e=>{ configDirty = false; throw e; });
+}
 
 // ===== 发货编号：A1-A100, B1-B100, ... 顺序分配，持久化在订单上 =====
 const SHIP_CODE_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -598,17 +604,21 @@ async function getProducts(){
 // 本机后台切波/改公告后云端永远读的是旧值 —— 症状正是「后台点了应用，买家端毫无变化」。
 // 这里每 3 秒回源一次；原地 Object.assign 保持 config 引用不变，避免打断正在进行的写入。
 let configReadCache = { ts: 0, promise: null };
+let configDirty = false;   // 正在写 config（切波/保存设置）时置 true，防止后台回源把内存改动冲掉
 const CONFIG_READ_TTL_MS = 3000;
 function cfgSafe(c){ return (c && typeof c==='object' && !Array.isArray(c)) ? c : {}; }
 async function getConfig(){
   if(!USE_SUPABASE) return config;
+  if(configDirty) return config;   // 有未落库的本地改动（正在切波/保存设置）→ 绝不回源覆盖
   if(configReadCache.promise) return configReadCache.promise;
   const now = Date.now();
   if(configReadCache.ts > 0 && now - configReadCache.ts < CONFIG_READ_TTL_MS) return config;
   const p = (async()=>{
     try{
       const fresh = await loadKV('config', config);
-      if(fresh && typeof fresh==='object' && !Array.isArray(fresh)) Object.assign(config, fresh);
+      // ⚠️ 回源落地前必须再判一次 configDirty：否则「本机刚切好波次、正在写云端」的这几秒里，
+      //    后台快照轮询会把内存 config 覆盖回旧值 → activeWave 丢失（买家端分类栏/倒计时错乱）。
+      if(!configDirty && fresh && typeof fresh==='object' && !Array.isArray(fresh)) Object.assign(config, fresh);
     }catch(e){
       console.error('[getConfig] 读云端失败，使用内存副本：', e.message);
     }
