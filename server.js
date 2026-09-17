@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix29-2026-09-18-0130-wechat-editable-always';
+const ADMIN_BUILD = 'fix32-2026-09-18-0330-page-cache-singleflight';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -666,13 +666,40 @@ function enrichOrderBundles(o){
   return { ...o, items };
 }
 // 后台/管理端想强制从云端复核时调用：重新聚合 order:* 独立行（不阻塞常规读路径）
-async function refreshOrdersFromCloud(){
+// ★ 性能加固（2026-09-18 压测）：订单上千时全量聚合要 1.5s+。而「确认收款/改备注/发货」等
+//   单笔接口原来每次都全量复核 → 300 单要 6~9 分钟。现改为：
+//   ① 全量刷新做节流（SYNC_TTL 内复用，避免连续调用打爆）；
+//   ② 单笔操作改用 refreshOrderOne(id) 只读这一行（≈100ms）。
+const SYNC_TTL_MS = 1500;
+let _ordersSyncAt = 0, _ordersSyncPromise = null;
+async function refreshOrdersFromCloud(force){
   if(!USE_SUPABASE) return orders;
-  try {
-    const { data, error } = await sb.from('shop_data').select('key,value').like('key','order:%');
-    if(!error && data) orders = data.map(r=>r.value).filter(Boolean);
-  } catch(e){ console.error('[refreshOrdersFromCloud]', e.message); }
-  return orders;
+  if(!force && _ordersSyncPromise) return _ordersSyncPromise;
+  if(!force && _ordersSyncAt && Date.now() - _ordersSyncAt < SYNC_TTL_MS) return orders;
+  _ordersSyncPromise = (async()=>{
+    try{
+      const { data, error } = await sb.from('shop_data').select('key,value').like('key','order:%');
+      if(!error && data) orders = data.map(r=>r.value).filter(Boolean);
+      _ordersSyncAt = Date.now();
+    }catch(e){ console.error('[refreshOrdersFromCloud]', e.message); }
+    finally{ _ordersSyncPromise = null; }
+    return orders;
+  })();
+  return _ordersSyncPromise;
+}
+
+// 只复核一笔订单（单笔写操作前用，避免全量聚合）
+async function refreshOrderOne(id){
+  if(!USE_SUPABASE || !id) return null;
+  try{
+    const { data, error } = await sb.from('shop_data').select('value').eq('key','order:'+id).maybeSingle();
+    if(error || !data || !data.value) return null;
+    const fresh = data.value;
+    const idx = orders.findIndex(o=>o.id===id);
+    if(idx>=0) orders[idx] = fresh; else orders.push(fresh);
+    kvCache.set('order:'+id, { ts:Date.now(), value:fresh, promise:null });
+    return fresh;
+  }catch(e){ return null; }
 }
 // 订单写入前必须先刷新内存副本：手机端在云端下的订单，本地服务内存里可能没有，
 // 直接 find 内存会 404 静默失败（症状：后台点"确认收款"提示成功但状态不变）
@@ -741,7 +768,13 @@ function sendFile(res, filePath){
   fs.readFile(filePath, (err, buf)=>{
     if(err){ res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'}); res.end('Not found'); return; }
     const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, {'Content-Type': MIME[ext]||'application/octet-stream'});
+    // 静态资源加长缓存：减少活动期间 Render 免费实例的重复请求（图片/字体 7 天，js/css 1 天）
+    const IMG_EXT = ['.png','.jpg','.jpeg','.webp','.gif','.svg','.ico','.woff','.woff2','.ttf','.otf'];
+    const JS_EXT  = ['.js','.css','.mjs'];
+    const cc = IMG_EXT.includes(ext) ? 'public, max-age=604800'
+             : JS_EXT.includes(ext)  ? 'public, max-age=86400'
+             : 'no-store';
+    res.writeHead(200, {'Content-Type': MIME[ext]||'application/octet-stream', 'Cache-Control': cc});
     res.end(buf);
   });
 }
@@ -776,16 +809,114 @@ function renderTemplate(name, vars){
 // 让微信/QQ/TIM 等爬虫与真实用户秒开页面：避免「冷启动 + 每次打云端 Supabase」导致首页十几秒、
 // 微信爬虫超时直接退化为纯文字链接、抓不到 OG 大图卡片。
 // 后台改完产品/配置会主动清缓存（见 saveProducts/saveConfig），兼顾新鲜度与速度。
-const htmlCache = new Map(); // key -> { html, ts }
-const HTML_CACHE_TTL = 30000; // 30 秒
-function getCachedHtml(key){
+const htmlCache = new Map();     // key -> { html, ts }
+// 页面缓存是「跨请求共享」的，所以 OG 里的站址必须用固定的公网正式域名，
+// 不能再用每个请求的 Host（否则会把 A 域名渲染出来的页面发给 B 域名）。
+const PUBLIC_BASE = (process.env.PUBLIC_BASE_URL || 'https://buchu-shop.onrender.com').replace(/\/+$/,'');
+const htmlInflight = new Map();  // key -> Promise<string>：同一页面同一时刻只允许一次渲染（请求合并）
+let htmlGen = 0;                 // 缓存代次：后台改数据后 +1，让"改动前发起的渲染"结果作废
+const HTML_CACHE_TTL = 60000;               // 60 秒内视为新鲜，直接命中
+const HTML_STALE_MAX = 6 * 60 * 60 * 1000;  // 过期后 6 小时内仍可「先给旧页面、后台静默刷新」
+const PAGE_MISSING = '\u0001__page_missing__';  // 详情页不存在/已隐藏的哨兵值（也缓存，避免反复查库）
+function peekHtml(key, maxAge){
   const c = htmlCache.get(key);
-  if(c && Date.now() - c.ts < HTML_CACHE_TTL) return c.html;
-  if(c) htmlCache.delete(key);
-  return null;
+  return (c && Date.now() - c.ts < maxAge) ? c.html : null;
 }
-function setCachedHtml(key, html){ htmlCache.set(key, { html, ts: Date.now() }); }
-function clearHtmlCache(){ htmlCache.clear(); productReadCache = { ts: 0, value: products, promise: null, failed: false }; }
+function getCachedHtml(key){ return peekHtml(key, HTML_CACHE_TTL); }
+function setCachedHtml(key, html){ if(html) htmlCache.set(key, { html, ts: Date.now() }); }
+function clearHtmlCache(){ htmlGen++; htmlCache.clear(); productReadCache = { ts: 0, value: products, promise: null, failed: false }; }
+
+// ★★★ 性能铁律（2026-09-18 压测得出，改动前请想清楚）★★★
+// 一次「全量渲染」= 读 Supabase + 渲染 230KB 模板，本地就要 2.9 秒，线上 0.1 核会放大到十几秒。
+// 以前缓存只保 30 秒，且过期瞬间 N 个并发请求会各自渲一次（没有请求合并）——几百人同时在线必炸。
+// 现在统一为三步：
+//   ① 60 秒内 → 直接命中（毫秒级）
+//   ② 已过期但还有旧页面 → 立即返回旧页面，同时后台只刷新一次（stale-while-revalidate）
+//   ③ 完全没有缓存 → 所有并发请求共享同一份在途渲染（single-flight），绝不重复渲染
+// 后台保存产品/配置会 clearHtmlCache()，所以买家端改动仍在数秒内生效。
+async function renderPageCached(key, build){
+  const fresh = peekHtml(key, HTML_CACHE_TTL);
+  if(fresh) return fresh;
+  const stale = peekHtml(key, HTML_STALE_MAX);
+  const startRender = ()=>{
+    const gen = htmlGen;
+    const p = Promise.resolve()
+      .then(build)
+      .then(h=>{
+        if(h && gen === htmlGen && !htmlCache.has(key)) htmlCache.set(key, { html:h, ts:Date.now() });
+        return h;
+      })
+      .catch(e=>{ console.error('[renderPage]', key, e.message); return null; })
+      .finally(()=>{ if(htmlInflight.get(key) === p) htmlInflight.delete(key); });
+    htmlInflight.set(key, p);
+    return p;
+  };
+  const inflight = htmlInflight.get(key);
+  if(stale){ if(!inflight) startRender(); return stale; }   // 先给旧的，后台刷新
+  if(inflight) return inflight;                             // 合并并发请求
+  return startRender();
+}
+
+// 首页渲染（供缓存与开机预热共用）
+async function buildHomeHtml(){
+  const list = await getProducts();
+  const ogImage = pickShopShareImage(list);
+  const safeConfig = { ...DEFAULT_CONFIG, ...cfgSafe(await getConfig()) };
+  const html = renderTemplate('home.html', {
+    SHOP_NAME: htmlEscape(safeConfig.shopName),
+    OG_TITLE: htmlEscape(safeConfig.shopName),
+    OG_DESC: htmlEscape(safeConfig.announcement || '不初限时狂欢商城 · 全场超低价回馈老客户'),
+    OG_IMAGE: htmlEscape(absUrl(ogImage, PUBLIC_BASE)),
+    OG_URL: htmlEscape(PUBLIC_BASE + '/'),
+    PRODUCTS_JSON: jsonForScript(localizeProducts(list)),
+    CONFIG_JSON: jsonForScript(safeConfig)
+  });
+  return html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
+}
+
+// 详情页渲染（供缓存与开机预热共用）。不存在/已隐藏返回 PAGE_MISSING 哨兵
+async function buildProductHtml(pid){
+  const list = await getProducts();
+  const p = list.find(x=>x.id===pid);
+  if(!p) return PAGE_MISSING;
+  const cfgNow = await getConfig();
+  const hiddenCats = Array.isArray(cfgNow.hiddenCategories)?cfgNow.hiddenCategories:[];
+  if(p.hidden || (p.category && hiddenCats.includes(p.category))) return PAGE_MISSING;
+  const ogImage = inferShareImage(p) || pickShopShareImage(list);
+  const safeConfig = { ...DEFAULT_CONFIG, ...cfgSafe(cfgNow) };
+  const html = renderTemplate('product.html', {
+    SHOP_NAME: htmlEscape(safeConfig.shopName),
+    OG_TITLE: htmlEscape(p.name),
+    OG_DESC: htmlEscape(String(p.desc||'').replace(/<[^>]+>/g,'').slice(0,200) || safeConfig.shopName),
+    OG_IMAGE: htmlEscape(absUrl(ogImage, PUBLIC_BASE)),
+    OG_URL: htmlEscape(PUBLIC_BASE + '/product/'+p.id),
+    OG_PRICE: htmlEscape(p.price || ''),
+    HERO_IMAGE: htmlEscape(localImg(p.image) || '/assets/product-placeholder.svg'),
+    PRODUCT_JSON: jsonForScript(localizeProduct(p)),
+    PRODUCTS_JSON: jsonForScript(localizeProducts(list)),
+    CONFIG_JSON: jsonForScript(safeConfig)
+  });
+  return html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
+}
+
+// 开机预热页面缓存：让「服务刚醒来的第一个访客」也不用等渲染（Render 免费实例冷启动后尤其关键）
+async function warmHtmlCache(){
+  if(process.env.NO_PREWARM) return;
+  try{
+    const t0 = Date.now();
+    await renderPageCached('home', buildHomeHtml);
+    const list = await getProducts();
+    const cfgNow = await getConfig();
+    const hiddenCats = Array.isArray(cfgNow.hiddenCategories)?cfgNow.hiddenCategories:[];
+    const ids = list.filter(p=>!p.hidden && !(p.category && hiddenCats.includes(p.category))).map(p=>p.id);
+    let n = 0;
+    for(const id of ids){
+      try{ await renderPageCached('product:'+id, ()=>buildProductHtml(id)); n++; }catch(e){}
+      await new Promise(r=>setTimeout(r,0));
+    }
+    console.log('[html prewarm] 已预热首页 +', n, '个详情页，共', htmlCache.size, '页，用时', Date.now()-t0, 'ms');
+  }catch(e){ console.error('[html prewarm]', e.message); }
+}
 
 // ---------- 图片加速（本域代理 + 进程内缓存 + 长缓存头） ----------
 // 根因：Supabase Storage 的 public 对象返回 Cache-Control: no-cache，浏览器/微信每次都要回源，
@@ -1008,7 +1139,7 @@ const server = http.createServer(async (req, res)=>{
       // 客户确认已发送付款截图
       const mPaid = pathname.match(/^\/api\/orders\/([\w-]+)\/paid$/);
       if(method==='POST' && mPaid){
-        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
+        await refreshOrderOne(mPaid[1]); // 只复核这一笔（全量聚合在千单时要 1.5s+）
         const o = orders.find(o=>o.id===mPaid[1]);
         if(!o){ res.writeHead(404); res.end('no'); return; }
         if(o.status==='待付款'){ o.status='待确认'; o.paidScreenshotAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o); }
@@ -1017,7 +1148,7 @@ const server = http.createServer(async (req, res)=>{
       // 确认收款
       const mConfirm = pathname.match(/^\/api\/orders\/([\w-]+)\/confirm$/);
       if(method==='POST' && mConfirm){
-        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
+        await refreshOrderOne(mConfirm[1]); // 只复核这一笔
         const o = orders.find(o=>o.id===mConfirm[1]);
         if(!o){ res.writeHead(404); res.end('no'); return; }
         if(o.status==='待付款' || o.status==='待确认'){
@@ -1030,7 +1161,7 @@ const server = http.createServer(async (req, res)=>{
       // 发货
       const mShip = pathname.match(/^\/api\/orders\/([\w-]+)\/ship$/);
       if(method==='POST' && mShip){
-        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
+        await refreshOrderOne(mShip[1]); // 只复核这一笔
         const o = orders.find(o=>o.id===mShip[1]);
         if(!o){ res.writeHead(404); res.end('no'); return; }
         let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
@@ -1113,7 +1244,7 @@ const server = http.createServer(async (req, res)=>{
       // 取消订单（允许待付款 / 待确认 状态，含商家端「未收到该款项」）
       const mCancel = pathname.match(/^\/api\/orders\/([\w-]+)\/cancel$/);
       if(method==='POST' && mCancel){
-        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
+        await refreshOrderOne(mCancel[1]); // 只复核这一笔
         const o = orders.find(o=>o.id===mCancel[1]);
         if(!o){ res.writeHead(404); res.end(JSON.stringify({error:'no'})); return; }
         if(o.status!=='待付款' && o.status!=='待确认'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_pending_or_confirm_can_cancel'})); return; }
@@ -1218,7 +1349,7 @@ const server = http.createServer(async (req, res)=>{
       // ---------- 修改订单商品（删除某几项 / 换货补货追加）：重算 total，被删商品恢复库存 ----------
       const mUpdateItems = pathname.match(/^\/api\/orders\/([\w-]+)\/update-items$/);
       if(method==='POST' && mUpdateItems){
-        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本覆盖
+        await refreshOrderOne(mUpdateItems[1]); // 只复核这一笔
         const o = orders.find(o=>o.id===mUpdateItems[1]);
         if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
         // 仅未发货订单可改商品（已发货/已取消不可直接改）
@@ -1268,7 +1399,7 @@ const server = http.createServer(async (req, res)=>{
       // ---------- 修改订单联系信息 / 备注（微信号、备注等） ----------
       const mContact = pathname.match(/^\/api\/orders\/([\w-]+)\/contact$/);
       if(method==='POST' && mContact){
-        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本覆盖
+        await refreshOrderOne(mContact[1]); // 只复核这一笔
         const o = orders.find(o=>o.id===mContact[1]);
         if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
         let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
@@ -1695,56 +1826,18 @@ const server = http.createServer(async (req, res)=>{
 
     // ===== 页面 =====
     if((method==='GET'||method==='HEAD') && (pathname==='/' || pathname==='')){
-      const cached = getCachedHtml('home');
-      if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':cached); return; }
-      const list = await getProducts();
-      const ogImage = pickShopShareImage(list);
-      const safeConfig = { ...DEFAULT_CONFIG, ...cfgSafe(await getConfig()) };
-      let html = renderTemplate('home.html', {
-        SHOP_NAME: htmlEscape(safeConfig.shopName),
-        OG_TITLE: htmlEscape(safeConfig.shopName),
-        OG_DESC: htmlEscape(safeConfig.announcement || '不初限时狂欢商城 · 全场超低价回馈老客户'),
-        OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
-        OG_URL: htmlEscape(BASE + '/'),
-        PRODUCTS_JSON: jsonForScript(localizeProducts(list)),
-        CONFIG_JSON: jsonForScript(safeConfig)
-      });
-      html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
-      setCachedHtml('home', html);
+      const html = await renderPageCached('home', buildHomeHtml);
+      if(!html || html===PAGE_MISSING){ res.writeHead(503,{'Content-Type':'text/html; charset=utf-8'}); res.end('页面生成中，请稍后重试'); return; }
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;
     }
 
       const mProd = pathname.match(/^\/product\/([\w-]+)$/);
       if((method==='GET'||method==='HEAD') && mProd){
-        const pkey = 'product:'+mProd[1];
-        const cached = getCachedHtml(pkey);
-        if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':cached); return; }
-        const list = await getProducts();
-        const p = list.find(p=>p.id===mProd[1]);
-        if(!p){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
-        // 隐藏产品或被隐藏分类下的产品：买家端详情页直接返回不存在
-        const cfgNow = await getConfig();
-        const hiddenCats = Array.isArray(cfgNow.hiddenCategories)?cfgNow.hiddenCategories:[];
-        if(p.hidden || (p.category && hiddenCats.includes(p.category))){
-          res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return;
-        }
-        const ogImage = inferShareImage(p) || pickShopShareImage(list);
-        const safeConfig = { ...DEFAULT_CONFIG, ...cfgSafe(cfgNow) };
-        let html = renderTemplate('product.html', {
-          SHOP_NAME: htmlEscape(safeConfig.shopName),
-          OG_TITLE: htmlEscape(p.name),
-          OG_DESC: htmlEscape(String(p.desc||'').replace(/<[^>]+>/g,'').slice(0,200) || safeConfig.shopName),
-          OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
-          OG_URL: htmlEscape(BASE + '/product/'+p.id),
-          OG_PRICE: htmlEscape(p.price || ''),
-          HERO_IMAGE: htmlEscape(localImg(p.image) || '/assets/product-placeholder.svg'),
-          PRODUCT_JSON: jsonForScript(localizeProduct(p)),
-          PRODUCTS_JSON: jsonForScript(localizeProducts(list)),
-          CONFIG_JSON: jsonForScript(safeConfig)
-        });
-      html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
-      setCachedHtml(pkey, html);
-      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;
+        const pid = mProd[1];
+        const html = await renderPageCached('product:'+pid, ()=>buildProductHtml(pid));
+        if(html === PAGE_MISSING){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
+        if(!html){ res.writeHead(503,{'Content-Type':'text/html; charset=utf-8'}); res.end('页面生成中，请稍后重试'); return; }
+        res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;
     }
 
     const mOrder = pathname.match(/^\/order\/([\w-]+)$/);
@@ -1836,6 +1929,8 @@ const server = http.createServer(async (req, res)=>{
       exec('cmd /c start "" "http://localhost:'+PORT+'/"');
     }
   });
-  ensureBoot().catch(e=>console.error('[Boot Error]', e));
+  ensureBoot()
+    .then(()=>warmHtmlCache())                       // 先把首页/详情页渲染好，第一个访客也不用等
+    .catch(e=>console.error('[Boot Error]', e));
   setTimeout(()=>prewarmImages(), 3000);
 })();

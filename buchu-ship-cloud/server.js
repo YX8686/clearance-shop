@@ -5,6 +5,10 @@ const fs = require('fs');
 const path = require('path');
 const ROOT = __dirname;
 
+// ★ 版本号：每次改完代码必须 +1。页头会显示这个版本，用来一眼确认「桌面打开的是不是最新版」。
+// （以前没有版本号，导致「更新了代码但服务没重启 → 桌面看到的还是旧版」无法自查）
+const SHIP_BUILD = 'v5-2026-09-18-0340-整组回填+批量采集';
+
 /* ---------- 读 .env.local（让本地启动也能连云端） ---------- */
 function loadEnvLocal(){
   try{
@@ -282,6 +286,8 @@ const server=http.createServer(async (req,res)=>{
     // 静态首页
     if(p==='/' || p==='/index.html'){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'}); res.end(fs.readFileSync(path.join(ROOT,'public','index.html'))); return; }
     /* /shipper 发货员视图已移除（2026-08-31）：全部在店主端 index.html 完成 */
+    // 版本号（页头显示 + 自检用）：确认桌面打开的是不是最新代码
+    if(p==='/api/build'){ return send(res,200,{ok:true,v:SHIP_BUILD}); }
     // 公共静态文件（如 SheetJS xlsx.full.min.js）— 只允许 public/ 目录内的白名单文件名，防目录遍历
     const SAFE_STATIC=new Set(['xlsx.full.min.js']);
     if(SAFE_STATIC.has(path.basename(p))){
@@ -408,24 +414,72 @@ const server=http.createServer(async (req,res)=>{
       return send(res,200,{ok:true, pending:await loadPendingTracking()});
     }
     // 店主点「确认一键采集」：暂存的单号真正回填（商城单写回商家后台 order:<id>，手工单标记到 manual_session）
+    // ★ 性能加固（2026-09-18）：旧版逐单串行 = 每单 3 次云端往返，250 单要 3 分钟以上、直接超时。
+    //   现改为「分批批量读 + 分批批量 upsert + 每个 session 只写一次」，250 单几秒完成。
     if(p==='/api/confirm-tracking' && req.method==='POST'){
       const pending=await loadPendingTracking();
       if(!pending.length) return send(res,400,{ok:false,message:'没有待确认的回传'});
+      const t0=Date.now();
+      const BATCH=100;
       let ok=0, wb=0;
-      for(const m of pending){
-        try{
-          if(m.kind==='mall' && m.srcId){
-            if(await writebackMallExportTracking(m.srcId, m.tracking)) wb++;
-            if(m.sessionId) await updateMallSession(m.sessionId, s=>{ const o=(s.orders||[]).find(x=>x.id===m.srcId); if(o){ o.tracking=m.tracking; o.shippedAt=Date.now(); } });
-            ok++;
-          } else if(m.kind==='manual' && m.sessionId && m.orderId){
-            await updateManualSession(m.sessionId, s=>{ const o=(s.orders||[]).find(x=>x.id===m.orderId); if(o){ o.tracking=m.tracking; o.shippedAt=Date.now(); } });
-            ok++;
-          }
-        }catch(e){ console.error('[confirm]',e.message); }
+      const mallItems=pending.filter(m=>m.kind==='mall' && m.srcId);
+      const manualItems=pending.filter(m=>m.kind==='manual' && m.sessionId && m.orderId);
+
+      // ① 商城单：一次批量读回所有涉及订单 → 改字段 → 批量 upsert
+      if(USE_SUPABASE && mallItems.length){
+        const ids=[...new Set(mallItems.map(m=>m.srcId))];
+        const byId=new Map();
+        for(let i=0;i<ids.length;i+=BATCH){
+          const keys=ids.slice(i,i+BATCH).map(id=>'order:'+id);
+          const {data,error}=await sb.from('shop_data').select('key,value').in('key',keys);
+          if(error) console.error('[confirm] 批量读失败:',error.message);
+          (data||[]).forEach(r=>byId.set(String(r.key).replace(/^order:/,''), r.value));
+        }
+        const rows=[];
+        for(const m of mallItems){
+          const o=byId.get(m.srcId);
+          if(!o){ continue; }
+          o.tracking=m.tracking; o.status='已发货'; o.shippedAt=Date.now();
+          rows.push({key:'order:'+m.srcId, value:o});
+        }
+        for(let i=0;i<rows.length;i+=BATCH){
+          const {error}=await sb.from('shop_data').upsert(rows.slice(i,i+BATCH));
+          if(error){ console.error('[confirm] 批量写失败:',error.message); continue; }
+          wb+=rows.slice(i,i+BATCH).length;
+        }
+        ok+=wb;
       }
+
+      // ② mall_sessions：按 session 聚合，每个 session 只读改写一次
+      try{
+        const bySess={};
+        mallItems.forEach(m=>{ if(m.sessionId){ (bySess[m.sessionId]=bySess[m.sessionId]||[]).push(m); } });
+        if(Object.keys(bySess).length){
+          const sessions=await loadMallSessions();
+          let changed=false;
+          sessions.forEach(s=>{
+            const list=bySess[s.sessionId]; if(!list) return;
+            list.forEach(m=>{ const o=(s.orders||[]).find(x=>x.id===m.srcId); if(o){ o.tracking=m.tracking; o.shippedAt=Date.now(); changed=true; } });
+          });
+          if(changed) await saveKV(MALL_SESSIONS, sessions);
+        }
+        // ③ 手工单：同样按 session 聚合
+        const byMS={};
+        manualItems.forEach(m=>{ (byMS[m.sessionId]=byMS[m.sessionId]||[]).push(m); });
+        if(Object.keys(byMS).length){
+          const ms=await loadManualSessions();
+          let changed=false;
+          ms.forEach(s=>{
+            const list=byMS[s.sessionId]; if(!list) return;
+            list.forEach(m=>{ const o=(s.orders||[]).find(x=>x.id===m.orderId); if(o){ o.tracking=m.tracking; o.shippedAt=Date.now(); changed=true; } });
+          });
+          if(changed) await saveKV(MANUAL_SESSIONS, ms);
+        }
+        ok+=manualItems.length;
+      }catch(e){ console.error('[confirm] session 更新失败:',e.message); }
+
       await savePendingTracking([]);
-      return send(res,200,{ok:true, ok, writeback:wb});
+      return send(res,200,{ok:true, ok, writeback:wb, ms:Date.now()-t0});
     }
 
     /* ============ 手工单：录单暂存（不直接入 ship_orders） ============ */
