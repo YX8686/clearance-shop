@@ -1590,12 +1590,14 @@ function shipSheetRows(list){
   const groupArr=Object.values(groups).map(g=>g.slice().sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)));
   groupArr.forEach((group,idx)=>{
     const first=group[0];
-    rows.push({t:`【第 ${idx+1} 单】${group.length>1?`（合并 ${group.length} 笔 · ${first.name||''}）`:`　订单号：${first.id||''}`}`, b:true});
+    const codes=[...new Set(group.map(o=>o.shipCode).filter(Boolean))];
+    const codeTxt=codes.length?`　【编号 ${codes.join('/')}】`:'';
+    rows.push({t:`【第 ${idx+1} 单】${group.length>1?`（合并 ${group.length} 笔 · ${first.name||''}）`:`订单号：${first.id||''}`}${codeTxt}`, b:true});
     rows.push({t:`${first.name||''} ${first.phone||''}`.replace(/\s+/g,' ').trim()});
     rows.push({t:first.address||''});
     rows.push({t:''});
     group.forEach((o,gi)=>{
-      if(group.length>1) rows.push({t:`— 第 ${gi+1} 笔 · 下单 ${fmtTime(o.createdAt)}（${o.id||''}）—`, sz:20, color:'777777', indent:1});
+      if(group.length>1) rows.push({t:`— 第 ${gi+1} 笔 · 下单 ${fmtTime(o.createdAt)}（${o.id||''}${o.shipCode?' · 编号 '+o.shipCode:''}）—`, sz:20, color:'777777', indent:1});
       const lines=[];
       (o.items||[]).forEach(i=>{
         if(i.isManualAdd){

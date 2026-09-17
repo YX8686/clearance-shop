@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix24-2026-09-17-1751-ship-code-export';
+const ADMIN_BUILD = 'fix25-2026-09-17-2305-shipcode-in-sheet-and-img-proxy';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -771,6 +771,58 @@ function getCachedHtml(key){
 }
 function setCachedHtml(key, html){ htmlCache.set(key, { html, ts: Date.now() }); }
 function clearHtmlCache(){ htmlCache.clear(); productReadCache = { ts: 0, value: products, promise: null, failed: false }; }
+
+// ---------- 图片加速（本域代理 + 进程内缓存 + 长缓存头） ----------
+// 根因：Supabase Storage 的 public 对象返回 Cache-Control: no-cache，浏览器/微信每次都要回源，
+// 手机上单张主图要等 3~5 秒。这里统一走 /img/ 代理，并在本地缓存字节 + 下发 7 天强缓存，
+// 同一张图第二次起（含微信内置浏览器、其他买家）直接命中，不再回源。
+const imgCache = new Map(); // key -> { buf, type }
+const IMG_CACHE_MAX = 300;
+function localImg(u){
+  if(!u) return u;
+  const m = String(u).match(/\/storage\/v1\/object\/public\/(.+)$/);
+  return m ? '/img/' + m[1] : u;
+}
+function localizeProduct(p){
+  if(!p || typeof p!=='object') return p;
+  const c = Object.assign({}, p);
+  if(c.image) c.image = localImg(c.image);
+  if(Array.isArray(c.images)) c.images = c.images.map(localImg);
+  if(Array.isArray(c.detailImages)) c.detailImages = c.detailImages.map(localImg);
+  if(Array.isArray(c.skus)) c.skus = c.skus.map(s=> (s&&typeof s==='object') ? Object.assign({}, s, { image: localImg(s.image) }) : s);
+  if(Array.isArray(c.bundleItems)) c.bundleItems = c.bundleItems.map(b=> (b&&typeof b==='object') ? Object.assign({}, b, { image: localImg(b.image) }) : b);
+  return c;
+}
+function localizeProducts(list){ return (list||[]).map(localizeProduct); }
+// 开机预热：把全部产品图片预先拉进内存缓存（不阻塞服务启动），
+// 这样任何买家/发货员第一次打开详情页也直接命中，不用等 Supabase 回源。
+async function prewarmImages(){
+  if(!process.env.SUPABASE_URL) return;
+  try{
+    const list = await getProducts();
+    let n = 0;
+    for(const p of list){
+      const urls = [p.image, ...(p.images||[]), ...(p.detailImages||[]),
+        ...(p.skus||[]).map(s=> s&&s.image), ...(p.bundleItems||[]).map(b=> b&&b.image)].filter(Boolean);
+      for(const u of urls){
+        const m = String(u).match(/\/storage\/v1\/object\/public\/(.+)$/);
+        if(!m) continue;
+        const key = m[1];
+        if(imgCache.has(key)) continue;
+        try{
+          const r = await fetch(process.env.SUPABASE_URL + '/storage/v1/object/public/' + key);
+          if(r.ok){
+            const buf = Buffer.from(await r.arrayBuffer());
+            if(imgCache.size >= IMG_CACHE_MAX) imgCache.delete(imgCache.keys().next().value);
+            imgCache.set(key, { buf, type: r.headers.get('content-type') || 'image/jpeg' });
+            n++;
+          }
+        }catch(e){}
+      }
+    }
+    console.log('[img prewarm] 已预热缓存', n, '张图片，共', imgCache.size, '张');
+  }catch(e){ console.error('[img prewarm]', e.message); }
+}
 
 // ---------- 路由 ----------
 const server = http.createServer(async (req, res)=>{
@@ -1627,7 +1679,7 @@ const server = http.createServer(async (req, res)=>{
         OG_DESC: htmlEscape(safeConfig.announcement || '不初限时狂欢商城 · 全场超低价回馈老客户'),
         OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
         OG_URL: htmlEscape(BASE + '/'),
-        PRODUCTS_JSON: jsonForScript(list),
+        PRODUCTS_JSON: jsonForScript(localizeProducts(list)),
         CONFIG_JSON: jsonForScript(safeConfig)
       });
       html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
@@ -1658,8 +1710,9 @@ const server = http.createServer(async (req, res)=>{
           OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
           OG_URL: htmlEscape(BASE + '/product/'+p.id),
           OG_PRICE: htmlEscape(p.price || ''),
-          PRODUCT_JSON: jsonForScript(p),
-          PRODUCTS_JSON: jsonForScript(list),
+          HERO_IMAGE: htmlEscape(localImg(p.image) || '/assets/product-placeholder.svg'),
+          PRODUCT_JSON: jsonForScript(localizeProduct(p)),
+          PRODUCTS_JSON: jsonForScript(localizeProducts(list)),
           CONFIG_JSON: jsonForScript(safeConfig)
         });
       html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
@@ -1692,6 +1745,34 @@ const server = http.createServer(async (req, res)=>{
     if(method==='GET' && pathname==='/business_rules.js'){ sendFile(res, path.join(PUBLIC,'business_rules.js')); return; }
     if(method==='GET' && pathname==='/xlsx.full.min.js'){ sendFile(res, path.join(PUBLIC,'xlsx.full.min.js')); return; }
 
+    // 图片加速代理：/img/shop/gallery/xxx.jpg → Supabase Storage，进程内缓存 + 7 天强缓存
+    const mImg = pathname.match(/^\/img\/(.+)$/);
+    if((method==='GET'||method==='HEAD') && mImg){
+      const key = mImg[1];
+      if(key.includes('..') || !/^shop\//.test(key)){ res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'}); res.end('not found'); return; }
+      const hit = imgCache.get(key);
+      if(hit){
+        res.writeHead(200,{'Content-Type':hit.type,'Content-Length':hit.buf.length,'Cache-Control':'public, max-age=604800, immutable'});
+        res.end(method==='HEAD' ? undefined : hit.buf); return;
+      }
+      if(!process.env.SUPABASE_URL){ res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'}); res.end('no storage'); return; }
+      try{
+        const ctl = new AbortController(); const tm = setTimeout(()=>ctl.abort(), 20000);
+        const r = await fetch(process.env.SUPABASE_URL + '/storage/v1/object/public/' + key, { signal: ctl.signal });
+        clearTimeout(tm);
+        if(!r.ok){ res.writeHead(r.status===404?404:502,{'Content-Type':'text/plain; charset=utf-8'}); res.end('img fetch failed: '+r.status); return; }
+        const buf = Buffer.from(await r.arrayBuffer());
+        const type = r.headers.get('content-type') || 'image/jpeg';
+        if(imgCache.size >= IMG_CACHE_MAX) imgCache.delete(imgCache.keys().next().value);
+        imgCache.set(key, { buf, type });
+        res.writeHead(200,{'Content-Type':type,'Content-Length':buf.length,'Cache-Control':'public, max-age=604800, immutable'});
+        res.end(method==='HEAD' ? undefined : buf); return;
+      }catch(e){
+        console.error('[img proxy]', key, e.message);
+        res.writeHead(502,{'Content-Type':'text/plain; charset=utf-8'}); res.end('img error'); return;
+      }
+    }
+
     if(method==='GET' && pathname.startsWith('/assets/')){
       const rel = path.normalize(pathname.slice(1));
       const full = path.join(PUBLIC, rel);
@@ -1718,4 +1799,5 @@ const server = http.createServer(async (req, res)=>{
     }
   });
   ensureBoot().catch(e=>console.error('[Boot Error]', e));
+  setTimeout(()=>prewarmImages(), 3000);
 })();
