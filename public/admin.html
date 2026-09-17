@@ -1206,15 +1206,13 @@ function renderReturnZone(){
   });
 }
 // 获取订单项对应的 bundleItems（发货明细）：优先用订单自带，其次按产品/SKU 反查
-// 渲染订单卡片的「微信号」行：有就显示；没有则提供输入框让商家手动填写
+// 渲染订单卡片的「微信号」行：始终提供输入框，可随时手动填写或修改
 function wechatHtml(o, ids){
   const id=ids[0];
-  if(o.wechat && String(o.wechat).trim()){
-    return `<b style="color:#b8743f">${escapeHtml(String(o.wechat).trim())}</b>`;
-  }
-  return `<span style="color:#c0392b">（买家未填写）</span>
-          <input id="wechat-${id}" placeholder="手动填写微信号" style="margin-left:6px;padding:4px 8px;border:1px solid #e0d6c8;border-radius:6px;font-size:13px;width:120px;vertical-align:middle">
-          <button type="button" onclick="saveWechat(['${ids.join("','")}'])" style="margin-left:4px;padding:4px 10px;border:1px solid #b8743f;background:#fff;color:#b8743f;border-radius:6px;font-size:12px;cursor:pointer;vertical-align:middle">保存</button>`;
+  const cur=(o.wechat && String(o.wechat).trim()) ? String(o.wechat).trim() : '';
+  const tip = cur ? '' : '<span style="color:#c0392b;margin-right:6px">（买家未填写）</span>';
+  return `${tip}<input id="wechat-${id}" value="${escapeHtml(cur)}" placeholder="手动填写微信号" style="margin-left:0;padding:4px 8px;border:1px solid #e0d6c8;border-radius:6px;font-size:13px;width:130px;vertical-align:middle">
+          <button type="button" onclick="saveWechat(['${ids.join("','")}'])" style="margin-left:4px;padding:4px 10px;border:1px solid #b8743f;background:#fff;color:#b8743f;border-radius:6px;font-size:12px;cursor:pointer;vertical-align:middle">${cur?'修改':'保存'}</button>`;
 }
 // 渲染订单卡片的「备注」行（有备注才显示）
 function noteHtml(o){
@@ -1275,7 +1273,7 @@ async function saveWechat(ids){
   const v=input.value.trim().slice(0,50);
   if(!v){ toast('请填写微信号'); return; }
   const updates=ids.map(i=>ORDERS.find(o=>o.id===i)).filter(Boolean);
-  const prevMap={}; updates.forEach(o=>{ prevMap[o.id]=JSON.parse(JSON.stringify(o)); o.wechat=v; });
+  const prevMap={}; updates.forEach(o=>{ prevMap[o.id]=JSON.parse(JSON.stringify(o)); o.wechat=v; pendingIds.add(o.id); });
   render();
   try{
     for(const o of updates){
@@ -1289,6 +1287,8 @@ async function saveWechat(ids){
     updates.forEach(o=>{ const idx=ORDERS.findIndex(x=>x.id===o.id); if(idx>=0) ORDERS[idx]=prevMap[o.id]; });
     render();
     toast('微信号保存失败：'+e.message);
+  }finally{
+    setTimeout(()=>{ updates.forEach(o=>pendingIds.delete(o.id)); }, 2000);
   }
 }
 
@@ -1310,16 +1310,20 @@ window.__saveNote=async(id)=>{
   const o=ORDERS.find(x=>x.id===id); if(!o) return;
   const note=String(document.getElementById('noteText').value||'').trim().slice(0,500);
   const prev=JSON.parse(JSON.stringify(o));
+  pendingIds.add(id);   // ★关键保护：15s 轮询在飞行途中会把刚保存的备注冲掉（原缺此保护）
   o.note=note; render();
   try{
     const r=await fetch('/api/orders/'+id+'/contact',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note})});
     const d=await r.json().catch(()=>({}));
-    if(!r.ok) throw new Error(d.error||'保存失败');
+    if(!r.ok) throw new Error(d.message||d.error||'保存失败');
     if(d.order){ const idx=ORDERS.findIndex(x=>x.id===id); if(idx>=0) ORDERS[idx]=d.order; }
+    render();
     closeModal(); toast('备注已保存');
   }catch(e){
     Object.assign(o,prev); render();
     toast('备注保存失败：'+e.message);
+  }finally{
+    setTimeout(()=>{ pendingIds.delete(id); }, 2000);  // 云端确认后再等一小会儿才放开，避免竞态
   }
 };
 
