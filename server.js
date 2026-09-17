@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix34-2026-09-18-0500-page-cache-by-data-fingerprint';
+const ADMIN_BUILD = 'fix35-2026-09-18-0530-page-cache-fingerprint-inmemory';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -827,10 +827,12 @@ const PAGE_MISSING = '\u0001__page_missing__';  // 详情页不存在/已隐藏�
 //    本机改完产品，云端那个进程根本不知道数据变了 → 买家端会一直看到旧页面。
 //    曾经写成「60 秒 TTL + stale-while-revalidate」，而且回写条件写成 `!htmlCache.has(key)`，
 //    导致后台刷新出来的新页面被直接丢弃 → **买家端彻底不再更新**（这是 2026-09-18 的真实故障）。
-// ③ 正确做法：**缓存是否有效由「数据指纹」决定，而不是时间**
-//    · 指纹没变 → 直接命中（最多 10 分钟兜底刷一次）
+// ③ 正确做法：**缓存是否有效由「数据指纹」决定，而不是时间**；而且指纹必须**纯内存算**
+//    · 指纹没变 → 直接命中（零网络等待；最多 10 分钟兜底后台刷一次）
 //    · 指纹变了 → 立刻返回旧页面（访客不用等），同时后台只刷新一次，几秒后全站就都是新的
 //    · 完全没有旧页面 → 并发请求共享同一份在途渲染
+//    ⚠️ 指纹里**绝对不能 await 读 Supabase**：那样每个请求都要多等一次网络往返（本机 1~4 秒），
+//       页面缓存就白做了。内存快照由 refreshSnapshotInBackground() 在后台保持新鲜。
 function peekHtml(key, maxAge){
   const c = htmlCache.get(key);
   return (c && Date.now() - c.ts < maxAge) ? c.html : null;
@@ -839,37 +841,48 @@ function getCachedHtml(key){ return peekHtml(key, HTML_REFRESH_MAX); }
 function setCachedHtml(key, html){ if(html) htmlCache.set(key, { html, ts: Date.now(), fp: '' }); }
 function clearHtmlCache(){
   htmlGen++;
-  for(const v of htmlCache.values()) v.fp = '';   // 旧页面留着兜底，只把指纹作废 → 下次访问后台刷新（访客不用等渲染）
-  fpCache.ts = 0;
+  // 不直接删掉旧页面：只把「指纹」作废 → 访客立刻拿到旧页面、后台再刷新，任何访客都不用等渲染。
+  for(const v of htmlCache.values()) v.fp = '';
   productReadCache = { ts: 0, value: products, promise: null, failed: false };
 }
 
-// 数据指纹：把「所有会影响买家页面的数据」压成一个短字符串。
-// 每 3 秒最多算一次（与 getProducts/getConfig 的回源节流对齐）+ 单飞，开销可忽略。
-let fpCache = { ts: 0, val: '', promise: null };
-const FP_TTL_MS = 3000;
-async function dataFingerprint(){
-  if(fpCache.ts && Date.now() - fpCache.ts < FP_TTL_MS) return fpCache.val;
-  if(fpCache.promise) return fpCache.promise;
-  const p = (async()=>{
-    try{
-      const list = await getProducts();
-      const cfg  = cfgSafe(await getConfig());
-      const src  = JSON.stringify(list) + '\u0000' + JSON.stringify(cfg);
-      let h = 2166136261;
-      for(let i=0;i<src.length;i++){ h ^= src.charCodeAt(i); h = Math.imul(h, 16777619); }
-      fpCache = { ts: Date.now(), val: (h>>>0).toString(36) + ':' + src.length, promise: null };
-    }catch(e){
-      fpCache = { ts: Date.now(), val: fpCache.val, promise: null };  // 读失败就沿用旧指纹，继续用旧页面兜底
-    }
-    return fpCache.val;
-  })();
-  fpCache.promise = p;
-  try{ return await p; } finally { fpCache.promise = null; }
+// ★★ 数据指纹：**纯内存计算，绝不允许在这里 await 读网络** ★★
+// 为什么强调：这里每个页面请求都会走一次。一旦写成 `await getProducts()`，
+// 每个「距上次校验超过节流窗口」的请求都要多等一次 Supabase 往返（本机 1~4 秒），
+// 页面缓存等于白做。所以指纹只读**内存快照**：
+//   · products 的权威快照 = productReadCache.value（getProducts 每 3 秒回源更新一次）
+//   · config 由 getConfig() 原地 Object.assign 更新
+// 内存快照靠 refreshSnapshotInBackground() 在后台保持新鲜（不阻塞任何请求）。
+function computeFingerprint(){
+  let h = 2166136261;
+  const mix = s => { s = String(s == null ? '' : s); for(let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } };
+  try{
+    const list = (productReadCache.value && productReadCache.value.length) ? productReadCache.value : products;
+    mix(JSON.stringify(list));
+    mix(JSON.stringify(cfgSafe(config)));
+  }catch(e){}
+  return (h >>> 0).toString(36);
 }
 
+// 后台把内存快照刷新到最新：请求触发 + 3 秒节流 + 单飞，**不阻塞当前请求**。
+let snapAt = 0, snapping = null;
+const SNAP_TTL_MS = 3000;
+function refreshSnapshotInBackground(){
+  if(snapping) return;
+  if(Date.now() - snapAt < SNAP_TTL_MS) return;
+  snapAt = Date.now();
+  snapping = (async()=>{
+    try{ await getProducts(); await getConfig(); }catch(e){}
+    finally{ snapping = null; }
+  })();
+}
+// 没人访问时也让快照保持新鲜（每 2.5 秒一次）——这决定了「后台改完 → 买家端自动变新」的时延：
+// 约 2.5 秒（发现变化）+ 一次渲染（本机约 1~3 秒）= 通常 4~6 秒。
+if(USE_SUPABASE) setInterval(()=>{ refreshSnapshotInBackground(); }, 2500);
+
 async function renderPageCached(key, build){
-  const fp  = await dataFingerprint();
+  refreshSnapshotInBackground();     // 只让后台去回源，绝不让访客等
+  const fp  = computeFingerprint();  // 纯内存，微秒级
   const cur = htmlCache.get(key);
   // ① 数据没变（且未超过 10 分钟兜底窗口）→ 直接命中
   if(cur && cur.fp && cur.fp === fp && Date.now() - cur.ts < HTML_REFRESH_MAX) return cur.html;
