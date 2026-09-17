@@ -48,6 +48,12 @@ def start_service():
     # 把 Python 侧选定的端口传给 node，确保 server.js 实际监听一致端口
     env = os.environ.copy()
     env['PORT'] = str(PORT)
+    # 2026-09-18：本地 Clash/TUN 环境复杂，关闭开机预热避免启动后请求卡死；
+    # 同时让 Node 能读系统代理，直连失败时自动走 Clash。
+    env['NO_PREWARM'] = '1'
+    env['NODE_USE_ENV_PROXY'] = '1'
+    env['HTTP_PROXY'] = 'http://127.0.0.1:7897'
+    env['HTTPS_PROXY'] = 'http://127.0.0.1:7897'
 
     # 只在失败时输出；成功时保持静默，避免闪屏
     # CREATE_NO_WINDOW = 0x08000000，避免显示黑框

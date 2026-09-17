@@ -972,8 +972,18 @@ function initNotify(){
   let txt=null;
   if(manual>=0 && manual<phrases.length) txt=phrases[manual];
   else{
+    // 滚动条时间基线：优先用 activityStart；若缺失/无效，则从 waveEndsAt - waveDur 反推当前波次开始时间
+    let base = NaN;
     const st=(CONFIG&&CONFIG.activityStart)||'';
-    let base = st ? new Date(st).getTime() : NaN;
+    if(st){ base=new Date(st).getTime(); if(isNaN(base)) base=NaN; }
+    if(isNaN(base)){
+      const endsAt=(CONFIG&&CONFIG.waveEndsAt)?Number(CONFIG.waveEndsAt):NaN;
+      const durStr=(CONFIG&&CONFIG.waveDur)||'';
+      const durH=parseInt(durStr,10);
+      if(Number.isFinite(endsAt) && Number.isFinite(durH) && durH>0){
+        base = endsAt - Math.round(durH*3600*1000);
+      }
+    }
     if(isNaN(base)){ const d=new Date(); d.setHours(0,0,0,0); base=d.getTime(); }
     const segH=(CONFIG&&typeof CONFIG.countdownSegmentHours==='number'&&CONFIG.countdownSegmentHours>0)?CONFIG.countdownSegmentHours:12;
     let elapsed=Date.now()-base; if(elapsed<0) elapsed=0;

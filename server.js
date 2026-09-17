@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix37-2026-09-18-0600-config-dirty-guard';
+const ADMIN_BUILD = 'fix38-2026-09-18-0603-wave-notify-stale-fix';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -510,6 +510,8 @@ async function flushDirtyProducts(){
     await withLock(()=> writeJsonAtomic('products.json', products)).catch(err=>console.error('[local backup] 失败:', err.message));
     throw new Error('云端保存失败（' + failed.join(', ') + '），已写本地备份，请检查网络后重试');
   }
+  // ⚠️ 写入成功后必须让 productReadCache 立即看到最新内存，否则切波/保存后买家端可能还在用旧隐藏状态。
+  productReadCache = { ts: Date.now(), value: products.slice(), promise: null, failed: false };
 }
 async function saveProductOrder(){
   if(!USE_SUPABASE) return;
@@ -585,7 +587,7 @@ async function getProducts(){
   if(productReadCache.ts > 0 && productReadCache.value && now - productReadCache.ts < PRODUCT_READ_TTL_MS && !productReadCache.failed) return productReadCache.value;
   const promise = (async()=>{
     try{
-      const list = await loadProductsFromRows(products);
+      const list = await withRetry(()=>loadProductsFromRows(products), 'loadProducts', 2);
       productReadCache = { ts: Date.now(), value: list, promise: null, failed: false };
       return list;
     }catch(e){
@@ -1847,6 +1849,9 @@ const server = http.createServer(async (req, res)=>{
             });
             config.activeWave = wantsNone ? 'none' : waves.join(',');
             if(wantsNone) config.waveDur = '';
+            // 公告滚动条按「当前波次开始时间」轮播，必须与活动倒计时同步。
+            // 旧版沿用全局 activityStart（2026-09-12），导致四句话永远停在最后一句。
+            config.activityStart = new Date().toISOString();
             if(Number.isFinite(h)&&h>0){
               config.waveEndsAt = Date.now()+Math.round(h*3600*1000);
               config.activityDeadline = new Date(config.waveEndsAt).toISOString();
