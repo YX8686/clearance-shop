@@ -1081,7 +1081,7 @@ function renderMergedShip(){
     const div=document.createElement('div'); div.className='card merge-card';
     div.innerHTML=`
       <div class="h">
-        <span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span>
+        <span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}${first.shipCode?` <span class="ship-code" style="background:#b8743f;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;vertical-align:middle">编号 ${first.shipCode}</span>`:''}</span>
         <label class="allow-pull-group" onclick="event.stopPropagation()">
           <input type="checkbox" id="gap-${ids.join('-')}" ${groupChecked} ${groupIndeterminate?'data-indeterminate="1"':''} onchange="toggleAllowPullGroup(['${ids.join("','")}'], this.checked)"> 允许发货管家采集
         </label>
@@ -1092,7 +1092,7 @@ function renderMergedShip(){
       <div class="line"><span class="k">地址</span>${first.address}</div>
       ${orderBlocks}
       ${noteHtml(first)}
-      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-ship" onclick="shipGroup(['${ids.join("','")}'])">填写单号发货</button> ${swapBtnHtml(first.id)}<button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-copy" style="background:#fff8dc;color:#a05200;border-color:#f0d060" onclick="copyShipCodeGroup(['${ids.join("','")}'])">生成编号文本</button> <button class="btn-ship" onclick="shipGroup(['${ids.join("','")}'])">填写单号发货</button> ${swapBtnHtml(first.id)}<button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
     list.appendChild(div);
   });
   // 设置 indeterminate 状态（HTML 属性不会自动反映）
@@ -1149,14 +1149,14 @@ function renderTodayShip(){
     }).join('')).join('');
     const div=document.createElement('div'); div.className='card merge-card';
     div.innerHTML=`
-      <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-ship">今日可发</span></div>
+      <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}${first.shipCode?` <span class="ship-code" style="background:#b8743f;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;vertical-align:middle">编号 ${first.shipCode}</span>`:''}</span><span class="st st-ship">今日可发</span></div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
       <div class="line"><span class="k">微信号</span>${wechatHtml(first,ids)}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       <div class="items">${itemsHtml}</div>
       ${noteHtml(first)}
-      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-copy" style="background:#fff8dc;color:#a05200;border-color:#f0d060" onclick="copyShipCodeGroup(['${ids.join("','")}'])">生成编号文本</button> <button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
     list.appendChild(div);
   });
 }
@@ -1194,14 +1194,14 @@ function renderReturnZone(){
     }).join('')).join('');
     const div=document.createElement('div'); div.className='card merge-card';
     div.innerHTML=`
-      <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-ship">等待回传</span></div>
+      <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}${first.shipCode?` <span class="ship-code" style="background:#b8743f;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;vertical-align:middle">编号 ${first.shipCode}</span>`:''}</span><span class="st st-ship">等待回传</span></div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
       <div class="line"><span class="k">微信号</span>${wechatHtml(first,ids)}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       <div class="items">${itemsHtml}</div>
       ${noteHtml(first)}
-      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-copy" style="background:#fff8dc;color:#a05200;border-color:#f0d060" onclick="copyShipCodeGroup(['${ids.join("','")}'])">生成编号文本</button> <button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
     list.appendChild(div);
   });
 }
@@ -1752,6 +1752,21 @@ function copyShipGroup(ids){
   const notes=group.map(o=>o.note).filter(Boolean);
   if(notes.length) text+=`\n备注：${notes.join('；')}`;
   navigator.clipboard.writeText(text).then(()=>toast('发货文本已复制，去微信粘贴')).catch(()=>{ window.prompt('复制下面内容：',text); });
+}
+// 编号版发货文本：首行为唯一编号（A1/A2...），方便发货员只把编号贴到快递面单，明细留在手机里核对
+function copyShipCodeGroup(ids){
+  const group=ORDERS.filter(o=>ids.includes(o.id)).sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
+  const first=group[0];
+  const code=first.shipCode || '未分配编号';
+  let text=`${code}\n${first.name} ${first.phone}\n${first.address}\n\n`;
+  group.forEach(o=>{
+    o.items.forEach(i=>{
+      text+=formatShipItem(i)+'\n';
+    });
+  });
+  const notes=group.map(o=>o.note).filter(Boolean);
+  if(notes.length) text+=`\n备注：${notes.join('；')}`;
+  navigator.clipboard.writeText(text).then(()=>toast('编号发货文本已复制：'+code)).catch(()=>{ window.prompt('复制下面内容：',text); });
 }
 // 金额核对：合并填写单号前必须展示每笔子订单金额及合并合计，详见 business_rules.md §2
 // 乐观 UI：点完立即本地全部流转到已发货并跳转，逐笔后台同步；单笔失败自动回滚

@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix20-2026-09-13-2359-net-auto-proxy';
+const ADMIN_BUILD = 'fix23-2026-09-17-1615-ship-code';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -344,6 +344,14 @@ async function boot(){
   booted = true;
   console.log('[Data] 模式=' + (USE_SUPABASE ? 'Supabase云端' : '本地文件') +
     '，产品数=' + products.length + '，订单数=' + orders.length);
+  // 为历史待发货订单补发编号（异步，不阻塞启动）
+  setTimeout(()=>{
+    const need = orders.filter(o=>['待发货','今日可发','待回传'].includes(o.status) && !o.shipCode);
+    if(need.length){
+      need.forEach(o=>{ ensureShipCode(o); saveOrderRow(o); });
+      console.log('[shipCode] 已为', need.length, '笔历史待发货订单补编号');
+    }
+  }, 0);
 }
 
 // 本地模式：启动时校验数据目录是否可写（防止沙箱/权限问题导致下单失败）
@@ -419,6 +427,26 @@ async function saveOrderRowSync(order){
 process.on('beforeExit', ()=>{ _flushOrderQueue(); flushDirtyProducts().catch(()=>{}); });
 function saveOrders(){ return withLock(()=> saveKV('orders', orders)); } // 仅作整批备份残留，下单/状态变更已改用 saveOrderRow
 function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config, 2)).then(r=>{ configReadCache.ts = Date.now(); return r; }); }
+
+// ===== 发货编号：A1-A100, B1-B100, ... 顺序分配，持久化在订单上 =====
+const SHIP_CODE_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const SHIP_CODE_MAX_NUM = 100;
+function getUsedShipCodes(){ return new Set(orders.map(o=>o.shipCode).filter(Boolean)); }
+function nextShipCode(){
+  const used = getUsedShipCodes();
+  for(const letter of SHIP_CODE_LETTERS){
+    for(let n=1; n<=SHIP_CODE_MAX_NUM; n++){
+      const code = letter + n;
+      if(!used.has(code)) return code;
+    }
+  }
+  return null; // 2600 个编号用尽
+}
+function ensureShipCode(order){
+  if(!order || order.shipCode) return order && order.shipCode;
+  order.shipCode = nextShipCode();
+  return order.shipCode;
+}
 
 // ===== 产品存储加固：每个产品独立存储为 shop_data 的一行（key=product:<id>）=====
 // 旧方案：所有产品塞进 shop_data 的单行(key='products')，产品描述长、数量多后，
@@ -914,7 +942,9 @@ const server = http.createServer(async (req, res)=>{
         const o = orders.find(o=>o.id===mConfirm[1]);
         if(!o){ res.writeHead(404); res.end('no'); return; }
         if(o.status==='待付款' || o.status==='待确认'){
-          o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o);
+          o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now();
+          ensureShipCode(o); // 进入待发货时自动分配唯一编号
+          await saveOrderRowSync(o);
         }
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
@@ -1080,6 +1110,7 @@ const server = http.createServer(async (req, res)=>{
         o.status='待发货';
         o.restoredAt=Date.now();
         o.restoredCount=(o.restoredCount||0)+1;
+        ensureShipCode(o); // 恢复进入待发货时补编号
         try {
           await saveOrderRowSync(o);
         } catch(e){
@@ -1208,6 +1239,7 @@ const server = http.createServer(async (req, res)=>{
           isManual:true,
           createdAt:Date.now(), paidAt:Date.now(), confirmedAt:Date.now(), shippedAt:null
         };
+        if(order.status==='待发货' || order.status==='今日可发') ensureShipCode(order); // 手工直接进发货队列也自动编号
         saveOrderRow(order);
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, id, order})); return;
       }
