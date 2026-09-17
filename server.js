@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix35-2026-09-18-0530-page-cache-fingerprint-inmemory';
+const ADMIN_BUILD = 'fix36-2026-09-18-0545-clear-cache-on-save-and-await-render';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -817,6 +817,8 @@ const htmlInflight = new Map();  // key -> Promise<string>：同一页面同一�
 let htmlGen = 0;                 // 缓存代次：后台改数据后 +1，让"改动前发起的渲染"结果作废
 const HTML_REFRESH_MAX = 10 * 60 * 1000;      // 兜底：指纹没变也最多 10 分钟后台刷一次
 const HTML_STALE_MAX   = 6 * 60 * 60 * 1000;  // 旧页面最多留 6 小时当兜底，超了就重新渲染
+const RENDER_WAIT_MAX  = 5000;                // 数据变了时单个访客最多等渲染多久（超时先给旧页，渲染继续）
+const waitMs = ms => new Promise(r => { const t = setTimeout(r, ms); if(t && t.unref) t.unref(); });
 const PAGE_MISSING = '\u0001__page_missing__';  // 详情页不存在/已隐藏的哨兵值（也缓存，避免反复查库）
 
 // ★★★ 页面缓存铁律（2026-09-18 踩坑后重写，改这里之前请看完）★★★
@@ -841,8 +843,10 @@ function getCachedHtml(key){ return peekHtml(key, HTML_REFRESH_MAX); }
 function setCachedHtml(key, html){ if(html) htmlCache.set(key, { html, ts: Date.now(), fp: '' }); }
 function clearHtmlCache(){
   htmlGen++;
-  // 不直接删掉旧页面：只把「指纹」作废 → 访客立刻拿到旧页面、后台再刷新，任何访客都不用等渲染。
-  for(const v of htmlCache.values()) v.fp = '';
+  // 本实例刚改完数据 → **直接删掉缓存**，让下一个访客渲染出最新页面（本机约 3 秒）。
+  // ⚠️ 别改成"只把指纹置空、保留旧 HTML"：那样商家点完「应用到买家端」第一眼看到的还是旧页面，
+  //    会被当成"改了不生效 / 不稳定"（2026-09-18 真实反馈：切换波次后买家端仍显示全部产品）。
+  htmlCache.clear();
   productReadCache = { ts: 0, value: products, promise: null, failed: false };
 }
 
@@ -905,11 +909,14 @@ async function renderPageCached(key, build){
     return p;
   };
   const inflight = htmlInflight.get(key);
-  // ② 有旧页面 → 先给旧的，后台刷新（访客零等待）
-  if(cur && Date.now() - cur.ts < HTML_STALE_MAX){ if(!inflight) startRender(); return cur.html; }
-  // ③ 完全没有缓存 → 合并并发请求，只渲染一次
-  if(inflight) return inflight;
-  return startRender();
+  // ② 数据变了 / 没有缓存 → 渲染（并发合并成一份）。渲染期间最多等 RENDER_WAIT_MAX，
+  //    等不到就先给旧页面（渲染继续在后台跑，下一个访客就能拿到新页面）。
+  //    ⚠️ 这里**不能直接返回旧页面**：商家点完「应用到买家端」马上刷新时，
+  //       第一眼必须是新的 —— 否则就会被当成"改了不生效 / 不稳定"（2026-09-18 真实反馈）。
+  const p = inflight || startRender();
+  if(!cur) return p;                                   // 完全没有旧页面：必须等渲染
+  const done = await Promise.race([ p, waitMs(RENDER_WAIT_MAX).then(()=>null) ]);
+  return done || cur.html;
 }
 
 // 首页渲染（供缓存与开机预热共用）
