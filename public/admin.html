@@ -1591,8 +1591,9 @@ function shipSheetRows(list){
   groupArr.forEach((group,idx)=>{
     const first=group[0];
     const codes=[...new Set(group.map(o=>o.shipCode).filter(Boolean))];
-    const codeTxt=codes.length?`　【编号 ${codes.join('/')}】`:'';
-    rows.push({t:`【第 ${idx+1} 单】${group.length>1?`（合并 ${group.length} 笔 · ${first.name||''}）`:`订单号：${first.id||''}`}${codeTxt}`, b:true});
+    rows.push({t:`【第 ${idx+1} 单】${group.length>1?`（合并 ${group.length} 笔 · ${first.name||''}）`:`订单号：${first.id||''}`}`, b:true});
+    // 发货编号：单独一行、左对齐、大字号，位于收件人姓名上方；只显示编号本身（如 A1、A2）
+    if(codes.length) rows.push({t:codes.join('/'), big:true});
     rows.push({t:`${first.name||''} ${first.phone||''}`.replace(/\s+/g,' ').trim()});
     rows.push({t:first.address||''});
     rows.push({t:''});
@@ -1623,7 +1624,7 @@ function downloadShipSheet(ordersParam){
     {t:'不初商城 · 发货单', b:true, sz:44, align:'center'},
     {t:dateStr+'　共 '+list.length+' 单', sz:20, align:'center', color:'777777'},
     {t:'', sz:12}
-  ].concat(shipSheetRows(list).map(r=>({t:r.t, b:r.b, sz:r.b?26:(r.sz||24), indent:r.indent?360:0, color:r.color})));
+  ].concat(shipSheetRows(list).map(r=>({t:r.t, b:(r.b||r.big), sz:r.big?48:(r.b?26:(r.sz||24)), indent:r.indent?360:0, color:r.color})));
   let blob;
   try{ blob=_buildDocx(paras); }
   catch(e){ console.error('[docx]',e); toast('Word 生成失败，已自动改用图片版'); downloadShipSheetImage(list); return; }
@@ -1646,7 +1647,7 @@ function downloadShipSheetImage(ordersParam){
   const items=[
     {t:'不初商城 · 发货单', size:30, bold:true, align:'center', gap:12},
     {t:dateStr+'　共 '+list.length+' 单', size:15, align:'center', color:'#777', gap:26}
-  ].concat(shipSheetRows(list).map(r=>({t:r.t, size:r.b?18:(r.sz?14:16), bold:!!r.b, indent:r.indent?26:0, gap:r.t?4:12, color:r.color?'#'+r.color:undefined})));
+  ].concat(shipSheetRows(list).map(r=>({t:r.t, size:r.big?30:(r.b?18:(r.sz?14:16)), bold:!!(r.b||r.big), indent:r.indent?26:0, gap:r.t?4:12, color:r.color?'#'+r.color:undefined})));
   const maxW=W-PAD*2, lines=[];
   items.forEach(it=>{
     ctx.font=FONT(it.size,it.bold);
