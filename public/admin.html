@@ -2223,10 +2223,17 @@ async function handleSkuImageUpload(input, idx){
     if(!currentGalFolder) currentGalFolder='默认图库';
     const f=files[0];
     const b64=await fileToBase64(f, true);
-    const res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name})});
-    const data=await res.json();
-    if(!res.ok) throw new Error(data.error||('服务器错误 '+res.status));
-    if(data.error) throw new Error(data.error);
+    const ac=new AbortController(); const to=setTimeout(()=>ac.abort(), 60000);
+    let res, data;
+    try{
+      res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name}),signal:ac.signal});
+      const txt=await res.text();
+      try{ data=JSON.parse(txt); }catch(_){ data={error:(txt||'').slice(0,120)||('HTTP '+res.status)}; }
+    }catch(e2){
+      throw new Error(e2 && e2.name==='AbortError' ? '上传超时（服务器响应慢），请重试' : ('网络错误：'+(e2&&e2.message||e2)));
+    }finally{ clearTimeout(to); }
+    if(!res.ok) throw new Error(data.message||data.error||('服务器错误 '+res.status));
+    if(data.error) throw new Error(data.message||data.error);
     if(!data.url) throw new Error('服务器未返回图片地址');
     updateSku(idx,'image',data.url);
     renderSkuList();
@@ -2493,10 +2500,17 @@ async function uploadDescImage(file){
   if(!currentGalFolder && GALLERY.length) currentGalFolder=GALLERY[0].name;
   if(!currentGalFolder) currentGalFolder='默认图库';
   const b64=await fileToBase64(file, true);
-  const res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:file.name})});
-  const data=await res.json();
-  if(!res.ok) throw new Error(data.error||('服务器错误 '+res.status));
-  if(data.error) throw new Error(data.error);
+  const ac=new AbortController(); const to=setTimeout(()=>ac.abort(), 60000);
+  let res, data;
+  try{
+    res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:file.name}),signal:ac.signal});
+    const txt=await res.text();
+    try{ data=JSON.parse(txt); }catch(_){ data={error:(txt||'').slice(0,120)||('HTTP '+res.status)}; }
+  }catch(e2){
+    throw new Error(e2 && e2.name==='AbortError' ? '上传超时（服务器响应慢），请重试' : ('网络错误：'+(e2&&e2.message||e2)));
+  }finally{ clearTimeout(to); }
+  if(!res.ok) throw new Error(data.message||data.error||('服务器错误 '+res.status));
+  if(data.error) throw new Error(data.message||data.error);
   if(!data.url) throw new Error('服务器未返回图片地址');
   return data.url;
 }
@@ -3145,11 +3159,19 @@ async function uploadToGal(input){
   const files=Array.from(input.files); if(!files.length) return;
   if(!currentGalFolder && GALLERY.length) currentGalFolder=GALLERY[0].name;
   if(!currentGalFolder){ toast('先创建一个文件夹'); return; }
+  let ok=0, fail=0;
   for(const f of files){
     const b64=await fileToBase64(f, true);
-    await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name})});
+    const ac=new AbortController(); const to=setTimeout(()=>ac.abort(), 60000);
+    try{
+      const res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name}),signal:ac.signal});
+      const txt=await res.text(); let data={}; try{ data=JSON.parse(txt); }catch(_){}
+      if(res.ok && data.url) ok++; else fail++;
+    }catch(e){ fail++; }
+    finally{ clearTimeout(to); }
   }
-  toast('上传完成（图片已自动压缩）'); input.value=''; await refreshGallery(); renderGal();
+  toast(fail ? ('上传结束：成功 '+ok+' 张，失败 '+fail+' 张（可再试一次）') : ('上传完成 '+ok+' 张（图片已自动压缩）'));
+  input.value=''; await refreshGallery(); renderGal();
 }
 function uploadDirect(target){
   document.getElementById(target==='main'?'pMainImgFile':'pDetailImgFile').click();
@@ -3168,10 +3190,17 @@ async function handleDirectUpload(input,target){
     const urls=[];
     for(const f of files){
       const b64=await fileToBase64(f, true);
-      const res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name})});
-      const data=await res.json();
-      if(!res.ok) throw new Error(data.error||('服务器错误 '+res.status));
-      if(data.error) throw new Error(data.error);
+      const ac=new AbortController(); const to=setTimeout(()=>ac.abort(), 60000);
+      let res, data;
+      try{
+        res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name}),signal:ac.signal});
+        const txt=await res.text();
+        try{ data=JSON.parse(txt); }catch(_){ data={error:(txt||'').slice(0,120)||('HTTP '+res.status)}; }
+      }catch(e2){
+        throw new Error(e2 && e2.name==='AbortError' ? '上传超时（服务器响应慢），请重试；若图片很大请先压缩' : ('网络错误：'+(e2&&e2.message||e2)));
+      }finally{ clearTimeout(to); }
+      if(!res.ok) throw new Error(data.message||data.error||('服务器错误 '+res.status));
+      if(data.error) throw new Error(data.message||data.error);
       if(data.url) urls.push(data.url);
     }
     if(target==='main' && urls[0]){

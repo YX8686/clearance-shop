@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix26-2026-09-17-2345-shipcode-bigline';
+const ADMIN_BUILD = 'fix27-2026-09-18-0100-upload-harden';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -425,6 +425,9 @@ async function saveOrderRowSync(order){
 }
 // 进程退出前刷盘，防丢单
 process.on('beforeExit', ()=>{ _flushOrderQueue(); flushDirtyProducts().catch(()=>{}); });
+// 兜底：任何未捕获异常都只记日志，绝不让服务静默死掉（否则商家后台整站打不开）
+process.on('uncaughtException', e=>{ console.error('[uncaughtException]', (e && e.stack) || e); });
+process.on('unhandledRejection', e=>{ console.error('[unhandledRejection]', (e && e.stack) || e); });
 function saveOrders(){ return withLock(()=> saveKV('orders', orders)); } // 仅作整批备份残留，下单/状态变更已改用 saveOrderRow
 function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config, 2)).then(r=>{ configReadCache.ts = Date.now(); return r; }); }
 
@@ -743,12 +746,24 @@ function sendFile(res, filePath){
   });
 }
 
+// 读取请求体。⚠️ 超限必须 reject（旧版只 req.destroy() 不 reject，导致请求永远挂起、前端一直转圈）
+const MAX_BODY_BYTES = 20 * 1024 * 1024;   // 20MB（前端图片已压缩，正常几百 KB）
 function readBody(req){
   return new Promise((resolve,reject)=>{
-    let data='';
-    req.on('data', c=>{ data+=c; if(data.length>1e7) req.destroy(); });
-    req.on('end', ()=> resolve(data));
-    req.on('error', reject);
+    let data='', size=0, done=false;
+    req.on('data', c=>{
+      if(done) return;
+      size += c.length;
+      if(size > MAX_BODY_BYTES){
+        done = true;
+        try{ req.destroy(); }catch(e){}
+        reject(new Error('请求体过大（超过 ' + Math.round(MAX_BODY_BYTES/1048576) + 'MB），请压缩图片后重试'));
+        return;
+      }
+      data+=c;
+    });
+    req.on('end', ()=>{ if(!done){ done=true; resolve(data); } });
+    req.on('error', e=>{ if(!done){ done=true; reject(e); } });
   });
 }
 
@@ -778,6 +793,9 @@ function clearHtmlCache(){ htmlCache.clear(); productReadCache = { ts: 0, value:
 // 同一张图第二次起（含微信内置浏览器、其他买家）直接命中，不再回源。
 const imgCache = new Map(); // key -> { buf, type }
 const IMG_CACHE_MAX = 300;
+// 回源并发闸：避免一次性几十个请求把 Node undici 连接池占满（会导致整站请求卡死超时）
+let imgFetching = 0;
+const IMG_MAX_CONCURRENT = 6;
 function localImg(u){
   if(!u) return u;
   const m = String(u).match(/\/storage\/v1\/object\/public\/(.+)$/);
@@ -794,31 +812,40 @@ function localizeProduct(p){
   return c;
 }
 function localizeProducts(list){ return (list||[]).map(localizeProduct); }
-// 开机预热：把全部产品图片预先拉进内存缓存（不阻塞服务启动），
-// 这样任何买家/发货员第一次打开详情页也直接命中，不用等 Supabase 回源。
+// 开机预热：把全部产品图片预先拉进内存缓存（不阻塞服务启动）。
+// ⚠️ 必须「串行 + 单张超时 + 让出事件循环」：早前版本一次性并发几十个 fetch，
+//    把 Node undici 连接池占满，导致服务器自身所有请求（含商家后台上传）全部卡死超时。
 async function prewarmImages(){
   if(!process.env.SUPABASE_URL) return;
+  if(process.env.NO_PREWARM==='1') return;
   try{
     const list = await getProducts();
-    let n = 0;
+    const keys = [];
+    const seen = new Set();
     for(const p of list){
       const urls = [p.image, ...(p.images||[]), ...(p.detailImages||[]),
         ...(p.skus||[]).map(s=> s&&s.image), ...(p.bundleItems||[]).map(b=> b&&b.image)].filter(Boolean);
       for(const u of urls){
         const m = String(u).match(/\/storage\/v1\/object\/public\/(.+)$/);
         if(!m) continue;
-        const key = m[1];
-        if(imgCache.has(key)) continue;
-        try{
-          const r = await fetch(process.env.SUPABASE_URL + '/storage/v1/object/public/' + key);
-          if(r.ok){
-            const buf = Buffer.from(await r.arrayBuffer());
-            if(imgCache.size >= IMG_CACHE_MAX) imgCache.delete(imgCache.keys().next().value);
-            imgCache.set(key, { buf, type: r.headers.get('content-type') || 'image/jpeg' });
-            n++;
-          }
-        }catch(e){}
+        if(imgCache.has(m[1]) || seen.has(m[1])) continue;
+        seen.add(m[1]); keys.push(m[1]);
       }
+    }
+    let n = 0;
+    for(const key of keys){
+      if(imgCache.size >= IMG_CACHE_MAX) break;
+      try{
+        const ctl = new AbortController(); const tm = setTimeout(()=>ctl.abort(), 8000);
+        const r = await fetch(process.env.SUPABASE_URL + '/storage/v1/object/public/' + key, { signal: ctl.signal });
+        clearTimeout(tm);
+        if(r.ok){
+          const buf = Buffer.from(await r.arrayBuffer());
+          if(imgCache.size < IMG_CACHE_MAX) imgCache.set(key, { buf, type: r.headers.get('content-type') || 'image/jpeg' });
+          n++;
+        }
+      }catch(e){}
+      await new Promise(s=>setTimeout(s, 80));   // 让出事件循环，避免拖慢在线请求
     }
     console.log('[img prewarm] 已预热缓存', n, '张图片，共', imgCache.size, '张');
   }catch(e){ console.error('[img prewarm]', e.message); }
@@ -885,7 +912,7 @@ const server = http.createServer(async (req, res)=>{
       }
       // 创建订单
       if(method==='POST' && pathname==='/api/orders'){
-        let body; try { body = JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
+        let body; try { body = JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
         const items = (body.items||[]).filter(it=> it && it.id && Number(it.qty)>0);
         if(!items.length){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'empty'})); return; }
         if(!body.name || !body.phone || !body.address){
@@ -1057,7 +1084,7 @@ const server = http.createServer(async (req, res)=>{
       // 导出成功后把每笔订单标记为 status='待回传'（离开「今日可发」、进入「等待回传区」），防止重复导出。
       const mMallExport = pathname.match(/^\/api\/mall-today-export$/);
       if(method==='POST' && mMallExport){
-        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
+        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
         const date = String(body.date||new Date().toISOString().slice(0,10));
         const exported = Array.isArray(body.orders) ? body.orders.filter(o=>o && o.id && o.phone) : [];
         const session = {
@@ -1198,7 +1225,7 @@ const server = http.createServer(async (req, res)=>{
         if(o.status==='已发货' || o.status==='已取消'){
           res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_unshipped_can_edit'})); return;
         }
-        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
         if(!Array.isArray(body.items)){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'items_required'})); return; }
         const keyOf = x => x.skuId ? (String(x.id)+'#'+String(x.skuId)) : String(x.id);
         const newItems = body.items.map(it=>({
@@ -1257,7 +1284,7 @@ const server = http.createServer(async (req, res)=>{
       }
       // ---------- 新建手工订单（商家后台补单/换货追加）：沿用客户信息，商品可手工填写，不扣系统库存 ----------
       if(method==='POST' && pathname==='/api/orders/manual'){
-        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
+        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
         if(!body.name || !body.phone || !body.address){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'missing_contact'})); return; }
         const rawItems = Array.isArray(body.items)?body.items:[];
         if(!rawItems.length){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'empty'})); return; }
@@ -1298,7 +1325,7 @@ const server = http.createServer(async (req, res)=>{
       // 更新配置（店铺名/联系人/公告/收款码）
       const mConfig = pathname.match(/^\/api\/config$/);
       if(method==='POST' && mConfig){
-        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
+        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
         if(body.shopName!=null) config.shopName=String(body.shopName).slice(0,50);
         if(body.contactName!=null) config.contactName=String(body.contactName).slice(0,30);
         if(body.announcement!=null) config.announcement=String(body.announcement).slice(0,300);
@@ -1345,7 +1372,7 @@ const server = http.createServer(async (req, res)=>{
       }
       // 图库：新建文件夹
       if(method==='POST' && pathname==='/api/gallery/folder'){
-        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
+        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
         const name=String(body.name||'').trim().replace(/[\\/:*?"<>|]/g,'_').slice(0,50);
         if(!name){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'empty'})); return; }
         const target=path.join(GALLERY,name);
@@ -1355,7 +1382,7 @@ const server = http.createServer(async (req, res)=>{
       }
       // 图库：上传图片到指定文件夹
       if(method==='POST' && pathname==='/api/gallery/upload'){
-        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
+        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
         const folder=String(body.folder||'默认图库').trim().replace(/[\\/:*?"<>|]/g,'_');
         const m=String(body.base64||'').match(/^data:(image\/\w+);base64,(.+)$/);
         if(!m){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad image'})); return; }
@@ -1425,7 +1452,7 @@ const server = http.createServer(async (req, res)=>{
       }
       // 产品管理：增 / 改
       if(method==='POST' && pathname==='/api/products'){
-        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
+        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
         const p=body;
         const clientSaveId = String(p.clientSaveId || '').trim();
         // 幂等：同一 clientSaveId 已处理过，直接返回上次结果，不再写库
@@ -1525,7 +1552,7 @@ const server = http.createServer(async (req, res)=>{
       }
       // 产品管理：排序
       if(method==='POST' && pathname==='/api/products/reorder'){
-        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
+        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
         const ids=Array.isArray(body.ids)?body.ids:[];
         const map=new Map(products.map(p=>[p.id,p]));
         const next=[];
@@ -1756,6 +1783,15 @@ const server = http.createServer(async (req, res)=>{
         res.end(method==='HEAD' ? undefined : hit.buf); return;
       }
       if(!process.env.SUPABASE_URL){ res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'}); res.end('no storage'); return; }
+      // 并发闸：排队等待，最长 6 秒，超时返回 503（前端会显示占位图，不影响整站）
+      {
+        const deadline = Date.now() + 6000;
+        while(imgFetching >= IMG_MAX_CONCURRENT){
+          if(Date.now() > deadline){ res.writeHead(503,{'Content-Type':'text/plain; charset=utf-8'}); res.end('busy'); return; }
+          await new Promise(s=>setTimeout(s, 60));
+        }
+      }
+      imgFetching++;
       try{
         const ctl = new AbortController(); const tm = setTimeout(()=>ctl.abort(), 20000);
         const r = await fetch(process.env.SUPABASE_URL + '/storage/v1/object/public/' + key, { signal: ctl.signal });
@@ -1770,6 +1806,8 @@ const server = http.createServer(async (req, res)=>{
       }catch(e){
         console.error('[img proxy]', key, e.message);
         res.writeHead(502,{'Content-Type':'text/plain; charset=utf-8'}); res.end('img error'); return;
+      }finally{
+        imgFetching--;
       }
     }
 
