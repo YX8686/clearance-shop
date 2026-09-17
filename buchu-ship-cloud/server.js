@@ -158,13 +158,7 @@ async function pullMallConfirm(ids){
 async function writebackTracking(srcId, tracking){
   const mallOrders=await loadMallOrders();
   const o=(mallOrders||[]).find(x=>x.id===srcId);
-  if(o){
-    // 守卫：已取消绝不复活；已发货幂等（已填单号则不再处理）
-    if(o.status==='已取消') return false;
-    if(o.status==='已发货' && o.tracking) return true;
-    o.tracking=tracking; o.status='已发货'; o.shippedAt=Date.now();
-    if(USE_SUPABASE){ await sb.from('shop_data').upsert({key:'order:'+srcId, value:o}); } else await saveKV(MALL_ORDERS,mallOrders);
-  }
+  if(o){ o.tracking=tracking; o.status='已发货'; if(USE_SUPABASE){ await sb.from('shop_data').upsert({key:'order:'+srcId, value:o}); } else await saveKV(MALL_ORDERS,mallOrders); }
   return !!o;
 }
 
@@ -177,9 +171,6 @@ async function writebackMallExportTracking(srcId, tracking){
     if(error) throw new Error(error.message);
     if(!data) return false;
     const o=data.value||{};
-    // 守卫：已取消绝不复活为已发货（避免重复发货）；已发货且已有单号则幂等跳过
-    if(o.status==='已取消') return false;
-    if(o.status==='已发货' && o.tracking) return true;
     o.tracking=tracking; o.status='已发货'; o.shippedAt=Date.now();
     const {error:uerr}=await sb.from('shop_data').upsert({key:'order:'+srcId, value:o});
     if(uerr) throw new Error(uerr.message);
@@ -284,8 +275,7 @@ const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'t
 function send(res,code,body,type){ res.writeHead(code,{'Content-Type':type||'application/json; charset=utf-8'}); res.end(typeof body==='string'?body:JSON.stringify(body)); }
 function readBody(req){ return new Promise(r=>{ let d=''; req.on('data',c=>d+=c); req.on('end',()=>{ try{r(JSON.parse(d||'{}'))}catch(e){r({})} }); }); }
 
-// 内部分发函数：抽成命名导出，便于商城 server.js 直接 require 复用（不重新 listen 端口）
-async function shipCloudHandler(req,res){
+const server=http.createServer(async (req,res)=>{
   try{
     const u=new URL(req.url,'http://x');
     const p=u.pathname;
@@ -341,35 +331,71 @@ async function shipCloudHandler(req,res){
     // 发货员上传 Excel → 优先按发货编号 shipCode（A3/B4…）匹配商城 session 中的订单，
     // 编号匹配不到再按手机号兜底匹配 → 暂存待店主确认
     // （2026-09-04 改版：手工订单的回传不再走这里，统一进「手工订单汇总区」manual_pool）
+    // ★★★ 铁律（2026-09-18 加固，此前反复回归过）★★★
+    //   一个客户的「合并订单」（同 姓名+电话+地址+微信）通常装在同一个包裹、共用同一个快递单号，
+    //   但每一笔各自持有不同编号（A1/A2/A3…）。所以「按编号命中一笔」时必须**扩展到整组**，
+    //   把该客户所有未发货订单一起回填同一单号；否则会出现「只发了其中一笔、其余仍在等待回传」
+    //   → 货物被重复发出（严重事故）。
     if(p==='/api/shipper/upload-tracking' && req.method==='POST'){
       const b=await readBody(req);
       const rows=Array.isArray(b.rows)?b.rows:[];
       if(!rows.length) return send(res,400,{ok:false,message:'没有数据'});
-      const flatMall=[]; (await loadMallSessions()).forEach(s=>(s.orders||[]).forEach(o=>flatMall.push({sessionId:s.sessionId, ts:s.ts, o})));
-      const matched=[], unmatched=[], reasons=[];
+      // ★ 同一订单会在多次「全部导出」的 session 里重复出现，必须先按订单 id 去重（保留最新 session 的那份），
+      //   否则「整组回填」会把同一笔重复计入、并在确认时重复写回。
+      const latestById=new Map();
+      (await loadMallSessions()).forEach(s=>(s.orders||[]).forEach(o=>{
+        const prev=latestById.get(o.id);
+        if(!prev || (s.ts||0) > (prev.ts||0)) latestById.set(o.id, {sessionId:s.sessionId, ts:s.ts, o});
+      }));
+      const flatMall=[...latestById.values()];
+      // —— 预建索引（O(n)）：500 单也是秒级，且保证同一单号不会重复回填 ——
+      // 同一收件人判定：姓名 + 电话 + 地址（**不含微信号**）
+      //   ⚠️ 微信号会被店主事后手动补填/修改，各笔可能不一致（实测武云鹏 A1/A2='小5'、A3='wuyunpeng_test'），
+      //   若把微信号算进分组键，同一个收件人的订单会被拆成两组 → 只回填一部分 → 货物被重复发出。
+      //   同一姓名+电话+地址 = 同一个包裹，必须整组一起回填同一单号。
+      const phoneOf = o=>String((o&&o.phone)||'').replace(/\D/g,'').slice(-11);
+      const codeOf  = o=>normalizeShipCode(o&&o.shipCode);
+      const groupOf = o=>['name','phone','address'].map(k=>String((o&&o[k])||'').trim().replace(/\s+/g,'')).join('¦');
+      const byCode=new Map(), byPhone=new Map(), byGroup=new Map();
+      for(const x of flatMall){
+        const c=codeOf(x.o);  if(c && !byCode.has(c))  byCode.set(c, x);
+        const pn=phoneOf(x.o); if(pn && !byPhone.has(pn)) byPhone.set(pn, x);
+        const g=groupOf(x.o);  if(!byGroup.has(g)) byGroup.set(g, []);
+        byGroup.get(g).push(x);
+      }
+      const matched=[], unmatched=[], reasons=[]; const claimed=new Set();
+      // 把「整组未发货订单」全部回填同一单号；返回本组实际回填笔数
+      const pushWholeGroup=(seed, tracking, codeHint)=>{
+        const grp=(byGroup.get(groupOf(seed.o))||[]).filter(x=>!x.o.tracking);
+        for(const m of grp){
+          if(claimed.has(m.o.id)) continue;   // ★ 双保险：同一订单只回填一次
+          claimed.add(m.o.id);
+          matched.push({kind:'mall', sessionId:m.sessionId, srcId:m.o.id, orderId:null, no:m.o.id,
+            name:m.o.name||'', phone:m.o.phone||'', tracking, address:m.o.address||'',
+            shipCode: codeOf(m.o)||codeHint||''});
+        }
+        return grp.length;
+      };
       for(const r of rows){
         const tracking=normalizeTrackingSrv(r.tracking);
         if(!tracking){ unmatched.push(r); reasons.push('缺单号'); continue; }
         // 优先取前端已解析好的 shipCode；没有则从任意字段文本里再抓一次
         let shipCode=normalizeShipCode(r.shipCode) || extractShipCode(r.shipCode) || extractShipCode(r.detail) || extractShipCode(r.remark) || extractShipCode(r.name);
+        // ① 按编号命中 → 扩展到该客户整组
         if(shipCode){
-          const ms=flatMall.filter(x=>normalizeShipCode(x.o.shipCode)===shipCode && !x.o.tracking);
-          if(ms.length){
-            for(const m of ms){
-              matched.push({kind:'mall', sessionId:m.sessionId, srcId:m.o.id, orderId:null, no:m.o.id, name:m.o.name||r.name, phone:m.o.phone||'', tracking, address:m.o.address||'', shipCode});
-            }
-            continue;
+          const hit=byCode.get(shipCode);
+          if(hit){
+            if(claimed.has(hit.o.id)) continue;               // 这一组本批已回填过（同一包裹的多行）→ 静默跳过，不算失败
+            if(pushWholeGroup(hit, tracking, shipCode)) continue;
           }
         }
-        // 兜底：按手机号匹配（兼容旧格式/无编号）
+        // ② 兜底：按手机号匹配（兼容旧格式/无编号），同样扩展到整组
         const phone=String(r.phone||'').replace(/\D/g,'').slice(-11);
         if(phone){
-          const ms=flatMall.filter(x=>String(x.o.phone||'').replace(/\D/g,'').slice(-11)===phone && !x.o.tracking);
-          if(ms.length){
-            for(const m of ms){
-              matched.push({kind:'mall', sessionId:m.sessionId, srcId:m.o.id, orderId:null, no:m.o.id, name:m.o.name||r.name, phone, tracking, address:m.o.address||''});
-            }
-            continue;
+          const hit2=byPhone.get(phone);
+          if(hit2){
+            if(claimed.has(hit2.o.id)) continue;
+            if(pushWholeGroup(hit2, tracking, shipCode)) continue;
           }
         }
         unmatched.push(r);
@@ -542,9 +568,7 @@ async function shipCloudHandler(req,res){
     }
     send(res,404,{ok:false,message:'not found'});
   }catch(e){ console.error(e); send(res,500,{ok:false,message:e.message}); }
-}
-
-const server=http.createServer(shipCloudHandler);
+});
 
 const PORT=process.env.PORT||4100;
 
@@ -622,6 +646,4 @@ function scfHandler(event){
 }
 // SCF 入口导出（云函数识别）
 exports.main=scfHandler;
-// 商城嵌入导出：让商城 server.js 直接转发请求到本 handler，不必另起端口
-exports.handler=shipCloudHandler;
 module.exports=module.exports; // 兼容 require() 场景
