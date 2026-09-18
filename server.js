@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix38-2026-09-18-0603-wave-notify-stale-fix';
+const ADMIN_BUILD = 'fix39-2026-09-18-wave-deeplink';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -949,13 +949,26 @@ async function buildHomeHtml(){
 }
 
 // 详情页渲染（供缓存与开机预热共用）。不存在/已隐藏返回 PAGE_MISSING 哨兵
-async function buildProductHtml(pid){
+async function buildProductHtml(pid, urlWave){
   const list = await getProducts();
   const p = list.find(x=>x.id===pid);
   if(!p) return PAGE_MISSING;
   const cfgNow = await getConfig();
   const hiddenCats = Array.isArray(cfgNow.hiddenCategories)?cfgNow.hiddenCategories:[];
-  if(p.hidden || (p.category && hiddenCats.includes(p.category))) return PAGE_MISSING;
+  // 波次直链：?wave=w2 时，即使全局隐藏也允许显示该波商品（与首页一致）
+  let inUrlWave = false;
+  if(urlWave){
+    const wv = String(urlWave).split(',').map(s=>s.trim()).filter(Boolean).filter(s=>['w1','w2','w3','w4','none'].includes(s));
+    if(wv.length){
+      if(wv.includes('none')) inUrlWave = true;
+      else{
+        const pre = wv.map(w=>({w1:'w1g',w2:'w2g',w3:'w3g',w4:''}[w])).filter(Boolean);
+        if(pre.some(pr=>!pr)) inUrlWave = true;
+        else { const g=String(p.waveGroup||'').trim(); if(g && pre.some(pr=>g.indexOf(pr)===0)) inUrlWave = true; }
+      }
+    }
+  }
+  if(!inUrlWave && (p.hidden || (p.category && hiddenCats.includes(p.category)))) return PAGE_MISSING;
   const ogImage = inferShareImage(p) || pickShopShareImage(list);
   const safeConfig = { ...DEFAULT_CONFIG, ...cfgSafe(cfgNow) };
   const html = renderTemplate('product.html', {
@@ -1911,7 +1924,10 @@ const server = http.createServer(async (req, res)=>{
       const mProd = pathname.match(/^\/product\/([\w-]+)$/);
       if((method==='GET'||method==='HEAD') && mProd){
         const pid = mProd[1];
-        const html = await renderPageCached('product:'+pid, ()=>buildProductHtml(pid));
+        let urlWave = '';
+        try{ const u = new URL(req.url, 'http://localhost'); urlWave = u.searchParams.get('wave')||''; }catch(e){}
+        const pkey = 'product:'+pid+(urlWave?(':'+urlWave):'');
+        const html = await renderPageCached(pkey, ()=>buildProductHtml(pid, urlWave));
         if(html === PAGE_MISSING){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
         if(!html){ res.writeHead(503,{'Content-Type':'text/html; charset=utf-8'}); res.end('页面生成中，请稍后重试'); return; }
         res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;

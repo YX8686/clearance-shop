@@ -384,7 +384,17 @@ const WAVE_COMBOS = {
     map:{'特惠单品':'特惠单品','明星套装':'明星套装','明星组合':'明星组合','高功效私人定制':'高功效私人定制'}
   }
 };
-function activeWaves(){ return (CONFIG && CONFIG.activeWave) ? String(CONFIG.activeWave).split(',').map(s=>s.trim()).filter(s=>WAVES[s]) : []; }
+// 波次直链：URL ?wave=w2 / ?wave=w2,w3 / ?wave=none 可固定显示某一波，不受全局排期影响（用于分享"第二波链接/第三波链接"）
+const URL_WAVE = (function(){
+  try{
+    const m = new URLSearchParams(location.search).get('wave');
+    if(!m) return null;
+    const arr = m.split(',').map(s=>s.trim()).filter(Boolean).filter(s=>WAVES[s]||s==='none');
+    return arr.length ? arr : null;
+  }catch(e){ return null; }
+})();
+const URL_WAVE_PREFIX = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'' };
+function activeWaves(){ if(URL_WAVE) return URL_WAVE; return (CONFIG && CONFIG.activeWave) ? String(CONFIG.activeWave).split(',').map(s=>s.trim()).filter(s=>WAVES[s]) : []; }
 function activeCombo(){
   const waves=activeWaves();
   if(waves.length<2) return null;
@@ -399,6 +409,15 @@ let currentCat = '全部';
 function hiddenCategories(){ return (CONFIG && Array.isArray(CONFIG.hiddenCategories))?CONFIG.hiddenCategories:[]; }
 function isProductHidden(p){
   if(!p) return true;
+  // 波次直链模式：按 URL 波次显示，忽略全局 p.hidden（让"第二波链接"永远能看到第二波商品）
+  if(URL_WAVE){
+    if(URL_WAVE.includes('none')) return false;
+    const prefixes = URL_WAVE.map(w=>URL_WAVE_PREFIX[w]).filter(Boolean);
+    if(prefixes.some(pr=>!pr)) return false; // 含 w4（空 prefix）→ 全部显示
+    const g = String(p.waveGroup||'').trim();
+    if(!g) return true;
+    return !prefixes.some(pr=>g.indexOf(pr)===0);
+  }
   if(p.hidden) return true;
   const cat = String(p.category||'').trim();
   return cat && hiddenCategories().includes(cat);
@@ -576,7 +595,7 @@ function renderGrid(){
   });
   if(!list.length) g.innerHTML='<p style="grid-column:1/-1;text-align:center;color:#bbb;padding:30px 0">'+((!currentCat||currentCat==='全部')?'暂未上架商品':'该分类下暂无商品')+'</p>';
 }
-function goProduct(id){ location.href='/product/'+id; }
+function goProduct(id){ location.href='/product/'+id + (URL_WAVE ? '?wave='+URL_WAVE.join(',') : ''); }
 
 function cartCount(){ return Object.values(cart).reduce((a,b)=>a+b,0); }
 function cartTotal(){ return Object.entries(cart).reduce((s,[id,q])=>{ const info=getCartInfo(id); return s+(info.price*q); },0); }

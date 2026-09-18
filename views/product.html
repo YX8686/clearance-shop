@@ -212,7 +212,7 @@
   </div>
 
   <div class="bar">
-    <button class="home" onclick="location.href='/'">进入店铺</button>
+    <button class="home" onclick="location.href=mallHomeUrl()">进入店铺</button>
     <button class="add2cart" id="addBtn" onclick="addToCartSelected(false)">加入购物车</button>
     <button class="buynow" id="buyNowBtn" onclick="addToCartSelected(true)">直接购买</button>
   </div>
@@ -311,14 +311,35 @@ const CONFIG = {{CONFIG_JSON}};
 let cart = {};
 try { cart = JSON.parse(localStorage.getItem('cart')||'{}'); } catch(e){ cart={}; }
 
+// 波次直链（与首页一致）：?wave=w2 时即使全局排期不是第二波，也能看到第二波商品
+const URL_WAVE = (function(){
+  try{
+    const m = new URLSearchParams(location.search).get('wave');
+    if(!m) return null;
+    const arr = m.split(',').map(s=>s.trim()).filter(Boolean).filter(s=>['w1','w2','w3','w4','none'].includes(s));
+    return arr.length ? arr : null;
+  }catch(e){ return null; }
+})();
+const URL_WAVE_PREFIX = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'' };
+function mallHomeUrl(){ return '/' + (URL_WAVE ? '?wave='+URL_WAVE.join(',') : ''); }
+function inUrlWave(p){
+  if(!URL_WAVE) return true;
+  if(URL_WAVE.includes('none')) return true;
+  const prefixes = URL_WAVE.map(w=>URL_WAVE_PREFIX[w]).filter(Boolean);
+  if(prefixes.some(pr=>!pr)) return true;
+  const g = String((p&&p.waveGroup)||'').trim();
+  if(!g) return false;
+  return prefixes.some(pr=>g.indexOf(pr)===0);
+}
+
 const $ = s=>document.querySelector(s);
 function money(n){ return '¥'+Number(n).toLocaleString('zh-CN'); }
 function escapeHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 function set(){
   const hiddenCats = (CONFIG && Array.isArray(CONFIG.hiddenCategories))?CONFIG.hiddenCategories:[];
-  if(P.hidden || (P.category && hiddenCats.includes(P.category))){
-    document.body.innerHTML = '<div style="text-align:center;padding:80px 20px;color:#7a6f62"><h2 style="font-size:20px;margin-bottom:10px">商品不存在或已下架</h2><p style="font-size:14px">该商品暂不可见，去看看其他宝贝吧～</p><button onclick="location.href=\'/\'" style="margin-top:24px;border:none;background:#b8743f;color:#fff;border-radius:24px;padding:12px 28px;font-size:15px;cursor:pointer">返回商城</button></div>';
+  if((P.hidden || (P.category && hiddenCats.includes(P.category))) && !inUrlWave(P)){
+    document.body.innerHTML = '<div style="text-align:center;padding:80px 20px;color:#7a6f62"><h2 style="font-size:20px;margin-bottom:10px">商品不存在或已下架</h2><p style="font-size:14px">该商品暂不可见，去看看其他宝贝吧～</p><button onclick="location.href=mallHomeUrl()" style="margin-top:24px;border:none;background:#b8743f;color:#fff;border-radius:24px;padding:12px 28px;font-size:15px;cursor:pointer">返回商城</button></div>';
     return;
   }
   document.title = P.name;
