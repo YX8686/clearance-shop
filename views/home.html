@@ -850,7 +850,9 @@ function markPaidAndGo(){
     });
 }
 
+let _orderSubmitting = false;   // fix41：防连点/重复提交（2026-09-18 有买家一次点击被连发 29 单）
 function submitOrder(){
+  if(_orderSubmitting) return;
   const name=$('#cName').value.trim(), phone=$('#cPhone').value.trim(), addr=$('#cAddr').value.trim(), wechat=$('#cWechat').value.trim();
   if(!name||!phone||!addr){ alert('请填写完整收货信息'); return; }
   const items=Object.entries(cart).map(([id,q])=>{
@@ -858,14 +860,17 @@ function submitOrder(){
     return {id:pid, skuId:skuId||undefined, qty:q};
   });
   if(!items.length){ alert('购物车为空'); return; }
+  _orderSubmitting = true;
+  const btn=document.querySelector('.submit');
+  if(btn){ btn.disabled=true; btn.textContent='提交中…'; }
+  const reset=()=>{ _orderSubmitting=false; if(btn){ btn.disabled=false; btn.textContent='提交订单'; } };
   fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,phone,address:addr,wechat,items})})
     .then(r=>r.json()).then(d=>{
-      if(d.id){ saveBuyer(); addPending(d.id); cart={}; saveCart(); closeCheckout(); location.href='/order/'+d.id; }
-      else {
-        const msg = d.message || d.error || '未知错误';
-        alert('下单失败：'+msg+'\n\n如提示"数据目录不可写"或"operation not permitted"，请关闭当前黑窗口，双击桌面图标「不初限时狂欢商城」重新启动服务。');
-      }
-    }).catch(e=>alert('网络错误：'+e.message+'\n\n请检查是否已双击桌面图标启动商城服务。'));
+      if(d.id){ saveBuyer(); addPending(d.id); cart={}; saveCart(); closeCheckout(); location.href='/order/'+d.id; return; }
+      reset();
+      const msg = d.message || d.error || '未知错误';
+      alert('下单失败：'+msg+'\n\n如提示"数据目录不可写"或"operation not permitted"，请关闭当前黑窗口，双击桌面图标「不初限时狂欢商城」重新启动服务。');
+    }).catch(e=>{ reset(); alert('网络错误：'+e.message+'\n\n请检查是否已双击桌面图标启动商城服务。'); });
 }
 
 function openLookupModal(){ $('#lookupModal').classList.add('show'); }

@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix40-2026-09-18-wave-deeplink-noblank';
+const ADMIN_BUILD = 'fix41-2026-09-18-dup-order-guard';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -1146,6 +1146,21 @@ const server = http.createServer(async (req, res)=>{
         if(!items.length){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'empty'})); return; }
         if(!body.name || !body.phone || !body.address){
           res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'missing_contact'})); return;
+        }
+        // ★★ fix41 防重复下单（2026-09-18 真实事故）★★
+        // 事故：买家手机端一次点击被浏览器/网络连发 29 次 → 凭空生成 29 笔一模一样订单，
+        //       每笔都扣了库存（且多是"待付款"），把商品库存直接锁死 / 归零。
+        // 规则：同一手机号 + 同一购物车内容，在 15 秒窗口内只认第一单，后续直接返回那一单。
+        // 只靠内存 orders 判定（saveOrderRow 是同步入内存的），不新增任何字段、不改数据格式。
+        const _sig = (o)=> String(o.phone||'').trim() + '|' +
+          (o.items||[]).map(it=>String(it.id)+'#'+String(it.skuId||'')+'x'+Number(it.qty||0)).sort().join(',');
+        const _mySig = String(body.phone||'').trim() + '|' +
+          items.map(it=>(String(it.id||'').split('#')[0])+'#'+String(it.skuId||(String(it.id||'').split('#')[1]||''))+'x'+Number(it.qty)).sort().join(',');
+        const _now = Date.now();
+        const _dup = orders.find(o=> o && o.status !== '已取消' && _now - (Number(o.createdAt)||0) < 15000 && _sig(o) === _mySig);
+        if(_dup){
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'});
+          res.end(JSON.stringify({ id:_dup.id, deduped:true })); return;
         }
         const detail = items.map(it=>{
           // 兼容旧格式：购物车键可能以 "产品id#SKUid" 形式整体传入
