@@ -978,7 +978,8 @@ function renderMergedPending(){
 }
 function onPendingPhoneSearch(v){
   pendingPhoneFilter=String(v||'').trim();
-  if(curTab==='待确认') renderMergedPending();
+  // fix42：搜索前先清空列表再重渲染，否则新结果会「追加」在旧列表下面（出现两条工具条）
+  if(curTab==='待确认'){ const l=document.getElementById('list'); if(l) l.innerHTML=''; renderMergedPending(); }
 }
 // ===== 合并订单 · 子订单逐笔处置（不切换 tab，让用户继续在「待处理」处理其他子订单） =====
 // 点 [✓ 已收]：该笔 status='待发货'，自动从当前「待处理」组消失，剩余子订单合并组自然重组
