@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix39-2026-09-18-wave-deeplink';
+const ADMIN_BUILD = 'fix40-2026-09-18-wave-deeplink-noblank';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -968,7 +968,18 @@ async function buildProductHtml(pid, urlWave){
       }
     }
   }
-  if(!inUrlWave && (p.hidden || (p.category && hiddenCats.includes(p.category)))) return PAGE_MISSING;
+  // 当前生效波次（config.activeWave）：本波商品即使内存里的 hidden 标记还是旧的/没刷新完，
+  // 也必须能打开 —— 根治「切第二波/第三波后点商品说'商品不存在'」这类白页。
+  let inActiveWave = false;
+  {
+    const aw = String(cfgNow.activeWave||'').split(',').map(s=>s.trim()).filter(Boolean);
+    if(aw.length){
+      const preA = aw.map(w=>({w1:'w1g',w2:'w2g',w3:'w3g',w4:''}[w]));
+      if(aw.includes('none') || preA.some(pr=>pr==='')) inActiveWave = true;
+      else { const g=String(p.waveGroup||'').trim(); if(g && preA.filter(Boolean).some(pr=>g.indexOf(pr)===0)) inActiveWave = true; }
+    }
+  }
+  if(!inUrlWave && !inActiveWave && (p.hidden || (p.category && hiddenCats.includes(p.category)))) return PAGE_MISSING;
   const ogImage = inferShareImage(p) || pickShopShareImage(list);
   const safeConfig = { ...DEFAULT_CONFIG, ...cfgSafe(cfgNow) };
   const html = renderTemplate('product.html', {
@@ -1928,7 +1939,14 @@ const server = http.createServer(async (req, res)=>{
         try{ const u = new URL(req.url, 'http://localhost'); urlWave = u.searchParams.get('wave')||''; }catch(e){}
         const pkey = 'product:'+pid+(urlWave?(':'+urlWave):'');
         const html = await renderPageCached(pkey, ()=>buildProductHtml(pid, urlWave));
-        if(html === PAGE_MISSING){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
+        if(html === PAGE_MISSING){
+          // 商品不存在 / 已下架：绝不把「只有'商品不存在'四个字的白页」甩给买家。
+          // 302 回商城首页（保留波次直链参数），买家至少落在当前活动页继续逛、继续下单。
+          const back = '/' + (urlWave ? ('?wave='+encodeURIComponent(urlWave)) : '');
+          res.writeHead(302,{'Location':back,'Cache-Control':'no-store','Content-Type':'text/html; charset=utf-8'});
+          res.end(method==='HEAD'?'':'<!doctype html><meta charset="utf-8"><title>返回商城</title><meta http-equiv="refresh" content="0;url='+back+'">');
+          return;
+        }
         if(!html){ res.writeHead(503,{'Content-Type':'text/html; charset=utf-8'}); res.end('页面生成中，请稍后重试'); return; }
         res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;
     }
