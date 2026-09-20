@@ -3007,7 +3007,20 @@ async function saveProduct(){
       } else {
         toast('产品已保存（共 '+ savedText.length +' 字）' + (data.cached ? '（幂等：已跳过重复写入）' : ''));
       }
-      closeProdModal(); load(); return;
+      // 乐观本地更新：把服务端返回的保存结果立即写入内存缓存并重绘产品列表。
+      // 否则「保存成功后马上再打开」时，load()/loadOthers() 还没跑完（要等前面的 /api/orders），
+      // 而 editProduct() 读取的仍是旧 PRODUCTS，就会看到「跟原来一模一样」的旧值。
+      try{
+        const sp = data.product;
+        if(sp && sp.id){
+          const _i = PRODUCTS.findIndex(x=>x.id===sp.id);
+          if(_i>=0) PRODUCTS[_i]=Object.assign({},PRODUCTS[_i],sp);
+          else PRODUCTS.push(sp);
+        }
+      }catch(_e){}
+      closeProdModal();
+      try{ renderPM(); window.pmRendered=true; }catch(_e){}
+      load(); return;
     }
     // 业务错误
     throw new Error(data.message || '保存失败');
