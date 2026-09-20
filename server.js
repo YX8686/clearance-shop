@@ -1457,9 +1457,9 @@ const server = http.createServer(async (req, res)=>{
             const qty = Number(it.qty)||0;
             if(it.skuId){
               const sku = (p.skus||[]).find(s=>String(s.id)===it.skuId);
-              if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) + qty; stockRestored = true; markProductDirty(it.id); }
+              if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) + qty; stockRestored = true; markProductDirty(it.id, 'ops'); }
             } else if(p.stock!=null){
-              p.stock = Math.floor(Number(p.stock)) + qty; stockRestored = true; markProductDirty(it.id);
+              p.stock = Math.floor(Number(p.stock)) + qty; stockRestored = true; markProductDirty(it.id, 'ops');
             }
           });
         }
@@ -1480,9 +1480,9 @@ const server = http.createServer(async (req, res)=>{
               const qty = Number(it.qty)||0;
               if(it.skuId){
                 const sku = (p.skus||[]).find(s=>String(s.id)===it.skuId);
-                if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) - qty; markProductDirty(it.id); }
+                if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) - qty; markProductDirty(it.id, 'ops'); }
               } else if(p.stock!=null){
-                p.stock = Math.floor(Number(p.stock)) - qty; markProductDirty(it.id);
+                p.stock = Math.floor(Number(p.stock)) - qty; markProductDirty(it.id, 'ops');
               }
             });
           }
@@ -1506,9 +1506,9 @@ const server = http.createServer(async (req, res)=>{
             const qty = Number(it.qty)||0;
             if(it.skuId){
               const sku = (p.skus||[]).find(s=>String(s.id)===it.skuId);
-              if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) - qty; stockRededucted = true; markProductDirty(it.id); }
+              if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) - qty; stockRededucted = true; markProductDirty(it.id, 'ops'); }
             } else if(p.stock!=null){
-              p.stock = Math.floor(Number(p.stock)) - qty; stockRededucted = true; markProductDirty(it.id);
+              p.stock = Math.floor(Number(p.stock)) - qty; stockRededucted = true; markProductDirty(it.id, 'ops');
             }
           });
         }
@@ -1533,9 +1533,9 @@ const server = http.createServer(async (req, res)=>{
               const qty = Number(it.qty)||0;
               if(it.skuId){
                 const sku = (p.skus||[]).find(s=>String(s.id)===it.skuId);
-                if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) + qty; markProductDirty(it.id); }
+                if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) + qty; markProductDirty(it.id, 'ops'); }
               } else if(p.stock!=null){
-                p.stock = Math.floor(Number(p.stock)) + qty; markProductDirty(it.id);
+                p.stock = Math.floor(Number(p.stock)) + qty; markProductDirty(it.id, 'ops');
               }
             });
           }
@@ -1576,8 +1576,8 @@ const server = http.createServer(async (req, res)=>{
           if(!newKeys.has(keyOf(it)) && o.stockDeducted){
             const p=products.find(p=>p.id===it.id); if(!p) return;
             const qty=Number(it.qty)||0;
-            if(it.skuId){ const sku=(p.skus||[]).find(s=>String(s.id)===it.skuId); if(sku&&sku.stock!=null){ sku.stock=Math.floor(Number(sku.stock))+qty; stockRestored=true; markProductDirty(it.id);} }
-            else if(p.stock!=null){ p.stock=Math.floor(Number(p.stock))+qty; stockRestored=true; markProductDirty(it.id); }
+            if(it.skuId){ const sku=(p.skus||[]).find(s=>String(s.id)===it.skuId); if(sku&&sku.stock!=null){ sku.stock=Math.floor(Number(sku.stock))+qty; stockRestored=true; markProductDirty(it.id, 'ops');} }
+            else if(p.stock!=null){ p.stock=Math.floor(Number(p.stock))+qty; stockRestored=true; markProductDirty(it.id, 'ops'); }
           }
         });
         const prevItems=o.items, prevTotal=o.total, prevStatus=o.status, prevCancelledAt=o.cancelledAt;
@@ -1588,7 +1588,7 @@ const server = http.createServer(async (req, res)=>{
         catch(e){
           o.items=prevItems; o.total=prevTotal; o.status=prevStatus;
           if(prevCancelledAt===undefined) delete o.cancelledAt; else o.cancelledAt=prevCancelledAt;
-          if(stockRestored){ (o.items||[]).forEach(it=>{ const p=products.find(p=>p.id===it.id); if(!p) return; const qty=Number(it.qty)||0; if(it.skuId){ const sku=(p.skus||[]).find(s=>String(s.id)===it.skuId); if(sku&&sku.stock!=null){ sku.stock=Math.floor(Number(sku.stock))-qty; markProductDirty(it.id);} } else if(p.stock!=null){ p.stock=Math.floor(Number(p.stock))-qty; markProductDirty(it.id);} }); }
+          if(stockRestored){ (o.items||[]).forEach(it=>{ const p=products.find(p=>p.id===it.id); if(!p) return; const qty=Number(it.qty)||0; if(it.skuId){ const sku=(p.skus||[]).find(s=>String(s.id)===it.skuId); if(sku&&sku.stock!=null){ sku.stock=Math.floor(Number(sku.stock))-qty; markProductDirty(it.id, 'ops');} } else if(p.stock!=null){ p.stock=Math.floor(Number(p.stock))-qty; markProductDirty(it.id, 'ops');} }); }
           res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'save_failed', message:e.message})); return;
         }
         if(stockRestored) saveProductsDebounced();
@@ -1966,7 +1966,7 @@ const server = http.createServer(async (req, res)=>{
                 if(wantsNone || hasAllPrefix) wantHidden=false;
                 else if(!g) wantHidden=true;
                 else wantHidden = !activePrefixes.some(pre=>g.indexOf(pre)===0);
-                if(!!p.hidden!==wantHidden){ p.hidden=wantHidden; markProductDirty(p.id); }
+                if(!!p.hidden!==wantHidden){ p.hidden=wantHidden; markProductDirty(p.id, 'ops'); }
                 if(wantHidden) hid++; else shown++;
               }
               await flushDirtyProducts();
