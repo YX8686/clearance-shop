@@ -596,13 +596,22 @@ async function load(silent, isRetry){
       setLoading(false);
     }
     firstLoad=false;
+    // fix45（2026-09-21）：订单接口抖动/超时绝不能连累产品数据刷新。
+    // 以前这里直接 return —— /api/orders 一旦慢或失败，loadOthers() 永不执行，
+    // 浏览器内存 PRODUCTS 会一直停在旧值，症状正是「保存成功、再打开还是旧的」。
+    loadOthersSafely();
     return;
   }
   firstLoad=false;
   setLoading(false);
   render();
   // 其余数据并行加载，不阻塞订单显示
-  loadOthers();
+  loadOthersSafely();
+}
+// 安全包装：任一接口失败只告警，不抛未捕获异常，也不影响订单区渲染
+function loadOthersSafely(){
+  try{ return Promise.resolve(loadOthers()).catch(e=>console.warn('loadOthers 失败（保留旧数据）：', (e&&e.message)||e)); }
+  catch(e){ console.warn('loadOthers 异常：', (e&&e.message)||e); }
 }
 function refreshCdManualOptions(sel){
   const ta=document.getElementById('sCdPhrases');
@@ -3020,6 +3029,9 @@ async function saveProduct(){
       }catch(_e){}
       closeProdModal();
       try{ renderPM(); window.pmRendered=true; }catch(_e){}
+      // fix45：保存成功后立刻单独回源同步一次产品列表（不等 /api/orders），
+      // 保证「内存 PRODUCTS == 服务端」——这是「保存后马上重开弹窗看到旧值」的最后一道保险。
+      loadOthersSafely();
       load(); return;
     }
     // 业务错误

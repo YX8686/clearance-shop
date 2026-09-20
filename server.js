@@ -18,7 +18,10 @@ const PORT = process.env.PORT || 4100;
 // 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
 // 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
 // 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-const ADMIN_BUILD = 'fix43-2026-09-20-save-override-fix';
+// fix45（2026-09-21）：版本号必须随「前端 admin.html 的任何修复」一起升位——
+// 自检只比对版本字符串，若前端改了但这里不动，用户已经打开的旧标签页永远不会重载，
+// 会一直跑旧 JS（症状：保存成功但重开还是旧值）。
+const ADMIN_BUILD = 'fix45-2026-09-21-stale-tab-auto-reload';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
