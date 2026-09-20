@@ -462,7 +462,23 @@ function ensureShipCode(order){
 // 每次编辑都要 upsert 整个大 JSON，导致保存变慢、Supabase 免费层容易超时/失败。
 // 新方案：每个产品 upsert 独立行，单行数据小、写入快，回到秒级保存；排序单独存 product_order。
 const dirtyProductIds = new Set();
-function markProductDirty(id){ if(id) dirtyProductIds.add(id); }
+// 2026-09-20 新增：记录脏行的「改动类型」，决定落库时能不能整行覆盖。
+//   'full' = 商家后台保存产品（内容以本地为准，允许整行写）
+//   'ops'  = 只改了库存 / 上架状态（下单扣库存、取消恢复、改单、隐藏开关、强制售罄、切波）
+//            → 必须以「云端当前行」为基准，只把库存/状态字段盖上去，
+//              否则会把商家后台刚保存的名称 / 描述 / SKU 发货明细一起覆盖回旧值。
+// 真实故障（2026-09-20）：后台改 SKU 发货明细，提示保存成功，一刷新又变旧、买家端同步不生效。
+// 根因：云端 Render 实例 24h 在线，它的内存 products 只在启动时读过一次；
+//      顾客下单扣库存时把「整行业旧数据」upsert 回云端，正好盖掉后台刚保存的内容。
+const dirtyModes = new Map();
+const DIRTY_MODE_RANK = { ops: 1, full: 2 };
+function markProductDirty(id, mode){
+  if(!id) return;
+  dirtyProductIds.add(id);
+  const m = mode === 'ops' ? 'ops' : 'full';
+  const cur = dirtyModes.get(id);
+  if(!cur || DIRTY_MODE_RANK[m] > DIRTY_MODE_RANK[cur]) dirtyModes.set(id, m);
+}
 // ⚠️ 关键：supabase-js 的查询遇到网络/权限错误**不抛异常**，而是把错误放进返回对象的 error 字段。
 // 早期改成分行存储时，新写的 upsert 只套了 withRetry 却没检查 error 字段 —— 一旦 Supabase 免费层
 // 抖动（fetch failed）或 RLS 拦截，写入其实没成功，却被当成成功并清掉了 dirtyProductIds，
@@ -480,12 +496,54 @@ async function flushDirtyProducts(){
   if(!USE_SUPABASE){
     // 本地模式仍整盘写入 products.json
     await withLock(()=> writeJsonAtomic('products.json', products));
+    ids.forEach(id=>dirtyModes.delete(id));
     return;
+  }
+  // ★ 2026-09-20 关键修复（本文件最重要的一处）★
+  // 写库前先取「云端当前行」当基准，按改动类型决定合并范围：
+  //   · mode='ops'  → 云端为准，只把库存 / 隐藏 / 强制售罄 盖上去。绝不覆盖名称/描述/SKU发货明细/图片。
+  //   · mode='full' → 后台保存产品（内容以本地为准），整行写回。
+  // 为什么必须这么做：内存 products 是"写源"，而各实例（尤其 24h 在线的云端 Render 实例）
+  // 这份内存只在启动时读过云端。顾客下单扣库存时会整行 upsert，
+  // 于是把旧版本的名称/描述/SKU 发货明细一起写回云端 ——
+  // 后台刚保存的产品内容被静默覆盖，症状就是「提示保存成功，再点进去还是旧值，买家端也不生效」。
+  let cloudRows = new Map();
+  try{
+    const keys = ids.map(id=>'product:'+id);
+    const r = await withRetry(()=>sb.from('shop_data').select('key,value').in('key', keys), 'flushReadBase', 2);
+    if(r && r.error) throw new Error(r.error.message || 'read base failed');
+    ((r && r.data) || []).forEach(x=>{ if(x && x.key) cloudRows.set(String(x.key).slice('product:'.length), x.value); });
+  }catch(e){
+    console.error('[flushDirtyProducts] 写前读云端基准失败（本次退化为整行写入）:', e.message);
   }
   // 云端模式：批量 upsert，把 N 次单条网络往返合并为 1 次，显著降低 Supabase 免费层抖动概率
   const rows = ids.map(id=>{
-    const p = products.find(x=>x.id===id);
-    return p ? { key:'product:'+id, value:p } : null;
+    const local = products.find(x=>x.id===id);
+    if(!local) return null;
+    let val = local;
+    const mode = dirtyModes.get(id) || 'full';
+    const base = cloudRows.get(id);
+    if(mode === 'ops' && base && typeof base==='object' && !Array.isArray(base)){
+      // 以云端最新行为基准，只覆盖本次真正改动的"操作类字段"
+      val = Object.assign({}, base, {
+        stock: local.stock,
+        hidden: local.hidden,
+        forceSoldOut: local.forceSoldOut,
+        updatedAt: Date.now()
+      });
+      const localSkus = Array.isArray(local.skus) ? local.skus : [];
+      const baseSkus  = Array.isArray(base.skus)  ? base.skus  : [];
+      // SKU 只同步库存字段，SKU 名称 / 发货明细 / 独立主图 / 副标题 一律保留云端最新
+      val.skus = baseSkus.map(bs=>{
+        const ls = localSkus.find(x=>String(x.id)===String(bs.id));
+        return (ls && ls.stock!==undefined) ? Object.assign({}, bs, { stock: ls.stock }) : bs;
+      });
+      // 本地有、云端没有的 SKU（极少见）：保留本地，避免丢 SKU
+      localSkus.forEach(ls=>{ if(!val.skus.some(bs=>String(bs.id)===String(ls.id))) val.skus.push(ls); });
+    }
+    // 让内存也跟上云端内容，避免下一次又拿旧内容去写
+    try{ if(val !== local) Object.assign(local, val); }catch(_){}
+    return { key:'product:'+id, value:val };
   }).filter(Boolean);
   const failed = [];
   if(rows.length){
@@ -496,7 +554,9 @@ async function flushDirtyProducts(){
       ids.forEach(id=>failed.push(id));
     }
   }
-  failed.forEach(id=>dirtyProductIds.add(id));
+  // 注意：只把「真实产品 id」放回脏集，不要把 'product_order' 这个哨兵值塞进去
+  //（旧写法会污染脏集，让 getProducts 误判"有未落库脏行"而一直返回内存旧副本）
+  failed.filter(id=>id!=='product_order').forEach(id=>dirtyProductIds.add(id));
   // 同步排序 key（排序变更较少，有脏行时顺便写）
   try {
     await saveProductOrder();
@@ -510,6 +570,7 @@ async function flushDirtyProducts(){
     await withLock(()=> writeJsonAtomic('products.json', products)).catch(err=>console.error('[local backup] 失败:', err.message));
     throw new Error('云端保存失败（' + failed.join(', ') + '），已写本地备份，请检查网络后重试');
   }
+  ids.forEach(id=>dirtyModes.delete(id));   // 只有全部写成功才清掉改动类型
   // ⚠️ 写入成功后必须让 productReadCache 立即看到最新内存，否则切波/保存后买家端可能还在用旧隐藏状态。
   productReadCache = { ts: Date.now(), value: products.slice(), promise: null, failed: false };
 }
@@ -588,8 +649,14 @@ async function getProducts(){
   const promise = (async()=>{
     try{
       const list = await withRetry(()=>loadProductsFromRows(products), 'loadProducts', 2);
-      productReadCache = { ts: Date.now(), value: list, promise: null, failed: false };
-      return list;
+      // ★ 2026-09-20 修复：把云端最新内容同步进「写源」内存 products（就地合并，保留对象引用）。
+      // 以前这里只更新 productReadCache（读缓存），从不更新 products，而 flushDirtyProducts 是拿
+      // products 里的对象整行 upsert —— 于是一个内存长期不刷新的实例（尤其 24h 在线的云端实例）
+      // 在顾客下单扣库存时会把"旧版本整行"写回云端，静默覆盖商家后台刚保存的产品内容。
+      // 症状：后台提示保存成功，再点进去还是旧值，买家端同步不生效。
+      if(!dirtyProductIds.size) applyFreshProductList(list);
+      productReadCache = { ts: Date.now(), value: products.slice(), promise: null, failed: false };
+      return productReadCache.value;
     }catch(e){
       console.error('[getProducts] 读云端失败，使用内存副本：', e.message);
       productReadCache = { ts: Date.now(), value: products, promise: null, failed: true };
@@ -600,6 +667,24 @@ async function getProducts(){
   const result = await promise;
   productReadCache.promise = null;
   return result;
+}
+// 把云端最新产品内容合并进内存写源。就地 Object.assign 保留原有对象引用，
+// 避免打断正在进行中的库存扣减（那些地方是同步 mutate products 里的对象）。
+function applyFreshProductList(list){
+  if(!Array.isArray(list) || !list.length) return;
+  const byId = new Map(products.map(p=>[p.id, p]));
+  const next = [];
+  for(const f of list){
+    if(!f || !f.id) continue;
+    const cur = byId.get(f.id);
+    if(cur){ Object.assign(cur, f); next.push(cur); }
+    else next.push(f);
+  }
+  if(!next.length) return;
+  if(next.length !== products.length || next.some((p,i)=>p!==products[i])){
+    products.length = 0;
+    for(const p of next) products.push(p);
+  }
 }
 // ===== 配置回源（与 getProducts 同策略）=====
 // 云端买家端(Render)与本机商家后台(4301)共用同一 Supabase。config 若只在启动时读一次，
@@ -1229,9 +1314,9 @@ const server = http.createServer(async (req, res)=>{
           const needQty = needMap[k];
           if(skuId){
             const sku = (p.skus||[]).find(s=>String(s.id)===skuId);
-            if(sku && sku.stock!=null){ sku.stock = Math.max(0, Math.floor(Number(sku.stock)) - needQty); stockDeducted = true; markProductDirty(pid); }
+            if(sku && sku.stock!=null){ sku.stock = Math.max(0, Math.floor(Number(sku.stock)) - needQty); stockDeducted = true; markProductDirty(pid, 'ops'); }
           } else if(p.stock!=null){
-            p.stock = Math.max(0, Math.floor(Number(p.stock)) - needQty); stockDeducted = true; markProductDirty(pid);
+            p.stock = Math.max(0, Math.floor(Number(p.stock)) - needQty); stockDeducted = true; markProductDirty(pid, 'ops');
           }
         }
 
@@ -1815,7 +1900,7 @@ const server = http.createServer(async (req, res)=>{
         if(idx===-1){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return; }
         const pid = mToggleFSO[1];
         products[idx].forceSoldOut = !products[idx].forceSoldOut;
-        markProductDirty(pid);
+        markProductDirty(pid, 'ops');
         await flushDirtyProducts();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, forceSoldOut: products[idx].forceSoldOut})); return;
       }
@@ -1826,7 +1911,7 @@ const server = http.createServer(async (req, res)=>{
         if(idx===-1){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return; }
         const pid = mToggleHidden[1];
         products[idx].hidden = !products[idx].hidden;
-        markProductDirty(pid);
+        markProductDirty(pid, 'ops');
         await flushDirtyProducts();
         clearHtmlCache(); // 单个隐藏/上架也即时清买家端页面缓存，保证与批量隐藏同步生效
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, hidden: products[idx].hidden})); return;
@@ -1845,7 +1930,7 @@ const server = http.createServer(async (req, res)=>{
             if(idx===-1) continue;
             if(products[idx].hidden === hidden) continue; // 已经是目标状态就跳过
             products[idx].hidden = hidden;
-            markProductDirty(pid);
+            markProductDirty(pid, 'ops');
             updated++;
           }
           if(updated) await flushDirtyProducts();

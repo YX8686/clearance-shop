@@ -48,12 +48,15 @@ def start_service():
     # 把 Python 侧选定的端口传给 node，确保 server.js 实际监听一致端口
     env = os.environ.copy()
     env['PORT'] = str(PORT)
-    # 2026-09-18：本地 Clash/TUN 环境复杂，关闭开机预热避免启动后请求卡死；
-    # 同时让 Node 能读系统代理，直连失败时自动走 Clash。
+    # 关闭开机预热，避免启动后大量并发请求把 Node 连接池占满。
     env['NO_PREWARM'] = '1'
-    env['NODE_USE_ENV_PROXY'] = '1'
-    env['HTTP_PROXY'] = 'http://127.0.0.1:7897'
-    env['HTTPS_PROXY'] = 'http://127.0.0.1:7897'
+    # 2026-09-20 修正：不再强制把 HTTP(S)_PROXY 指向 Clash（127.0.0.1:7897）。
+    # 实测 Clash 不稳时，带着这些变量启动会让 server.js 连 Supabase 频繁
+    # fetch failed / timeout，症状正是「后台切波次一直转圈、只切一半、买家端少品」。
+    # 改为让 server.js 自己 decideNetwork()：优先直连，直连失败再用 .env.local 里的
+    # SUPABASE_PROXY 兜底（见 server.js decideNetwork）。
+    for _k in ('HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'NODE_USE_ENV_PROXY'):
+        env.pop(_k, None)
 
     # 只在失败时输出；成功时保持静默，避免闪屏
     # CREATE_NO_WINDOW = 0x08000000，避免显示黑框
