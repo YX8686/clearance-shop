@@ -335,6 +335,19 @@ function inUrlWave(p){
 const $ = s=>document.querySelector(s);
 function money(n){ return '¥'+Number(n).toLocaleString('zh-CN'); }
 function escapeHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+// 缩略图 URL：把产品图（/img/... 代理或 Supabase 直链）追加 ?w=&h=&q=，走图片代理转换端点下发小图。
+function thumbUrl(u, w, h, q){
+  if(!u) return u;
+  let s = u;
+  const m = String(s).match(/\/storage\/v1\/object\/public\/(.+)$/);
+  if(m) s = '/img/' + m[1];
+  if(s.indexOf('/img/')!==0) return s;
+  const sep = s.indexOf('?')>=0 ? '&' : '?';
+  let qry = 'w='+w;
+  if(h && Number(h)>0) qry += '&h='+h;
+  qry += '&q='+(q||70);
+  return s + sep + qry;
+}
 
 function set(){
   const hiddenCats = (CONFIG && Array.isArray(CONFIG.hiddenCategories))?CONFIG.hiddenCategories:[];
@@ -344,7 +357,7 @@ function set(){
   }
   document.title = P.name;
   document.querySelector('meta[property="og:title"]').setAttribute('content', P.name);
-  document.getElementById('hero').src = P.image||'/assets/product-placeholder.svg';
+  document.getElementById('hero').src = thumbUrl(P.image||'/assets/product-placeholder.svg', 800, 1000, 75);
   document.getElementById('pName').textContent = P.name;
   document.getElementById('pSubtitle').textContent = P.subtitle||'';
   const hasSkus = Array.isArray(P.skus) && P.skus.length>0;
@@ -530,7 +543,7 @@ function openSkuModal(p, quickBuy){
   const firstOk = skus.find(s=>{ const st=skuStockOf(p,s); return st==null || st>0; });
   curSkuId = (firstOk || skus[0]).id;
   curSkuQty = 1;
-  document.getElementById('skuImg').src = p.image||'/assets/product-placeholder.svg';
+  document.getElementById('skuImg').src = thumbUrl(p.image||'/assets/product-placeholder.svg', 200, 200, 70);
   document.getElementById('skuPicked').textContent = '请选择型号';
   const minPrice = Math.min(...skus.map(s=>Number(s.price||p.price||0)));
   document.getElementById('skuPrice').innerHTML = money(minPrice)+'<small>/起</small>';
@@ -642,7 +655,7 @@ function renderCart(){
       }
       const row=document.createElement('div'); row.className='item';
       row.innerHTML=`
-        <img src="${info.image||'/assets/product-placeholder.svg'}" loading="lazy" decoding="async">
+        <img src="${thumbUrl(info.image||'/assets/product-placeholder.svg',120,150,70)}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src=this.src.split('?')[0]">
         <div class="info"><div class="n" style="line-height:1.5">${titleHtml}${detailHtml}</div><div class="p" style="margin-top:4px">${money(info.price)}</div></div>
         <div class="stepper"><button onclick="changeQty('${id}',-1)">−</button><span>${cart[id]}</span><button onclick="changeQty('${id}',1)">+</button></div>`;
       box.appendChild(row);
@@ -700,7 +713,7 @@ function showPendingModal(){
     const itemLines = o.items.map(it=>{
       const img = it.image || (PRODUCTS.find(p=>p.id===it.id)||{}).image || '/assets/logo.png';
       return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed #f0ece4">
-        <img src="${img}" style="width:40px;height:40px;border-radius:6px;object-fit:cover;background:#eee" onerror="this.src='/assets/logo.png'">
+        <img src="${thumbUrl(img,120,150,70)}" style="width:40px;height:40px;border-radius:6px;object-fit:cover;background:#eee" onerror="this.src='/assets/logo.png'">
         <div style="flex:1;min-width:0;font-size:13px">
           <div style="font-weight:600;color:#3a322b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${it.name}</div>
           <div style="font-size:12px;color:#9a8f82">${money(it.price)} × ${it.qty}</div>

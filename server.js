@@ -1104,7 +1104,7 @@ async function buildProductHtml(pid, urlWave){
     OG_IMAGE: htmlEscape(absUrl(ogImage, PUBLIC_BASE)),
     OG_URL: htmlEscape(PUBLIC_BASE + '/product/'+p.id),
     OG_PRICE: htmlEscape(p.price || ''),
-    HERO_IMAGE: htmlEscape(localImg(p.image) || '/assets/product-placeholder.svg'),
+    HERO_IMAGE: htmlEscape(thumbImg(p.image, 800, 1000, 75) || '/assets/product-placeholder.svg'),
     PRODUCT_JSON: jsonForScript(localizeProduct(p)),
     PRODUCTS_JSON: jsonForScript(localizeProducts(list)),
     CONFIG_JSON: jsonForScript(safeConfig)
@@ -1144,6 +1144,17 @@ function localImg(u){
   if(!u) return u;
   const m = String(u).match(/\/storage\/v1\/object\/public\/(.+)$/);
   return m ? '/img/' + m[1] : u;
+}
+// 缩略图 URL：把 /img/... 原图追加 ?w=&h=&q=，交由下方图片代理走 Supabase 转换端点下发小图。
+// 仅对 Supabase 公共图生效；本地占位图（/assets/...）原样返回，绝不破坏。
+function thumbImg(u, w, h, q){
+  const base = localImg(u);
+  if(!base || base.indexOf('/img/')!==0) return base;
+  const sep = base.indexOf('?')>=0 ? '&' : '?';
+  let qry = 'w='+w;
+  if(h && Number(h)>0) qry += '&h='+h;
+  qry += '&q='+(q||75);
+  return base + sep + qry;
 }
 function localizeProduct(p){
   if(!p || typeof p!=='object') return p;
@@ -2126,11 +2137,20 @@ const server = http.createServer(async (req, res)=>{
     if(method==='GET' && pathname==='/xlsx.full.min.js'){ sendFile(res, path.join(PUBLIC,'xlsx.full.min.js')); return; }
 
     // 图片加速代理：/img/shop/gallery/xxx.jpg → Supabase Storage，进程内缓存 + 7 天强缓存
+    // 缩略图：浏览器端 thumbUrl/thumbImg 会追加 ?w=&h=&q=，此时走 Supabase 图片转换端点下发小图（约 1/8 体积），
+    // 转换失败时自动回退原图，保证任何情况下都能出图、绝不让买家看到裂图。
     const mImg = pathname.match(/^\/img\/(.+)$/);
     if((method==='GET'||method==='HEAD') && mImg){
       const key = mImg[1];
       if(key.includes('..') || !/^shop\//.test(key)){ res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'}); res.end('not found'); return; }
-      const hit = imgCache.get(key);
+      // 缩略图参数（浏览器端追加）
+      const sp = u.searchParams;
+      const tw = parseInt(sp.get('w')||'',10);
+      const th = parseInt(sp.get('h')||'',10);
+      const tq = parseInt(sp.get('q')||'',10) || 70;
+      const isThumb = Number.isFinite(tw) && tw>0;
+      const cacheKey = key + (isThumb ? ('#'+tw+'x'+(Number.isFinite(th)&&th>0?th:'')+'q'+tq) : '');
+      const hit = imgCache.get(cacheKey);
       if(hit){
         res.writeHead(200,{'Content-Type':hit.type,'Content-Length':hit.buf.length,'Cache-Control':'public, max-age=604800, immutable'});
         res.end(method==='HEAD' ? undefined : hit.buf); return;
@@ -2147,13 +2167,26 @@ const server = http.createServer(async (req, res)=>{
       imgFetching++;
       try{
         const ctl = new AbortController(); const tm = setTimeout(()=>ctl.abort(), 20000);
-        const r = await fetch(process.env.SUPABASE_URL + '/storage/v1/object/public/' + key, { signal: ctl.signal });
+        let r;
+        if(isThumb){
+          // 优先走 Supabase 图片转换端点（小图），失败回退原图
+          const base = process.env.SUPABASE_URL + '/storage/v1/render/image/public/' + key;
+          const turl = base + '?width='+tw + (Number.isFinite(th)&&th>0 ? '&height='+th : '') + '&resize=cover&quality='+tq;
+          try{
+            r = await fetch(turl, { signal: ctl.signal });
+            if(!r.ok) throw new Error('transform '+r.status);
+          }catch(e){
+            r = await fetch(process.env.SUPABASE_URL + '/storage/v1/object/public/' + key, { signal: ctl.signal });
+          }
+        } else {
+          r = await fetch(process.env.SUPABASE_URL + '/storage/v1/object/public/' + key, { signal: ctl.signal });
+        }
         clearTimeout(tm);
         if(!r.ok){ res.writeHead(r.status===404?404:502,{'Content-Type':'text/plain; charset=utf-8'}); res.end('img fetch failed: '+r.status); return; }
         const buf = Buffer.from(await r.arrayBuffer());
         const type = r.headers.get('content-type') || 'image/jpeg';
         if(imgCache.size >= IMG_CACHE_MAX) imgCache.delete(imgCache.keys().next().value);
-        imgCache.set(key, { buf, type });
+        imgCache.set(cacheKey, { buf, type });
         res.writeHead(200,{'Content-Type':type,'Content-Length':buf.length,'Cache-Control':'public, max-age=604800, immutable'});
         res.end(method==='HEAD' ? undefined : buf); return;
       }catch(e){

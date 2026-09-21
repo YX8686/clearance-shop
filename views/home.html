@@ -339,6 +339,20 @@ function money(n){ return '¥'+Number(n).toLocaleString('zh-CN'); }
 function stripTags(s){ return String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').trim(); }
 function convertFontToSpan(html){ return String(html||'').replace(/<font\b[^>]*color=["']?([^"'>]+)["']?[^>]*>([\s\S]*?)<\/font>/gi, '<span style="color:$1">$2</span>').replace(/<font\b[^>]*>([\s\S]*?)<\/font>/gi, '$1'); }
 function escapeHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+// 缩略图 URL：把产品主图（/img/... 代理地址或 Supabase 直链）追加 ?w=&h=&q=，
+// 交由图片代理走 Supabase 转换端点下发小图（约 1/8 体积）。本地占位图原样返回。
+function thumbUrl(u, w, h, q){
+  if(!u) return u;
+  let s = u;
+  const m = String(s).match(/\/storage\/v1\/object\/public\/(.+)$/);
+  if(m) s = '/img/' + m[1];
+  if(s.indexOf('/img/')!==0) return s;
+  const sep = s.indexOf('?')>=0 ? '&' : '?';
+  let qry = 'w='+w;
+  if(h && Number(h)>0) qry += '&h='+h;
+  qry += '&q='+(q||70);
+  return s + sep + qry;
+}
 
 function copyText(text, msg){
   if(navigator.clipboard){
@@ -560,7 +574,7 @@ function renderGrid(){
   } else {
     list = (currentCat==='全部') ? visible : visible.filter(p=>String(p.category||'').trim()===currentCat);
   }
-  list.forEach(p=>{
+  list.forEach((p, idx)=>{
     const div=document.createElement('div'); div.className='card';
     const orig = (p.originalPrice && p.originalPrice>p.price) ? '<span class="orig">'+money(p.originalPrice)+'</span>' : '';
     const hasSkus = Array.isArray(p.skus) && p.skus.length>0;
@@ -569,15 +583,18 @@ function renderGrid(){
     const unitLabel = hasSkus ? '<small>/起</small>' : '';
     const tierTag = hasSkus ? productTierTag(p) : '';
     const soldOut = isSoldOut(p);
-    // 售罄：主图蒙半透明黑 + 居中斜向右上「已售罄」印章；未售罄保持原图可点进详情
+    // 缩略图：首屏前 6 张高优先级 + 立即加载，其余懒加载；onerror 自动回退原图，绝不裂图
+    const ph = p.image || '/assets/product-placeholder.svg';
+    const thumb = thumbUrl(ph, 400, 500, 70);
+    const loadAttr = idx<6 ? 'loading="eager" fetchpriority="high"' : 'loading="lazy"';
     const imgHtml = soldOut
       ? `<div class="imgwrap" onclick="goProduct('${p.id}')">
-           <img class="img" src="${p.image||'/assets/product-placeholder.svg'}" loading="lazy" decoding="async">
+           <img class="img" src="${thumb}" ${loadAttr} decoding="async" onerror="this.onerror=null;this.src=this.src.split('?')[0]">
            <div class="soldout-veil"></div>
            <div class="soldout-stamp">已售罄</div>
          </div>`
       : `<div class="imgwrap" onclick="goProduct('${p.id}')">
-           <img class="img" src="${p.image||'/assets/product-placeholder.svg'}" loading="lazy" decoding="async">
+           <img class="img" src="${thumb}" ${loadAttr} decoding="async" onerror="this.onerror=null;this.src=this.src.split('?')[0]">
          </div>`;
     const btnHtml = soldOut
       ? `<button class="add" disabled>已售罄</button>`
@@ -635,7 +652,7 @@ function openSkuModal(pid){
   // 默认选中第一个有货的规格；全部售罄则停在第一个（按钮置灰）
   const firstOk = skus.find(s=>{ const st=skuStockOf(p,s); return st==null || st>0; });
   curSkuId = (firstOk || skus[0]).id; curSkuQty=1;
-  document.getElementById('skuImg').src = p.image||'/assets/product-placeholder.svg';
+  document.getElementById('skuImg').src = thumbUrl(p.image||'/assets/product-placeholder.svg', 200, 200, 70);
   document.getElementById('skuPicked').textContent = '请选择型号';
   const minPrice = Math.min(...skus.map(s=>Number(s.price||p.price||0)));
   document.getElementById('skuPrice').innerHTML = money(minPrice)+'<small>/起</small>';
@@ -651,7 +668,7 @@ function renderSkuOptions(){
   box.innerHTML = p.skus.map(s=>{
     const st = skuStockOf(p, s);
     const off = st!=null && st<=0; // 该规格售罄，不可选
-    const imgSrc = escapeHtml(s.image||p.image||'/assets/products/default.svg');
+    const imgSrc = escapeHtml(thumbUrl(s.image||p.image||'/assets/products/default.svg', 200, 200, 70));
     return `<div class="sku-opt ${s.id===curSkuId?'on':''} ${off?'off':''}" ${off?'':`onclick="selectSku('${s.id}')"`}>
       <img class="sk-img" src="${imgSrc}" onerror="this.src='/assets/products/default.svg'" alt="">
       <div class="sk-body">
@@ -745,7 +762,7 @@ function renderCart(){
       }
       const row=document.createElement('div'); row.className='item';
       row.innerHTML=`
-        <img src="${info.image||'/assets/product-placeholder.svg'}" loading="lazy" decoding="async">
+        <img src="${thumbUrl(info.image||'/assets/product-placeholder.svg',120,150,70)}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src=this.src.split('?')[0]">
         <div class="info"><div class="n" style="line-height:1.5">${titleHtml}${detailHtml}</div><div class="p" style="margin-top:4px">${money(info.price)}</div></div>
         <div class="stepper"><button onclick="changeQty('${id}',-1)">−</button><span>${cart[id]}</span><button onclick="changeQty('${id}',1)">+</button></div>`;
       box.appendChild(row);
@@ -803,7 +820,7 @@ function showPendingModal(){
     const itemLines = o.items.map(it=>{
       const img = it.image || (PRODUCTS.find(p=>p.id===it.id)||{}).image || '/assets/logo.png';
       return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed #f0ece4">
-        <img src="${img}" style="width:40px;height:40px;border-radius:6px;object-fit:cover;background:#eee" onerror="this.src='/assets/logo.png'">
+        <img src="${thumbUrl(img,120,150,70)}" style="width:40px;height:40px;border-radius:6px;object-fit:cover;background:#eee" onerror="this.src='/assets/logo.png'">
         <div style="flex:1;min-width:0;font-size:13px">
           <div style="font-weight:600;color:#3a322b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${it.name}</div>
           <div style="font-size:12px;color:#9a8f82">${money(it.price)} × ${it.qty}</div>
