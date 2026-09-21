@@ -33,7 +33,12 @@ const PORT = process.env.PORT || 4100;
 // TypeError: fetch failed），而 decideNetwork 只用 3.5s 的 HEAD 探测就误判「直连可用」→
 // 全站读库/写库大面积超时（订单/产品读取 7s、boot 串行 4 次调用 ≈ 96s、保存失败）。
 // 现改为：代理端口可用就优先走本机代理（实测 ~3s），并把单次超时放宽到 20s。
-const ADMIN_BUILD = 'fix48-2026-09-21-net-prefer-proxy';
+// fix49（2026-09-21）：根治「显示保存成功但其实没落库」——
+//  ① 保存后**回读校验**（updatedAt 不一致就报失败，绝不假成功）；
+//  ② 一次调用失败就**切换网络路径**（直连 ⇄ 本机代理）再试，不在同一条坏路上反复重试；
+//  ③ `flushDirtyProducts` 在 ops 模式**读不到云端基准时改成跳过**（原来会拿整份本地旧对象覆盖云端，
+//     把后台刚保存的名称/描述/SKU/图片冲掉）。
+const ADMIN_BUILD = 'fix49-2026-09-21-verify-save';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -87,6 +92,24 @@ function enableEnvProxy(proxy){
   if(!process.env.HTTP_PROXY) process.env.HTTP_PROXY = proxy;
   if(!process.env.HTTPS_PROXY) process.env.HTTPS_PROXY = proxy;
   NET_MODE = 'proxy';
+}
+// fix49：本机「直连」和「本机代理」两条路都时好时坏（实测同一分钟内一条 3s、一条 10s+）。
+// 一次调用失败时，就切到另一条路再试，而不是在同一条坏路上反复重试。
+function switchNetworkPath(label){
+  const proxy = String(process.env.SUPABASE_PROXY || '').trim();
+  if(!proxy) return;
+  if(NET_MODE === 'proxy'){
+    delete process.env.NODE_USE_ENV_PROXY;
+    delete process.env.HTTP_PROXY;
+    delete process.env.HTTPS_PROXY;
+    NET_MODE = 'direct';
+  } else {
+    process.env.NODE_USE_ENV_PROXY = '1';
+    process.env.HTTP_PROXY = proxy;
+    process.env.HTTPS_PROXY = proxy;
+    NET_MODE = 'proxy';
+  }
+  console.warn('[Net] ' + (label||'') + ' 失败 → 切换网络路径为 ' + NET_MODE);
 }
 function probeDirect(baseUrl, timeoutMs){
   return new Promise(resolve=>{
@@ -191,7 +214,10 @@ async function withRetry(fn, label, retries=2){
     catch(e){
       lastErr=e;
       console.error(`[${label}] 云端第${i+1}/${retries}次调用失败:`, e.message);
-      if(i<retries-1) await new Promise(r=>setTimeout(r, 600));
+      if(i<retries-1){
+        switchNetworkPath(label);            // fix49：失败就换另一条路（直连 ⇄ 代理）再试
+        await new Promise(r=>setTimeout(r, 600));
+      }
     }
   }
   throw lastErr;
@@ -352,9 +378,11 @@ const DEFAULT_CONFIG = {
   countdownManualIndex: -1
 };
 
-let products = [];
+// fix49：启动即用本地缓存垫底（而不是空数组），这样即使云端慢到 boot 超时，
+// 后台也能立刻用「上一次的本地数据」打开，不会白屏。boot 完成后会用云端最新数据覆盖。
+let products = readJson('products.json', []);
 let config = DEFAULT_CONFIG;
-let orders = [];
+let orders = [];   // 订单不预填磁盘缓存（boot 一定从云端覆盖；避免任何"用旧订单当写源"的可能）
 let booted = false;
 let bootPromise = null;
 
@@ -577,13 +605,20 @@ async function flushDirtyProducts(){
     console.error('[flushDirtyProducts] 写前读云端基准失败（本次退化为整行写入）:', e.message);
   }
   // 云端模式：批量 upsert，把 N 次单条网络往返合并为 1 次，显著降低 Supabase 免费层抖动概率
+  // fix49：ops 模式但「写前读基准」失败（base 拿不到）时，**绝不能**拿整份本地旧对象覆盖云端
+  //（那会把后台刚保存的名称/描述/SKU/图片冲掉）。此时跳过该行、保留为脏行，下次拿到基准再写。
+  const opsNoBase = [];
   const rows = ids.map(id=>{
     const local = products.find(x=>x.id===id);
     if(!local) return null;
     let val = local;
     const mode = dirtyModes.get(id) || 'full';
     const base = cloudRows.get(id);
-    if(mode === 'ops' && base && typeof base==='object' && !Array.isArray(base)){
+    if(mode === 'ops'){
+      if(!(base && typeof base==='object' && !Array.isArray(base))){
+        opsNoBase.push(id);
+        return null;
+      }
       // 以云端最新行为基准，只覆盖本次真正改动的"操作类字段"
       val = Object.assign({}, base, {
         stock: local.stock,
@@ -606,6 +641,7 @@ async function flushDirtyProducts(){
     return { key:'product:'+id, value:val };
   }).filter(Boolean);
   const failed = [];
+  opsNoBase.forEach(id=>failed.push(id));   // 未写入的行 → 计入失败：保留脏行 + 让上层能感知
   if(rows.length){
     try {
       await sbRun(()=>sb.from('shop_data').upsert(rows), 'saveProductRows:'+rows.length);
@@ -1238,7 +1274,10 @@ async function prewarmImages(){
 
 // ---------- 路由 ----------
 const server = http.createServer(async (req, res)=>{
-  try { await ensureBoot(); } catch(e){
+  // fix49：boot 最多只等 8 秒。弱网（Supabase 慢/超时时）原来会「连 /admin 都打不开」——
+  // 因为每个请求都无上限地 await ensureBoot()。现在超时后先用本地缓存数据响应，boot 在后台继续跑，
+  // 跑完（内存刷新）后下一次请求就是最新数据。
+  try { await Promise.race([ ensureBoot(), new Promise(r=>setTimeout(r, 8000)) ]); } catch(e){
     console.error('[Boot Error]', e);
     res.writeHead(503,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'boot_failed', message:e.message})); return;
   }
@@ -1955,6 +1994,17 @@ const server = http.createServer(async (req, res)=>{
         }
         if(!saved){
           res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'云端保存失败：'+lastErr.message})); return;
+        }
+        // fix49：写后回读校验 —— 只有云端确实存下了（回读到的 updatedAt 与本次一致）才报成功，
+        // 从根上杜绝「显示保存成功、其实没落库」这种最误导人的情况。
+        try{
+          const rb = await withRetry(()=>sb.from('shop_data').select('value').eq('key','product:'+item.id).maybeSingle(), 'verifySave:'+item.id, 2);
+          const v = rb && rb.data && rb.data.value;
+          if(!v || Number(v.updatedAt) !== Number(item.updatedAt)){
+            res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'云端未确认写入（回读不一致），请再点一次「保存产品」重试'})); return;
+          }
+        }catch(e){
+          res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'云端写入状态未确认（回读失败：'+e.message+'），请稍后重试'})); return;
         }
         recordSaveId(clientSaveId, item);
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, product:item})); return;
