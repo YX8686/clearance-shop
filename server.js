@@ -3,6 +3,7 @@
 // Render 云端启动：先 listen 端口再异步 boot，避免健康检查超时。
 const http = require('http');
 const https = require('https');
+const net = require('net');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -27,7 +28,12 @@ const PORT = process.env.PORT || 4100;
 // fix47（2026-09-21）：图片上传加固 —— Supabase Storage 抖动时重试 3 次；
 // 仍失败则返回空串让前端明确报错，绝不再静默回退成本地 '/assets/...' 相对路径
 // （那种路径云端 Render 取不到，会导致买家端产品主图裂图，真实故障：十全大补/精雕眼霜）。
-const ADMIN_BUILD = 'fix47-2026-09-21-image-upload-retry';
+// fix48（2026-09-21）：本地后台「打开要 90~100 秒」「改库存保存显示成功但没变」的真根因 =
+// 本机直连 Supabase 极慢（实测单次 10s+；server.log 刷满 loadProducts timeout / saveProductRow
+// TypeError: fetch failed），而 decideNetwork 只用 3.5s 的 HEAD 探测就误判「直连可用」→
+// 全站读库/写库大面积超时（订单/产品读取 7s、boot 串行 4 次调用 ≈ 96s、保存失败）。
+// 现改为：代理端口可用就优先走本机代理（实测 ~3s），并把单次超时放宽到 20s。
+const ADMIN_BUILD = 'fix48-2026-09-21-net-prefer-proxy';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -50,12 +56,14 @@ loadEnvLocal();
 // supabase fetch 加超时（默认 fetch 不带超时，Supabase 免费层冷启动慢/抖动时会无限挂起，
 // 商家后台"确认收款"会卡到 30s+）。30s 已足够覆盖冷启动，但够短能让前端尽快感知失败。
 let sb = null;
+// 单次云端调用超时（fix48：12s → 20s）。本机直连 Supabase 实测 10s+，12s 会频繁误判超时。
+const SB_TIMEOUT_MS = Number(process.env.SUPABASE_TIMEOUT_MS) || 20000;
 if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
   try {
     const { createClient } = require('@supabase/supabase-js');
     const fetchWithTimeout = (url, opts) => {
       const ctl = new AbortController();
-      const t = setTimeout(() => ctl.abort(), 12000);
+      const t = setTimeout(() => ctl.abort(), SB_TIMEOUT_MS);
       return fetch(url, { ...opts, signal: ctl.signal }).finally(() => clearTimeout(t));
     };
     sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, { global: { fetch: fetchWithTimeout } });
@@ -103,6 +111,21 @@ function probeDirect(baseUrl, timeoutMs){
     r.end();
   });
 }
+// TCP 端口探测：本机代理（Clash 等）是否在监听
+function probePort(host, port, timeoutMs){
+  return new Promise(resolve=>{
+    let done = false;
+    const finish = v => { if(!done){ done = true; resolve(v); } };
+    let s;
+    try { s = net.connect({ host, port }); } catch(e){ return finish(false); }
+    const t = setTimeout(()=>{ try{ s.destroy(); }catch(e){} finish(false); }, timeoutMs);
+    s.on('connect', ()=>{ clearTimeout(t); try{ s.destroy(); }catch(e){} finish(true); });
+    s.on('error', ()=>{ clearTimeout(t); finish(false); });
+  });
+}
+// 2026-09-21（fix48）策略反转：本机实测「直连 Supabase 很慢」（单次 10s+，日志刷 timeout / fetch failed），
+// 「走本机代理 ~3s」。旧逻辑只用 3.5s 的 HEAD 探测就判「直连可用」→ 结果全站超时（后台打开 90~100s、保存失败）。
+// 新逻辑：代理端口在监听 → 优先走代理；代理不可用（Clash 没开）→ 才直连。
 async function decideNetwork(){
   if(!USE_SUPABASE) return;
   const proxy = String(process.env.SUPABASE_PROXY || '').trim();
@@ -112,10 +135,14 @@ async function decideNetwork(){
     console.log('[Net] 已按 SUPABASE_FORCE_PROXY 强制走代理：' + proxy);
     return;
   }
-  const directOk = await probeDirect(process.env.SUPABASE_URL, 3500);
-  if(directOk){ NET_MODE = 'direct'; console.log('[Net] Supabase 直连可用，不启用代理'); return; }
-  enableEnvProxy(proxy);
-  console.log('[Net] Supabase 直连不可用（Clash TUN？），已启用代理：' + proxy);
+  const m = proxy.match(/^https?:\/\/([^:\/]+):(\d+)/);
+  if(m && await probePort(m[1], Number(m[2]), 800)){
+    enableEnvProxy(proxy);
+    console.log('[Net] 检测到本机代理端口可用，优先走代理：' + proxy);
+    return;
+  }
+  NET_MODE = 'direct';
+  console.log('[Net] 本机代理端口不可用，改用直连');
 }
 
 function ensureDir(d){ if(!fs.existsSync(d)) fs.mkdirSync(d, {recursive:true}); }
@@ -157,9 +184,9 @@ async function withRetry(fn, label, retries=2){
   let lastErr;
   for(let i=0;i<retries;i++){
     try{
-      // 12s 单调用超时：Supabase 免费层偶发 fetch 永久挂起，必须强制释放，防止 withLock 死锁
-      // （2026-09-13 从 8s 放宽到 12s：走本机代理首次建连/TLS 握手较慢，8s 会误判失败）
-      return await Promise.race([fn(), new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')), 12000))]);
+      // 单调用超时（fix48：12s → 20s）：Supabase 免费层偶发 fetch 永久挂起必须强制释放，防止 withLock 死锁；
+      // 同时本机直连 Supabase 实测 10s+，12s 会频繁误判超时。
+      return await Promise.race([fn(), new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')), SB_TIMEOUT_MS))]);
     }
     catch(e){
       lastErr=e;
@@ -344,32 +371,35 @@ async function boot(){
   const seedProducts = readJson('products.json', []);
   const seedConfig = readJson('config.json', DEFAULT_CONFIG);
   const seedOrders = readJson('orders.json', []);
-  // boot 阶段优雅降级：从云端 product:* 独立行聚合；失败时使用本地 data/*.json 种子
-  try { products = await loadProductsFromRows(seedProducts); }
-  catch(e){ console.error('[boot] products 加载失败，使用本地种子：', e.message); products = seedProducts; }
-  try { config = await loadKV('config', seedConfig); }
-  catch(e){ console.error('[boot] config 加载失败，使用本地种子：', e.message); config = seedConfig; }
-  // 合并默认值：后续新增字段（如 hiddenCategories）不会在老配置里缺失
-  config = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config ? config : {}) };
-  // 订单载入：优先从独立行 order:* 聚合（新方案，并发安全）；若无则回退旧 orders 大数组行并拆分迁移
-  try {
-    if(USE_SUPABASE){
-      const { data, error } = await sb.from('shop_data').select('key,value').like('key','order:%');
-      if(!error && data && data.length){
-        orders = data.map(r=>r.value).filter(Boolean);
-      } else {
+  // fix48：products / config / orders 三类数据彼此独立 → 并发加载。
+  // 旧写法是串行 3 次云端往返之和（本机单次 4~10s，串行叠加就是后台「打开要 90~100 秒」的主因之一），
+  // 而 server 每个请求都要 await ensureBoot()，串行会把首屏整体拖住。并发后 boot ≈ 最慢的那一次。
+  // 各自失败仍降级到本地 data/*.json 种子，失败行为与旧版完全一致。
+  const [pRes, cRes, oRes] = await Promise.all([
+    (async()=>{ try{ return await loadProductsFromRows(seedProducts); }
+      catch(e){ console.error('[boot] products 加载失败，使用本地种子：', e.message); return seedProducts; } })(),
+    (async()=>{ try{ return await loadKV('config', seedConfig); }
+      catch(e){ console.error('[boot] config 加载失败，使用本地种子：', e.message); return seedConfig; } })(),
+    // 订单载入：优先从独立行 order:* 聚合（新方案，并发安全）；若无则回退旧 orders 大数组行并拆分迁移
+    (async()=>{
+      try{
+        if(!USE_SUPABASE) return seedOrders;
+        const { data, error } = await sb.from('shop_data').select('key,value').like('key','order:%');
+        if(!error && data && data.length) return data.map(r=>r.value).filter(Boolean);
         const arr = await loadKV('orders', seedOrders);
-        orders = Array.isArray(arr)?arr:[];
-        if(orders.length){
-          await Promise.all(orders.map(o=> (o&&o.id) ? sb.from('shop_data').upsert({key:'order:'+o.id, value:o}).catch(e=>console.error('[migrate]',e.message)) : Promise.resolve()));
-          console.log('[migrate] 已拆分旧 orders 数组为', orders.length, '条独立行');
+        const list = Array.isArray(arr)?arr:[];
+        if(list.length){
+          await Promise.all(list.map(o=> (o&&o.id) ? sb.from('shop_data').upsert({key:'order:'+o.id, value:o}).catch(e=>console.error('[migrate]',e.message)) : Promise.resolve()));
+          console.log('[migrate] 已拆分旧 orders 数组为', list.length, '条独立行');
         }
-      }
-    } else {
-      orders = seedOrders;
-    }
-  }
-  catch(e){ console.error('[boot] orders 加载失败，使用本地种子：', e.message); orders = seedOrders; }
+        return list;
+      }catch(e){ console.error('[boot] orders 加载失败，使用本地种子：', e.message); return seedOrders; }
+    })()
+  ]);
+  products = pRes;
+  // 合并默认值：后续新增字段（如 hiddenCategories）不会在老配置里缺失
+  config = { ...DEFAULT_CONFIG, ...(typeof cRes==='object' && cRes ? cRes : {}) };
+  orders = Array.isArray(oRes) ? oRes : [];
   if(config.paymentQr && !config.paymentWechatQr) config.paymentWechatQr = config.paymentQr;
   booted = true;
   console.log('[Data] 模式=' + (USE_SUPABASE ? 'Supabase云端' : '本地文件') +

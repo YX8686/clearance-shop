@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """商城启动器：启动 Node 服务并打开浏览器"""
 import os
+import re
 import sys
 import time
 import socket
@@ -18,6 +19,19 @@ def is_port_open(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.5)
         return s.connect_ex(('127.0.0.1', port)) == 0
+
+
+def read_env_local_proxy():
+    """从 .env.local 读 SUPABASE_PROXY（本机 Clash 代理地址），读不到返回空串"""
+    try:
+        with open(os.path.join(SHOP_DIR, '.env.local'), encoding='utf-8') as f:
+            for line in f:
+                m = re.match(r'^\s*SUPABASE_PROXY\s*=\s*(.+?)\s*$', line)
+                if m:
+                    return m.group(1)
+    except Exception:
+        pass
+    return ''
 
 
 def find_node_pid():
@@ -50,13 +64,21 @@ def start_service():
     env['PORT'] = str(PORT)
     # 关闭开机预热，避免启动后大量并发请求把 Node 连接池占满。
     env['NO_PREWARM'] = '1'
-    # 2026-09-20 修正：不再强制把 HTTP(S)_PROXY 指向 Clash（127.0.0.1:7897）。
-    # 实测 Clash 不稳时，带着这些变量启动会让 server.js 连 Supabase 频繁
-    # fetch failed / timeout，症状正是「后台切波次一直转圈、只切一半、买家端少品」。
-    # 改为让 server.js 自己 decideNetwork()：优先直连，直连失败再用 .env.local 里的
-    # SUPABASE_PROXY 兜底（见 server.js decideNetwork）。
-    for _k in ('HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'NODE_USE_ENV_PROXY'):
-        env.pop(_k, None)
+    # 2026-09-21（fix48）策略反转：本机实测「直连 Supabase 极慢」——单次调用 10s+，
+    # server.log 刷满 loadProducts timeout / saveProductRow「TypeError: fetch failed」，
+    # 症状正是「桌面后台打开要 90~100 秒」「改库存保存显示成功但没变」。
+    # 而走本机代理（Clash 127.0.0.1:7897）约 3s。所以：启动 node 前就把代理环境变量备好
+    # （NODE_USE_ENV_PROXY 必须在进程启动前设好，全局 fetch 才会读 HTTP(S)_PROXY）；
+    # 代理端口不可用（Clash 没开）时才清掉、回退直连。
+    _proxy = read_env_local_proxy() or 'http://127.0.0.1:7897'
+    _m = re.match(r'^https?://([^:/]+):(\d+)', _proxy)
+    if _m and is_port_open(int(_m.group(2))):
+        env['NODE_USE_ENV_PROXY'] = '1'
+        env['HTTP_PROXY'] = _proxy
+        env['HTTPS_PROXY'] = _proxy
+    else:
+        for _k in ('HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'NODE_USE_ENV_PROXY'):
+            env.pop(_k, None)
 
     # 只在失败时输出；成功时保持静默，避免闪屏
     # CREATE_NO_WINDOW = 0x08000000，避免显示黑框
