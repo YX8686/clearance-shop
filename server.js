@@ -21,7 +21,10 @@ const PORT = process.env.PORT || 4100;
 // fix45（2026-09-21）：版本号必须随「前端 admin.html 的任何修复」一起升位——
 // 自检只比对版本字符串，若前端改了但这里不动，用户已经打开的旧标签页永远不会重载，
 // 会一直跑旧 JS（症状：保存成功但重开还是旧值）。
-const ADMIN_BUILD = 'fix45-2026-09-21-stale-tab-auto-reload';
+// fix46（2026-09-21）：点「编辑」时不再只信页面内存 PRODUCTS，先向 GET /api/products/:id
+// 拉一次该产品的云端真值再填弹窗 —— 从根上消除「数据已存好、打开却显示旧值」，
+// 手机端（走 onrender 云端后台）和任何旧标签页都同样生效。
+const ADMIN_BUILD = 'fix46-2026-09-21-edit-fetch-fresh';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -1190,6 +1193,25 @@ const server = http.createServer(async (req, res)=>{
       if(method==='GET' && pathname==='/api/products'){
         const list = await getProducts();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(list)); return;
+      }
+      // fix46（2026-09-21）：单个产品「云端真值」读取。
+      // 后台点「编辑」时先调它：直接读云端 product:<id> 这一行，绕过本实例的内存副本与读缓存，
+      // 保证弹窗里显示的一定是数据库里的最新内容（根因：editProduct 原来只读页面内存 PRODUCTS，
+      // 内存一旧，就会出现「保存成功、打开还是旧值」）。
+      // 若该产品正有待写回的 dirty 标记、或云端瞬时读失败，则回退到内存副本，保证接口永远可用。
+      const mGetOneProd = pathname.match(/^\/api\/products\/([\w-]+)$/);
+      if(method==='GET' && mGetOneProd){
+        const pid = mGetOneProd[1];
+        let item = null;
+        try{
+          if(USE_SUPABASE && sb && !dirtyProductIds.has(pid)){
+            const { data, error } = await withRetry(()=>sb.from('shop_data').select('value').eq('key','product:'+pid).maybeSingle(), 'getProductRow:'+pid, 2);
+            if(!error && data && data.value) item = data.value;
+          }
+        }catch(e){ console.error('[GET /api/products/:id] 读云端失败，回退内存副本：', e.message); }
+        if(!item) item = products.find(x=>x.id===pid) || null;
+        if(!item){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, error:'not_found'})); return; }
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, product:item})); return;
       }
       if(method==='GET' && pathname==='/api/config'){
         const out = { ...DEFAULT_CONFIG, ...cfgSafe(await getConfig()) };

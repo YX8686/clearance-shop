@@ -2122,7 +2122,26 @@ async function toggleHidden(id){
 }
 
 function newProduct(){ editingProdId=null; openProdModal({}); }
-function editProduct(id){ editingProdId=id; openProdModal(PRODUCTS.find(p=>p.id===id)||{}); }
+// fix46（2026-09-21）：点「编辑」时先向服务器拉取该产品的云端真值，再填弹窗。
+// 原来只读页面内存 PRODUCTS —— 内存一旦陈旧（手机端走云端后台、旧标签页、别处刚改过），
+// 就会出现「保存成功、打开还是旧值」。现在无论页面多旧，弹窗里一定是库里的最新内容。
+async function editProduct(id){
+  editingProdId=id;
+  let p = PRODUCTS.find(x=>x.id===id) || {};
+  try{
+    const r = await fetch('/api/products/'+encodeURIComponent(id), {cache:'no-store'});
+    if(r.ok){
+      const d = await r.json();
+      const fresh = d && (d.product || (d.id ? d : null));
+      if(fresh && fresh.id){
+        p = fresh;
+        const _i = PRODUCTS.findIndex(x=>x.id===fresh.id);
+        if(_i>=0) PRODUCTS[_i]=Object.assign({},PRODUCTS[_i],fresh); else PRODUCTS.push(fresh);
+      }
+    }
+  }catch(e){ console.warn('编辑前拉取最新产品失败，改用本地缓存：', e); }
+  openProdModal(p);
+}
 function openProdModal(p){
   document.getElementById('prodModalTitle').textContent=editingProdId?'编辑产品':'新增产品';
   document.getElementById('pName').value=p.name||'';
