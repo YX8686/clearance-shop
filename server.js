@@ -24,7 +24,10 @@ const PORT = process.env.PORT || 4100;
 // fix46（2026-09-21）：点「编辑」时不再只信页面内存 PRODUCTS，先向 GET /api/products/:id
 // 拉一次该产品的云端真值再填弹窗 —— 从根上消除「数据已存好、打开却显示旧值」，
 // 手机端（走 onrender 云端后台）和任何旧标签页都同样生效。
-const ADMIN_BUILD = 'fix46-2026-09-21-edit-fetch-fresh';
+// fix47（2026-09-21）：图片上传加固 —— Supabase Storage 抖动时重试 3 次；
+// 仍失败则返回空串让前端明确报错，绝不再静默回退成本地 '/assets/...' 相对路径
+// （那种路径云端 Render 取不到，会导致买家端产品主图裂图，真实故障：十全大补/精雕眼霜）。
+const ADMIN_BUILD = 'fix47-2026-09-21-image-upload-retry';
 const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
@@ -266,16 +269,37 @@ async function saveImage(base64, fileName, storageSub){
   const localFile = path.join(localDir, file);
   const localUrl = relDir ? '/assets/' + relDir + '/' + file : '/assets/' + file;
 
+  // fix47（2026-09-21）：云端存储抖动（fetch failed / timeout）必须重试，且绝不返回本地相对路径。
+  // 旧逻辑：storage 上传一次失败 → 静默 catch → 落本地磁盘并返回 '/assets/...' 相对路径。
+  //   但云端 Render 上没有这个文件 → 产品主图在买家端直接裂图。
+  //   真实故障（2026-09-21）：「3588十全大补」「精雕眼霜15g」两张主图就是这样裂的，
+  //   图片只存在于商家电脑 localhost，云端 404。
+  // 新逻辑：storage 上传最多重试 3 次（间隔 0.8s / 1.6s）；仍失败则返回空串，
+  //   让调用方明确报「上传失败」（图库上传接口已有 if(!url) → 500 分支），
+  //   绝不把云端取不到的本地路径写进产品数据。
+  // 本地模式（未配 Supabase）保持原样：写 PUBLIC/assets 并返回相对路径，本地能正常显示。
   if(USE_SUPABASE){
-    try{
-      const safeSub = toSafeStoragePath(storageSub);
-      const safeFile = toSafeStorageKey(file, true);
-      const objectPath = (safeSub ? safeSub + '/' : 'uploads/') + safeFile;
-      const { error } = await sb.storage.from('shop').upload(objectPath, buf, { contentType: m[1], upsert: true });
-      if(error) throw error;
-      const { data:{ publicUrl } } = sb.storage.from('shop').getPublicUrl(objectPath);
-      return publicUrl;
-    }catch(e){ console.error('[saveImage] storage failed, fallback local', e.message); }
+    const safeSub = toSafeStoragePath(storageSub);
+    const safeFile = toSafeStorageKey(file, true);
+    const objectPath = (safeSub ? safeSub + '/' : 'uploads/') + safeFile;
+    let lastErr = null;
+    for(let attempt=0; attempt<3; attempt++){
+      try{
+        const { error } = await sb.storage.from('shop').upload(objectPath, buf, { contentType: m[1], upsert: true });
+        if(error) throw error;
+        const { data:{ publicUrl } } = sb.storage.from('shop').getPublicUrl(objectPath);
+        if(!publicUrl) throw new Error('getPublicUrl 返回空');
+        return publicUrl;
+      }catch(e){
+        lastErr = e;
+        console.error('[saveImage] storage 第'+(attempt+1)+'/3次失败:', e && e.message);
+        if(attempt<2) await new Promise(r=>setTimeout(r, 800*(attempt+1)));
+      }
+    }
+    // 三次都失败：保留一份本地副本便于人工补救，但绝不把它返回给前端
+    try{ fs.writeFileSync(localFile, buf); console.error('[saveImage] 已留本地副本（云端不可达，未返回）:', localFile); }catch(_){}
+    console.error('[saveImage] 云端存储三次均失败，放弃上传:', lastErr && lastErr.message);
+    return '';
   }
   fs.writeFileSync(localFile, buf);
   return localUrl;
