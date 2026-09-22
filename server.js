@@ -38,8 +38,23 @@ const PORT = process.env.PORT || 4100;
 //  ② 一次调用失败就**切换网络路径**（直连 ⇄ 本机代理）再试，不在同一条坏路上反复重试；
 //  ③ `flushDirtyProducts` 在 ops 模式**读不到云端基准时改成跳过**（原来会拿整份本地旧对象覆盖云端，
 //     把后台刚保存的名称/描述/SKU/图片冲掉）。
-const ADMIN_BUILD = 'fix49-2026-09-21-verify-save';
-const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});})();</script>';
+// fix50（2026-09-22）：后台自检改为**每 10 秒轮询**（原来只在页面打开时查一次）——
+// 这样「开了很久没关的旧标签页」也会在版本变化后自动刷新，不再永远跑旧 JS、
+// 不再出现「旧页面弹了保存成功其实根本没发请求」。
+// fix51（2026-09-22）：后台产品主图集体变「暂无图片」——
+// 真根因不在商城代码：后台卡片是浏览器**直连 supabase.co**（买家端早就改走同源 /img/ 代理了，唯独后台漏了），
+// 而本机到境外的链路时通时不通（Clash 节点挂掉时 GitHub/Supabase/Render 全 000），图片请求全灭 → 前端回退占位图。
+// 两道加固：① admin.html 主图统一走同源 /img/ 代理（拉不到再退回浏览器直连，两条路总有一条通）；
+//          ② /img/ 增加**磁盘缓存**，只要成功拉到过一次就落盘，之后重启进程/断外网都还能出图。
+const ADMIN_BUILD = 'fix52-2026-09-22-toggle-fast-feedback-order-decouple';
+// fix50（2026-09-22）：自检从「只在打开时查一次」升级为「每 10 秒查一次」。
+// 根因：只查一次的写法对「开了很久没关的旧标签页」完全无效 —— 那页永远跑旧 JS，
+// 旧 JS 在请求没发出去/失败时也会弹「保存成功」，于是「保存成功但没保存」反复出现。
+// 现在任何打开着的后台页，只要版本一变就会自动重载；正在编辑弹窗时不打断（避免丢输入）。
+const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";'
+  + 'function editing(){try{var m=document.getElementById("prodModal");return !!(m&&m.classList.contains("show"));}catch(e){return false;}}'
+  + 'function chk(){if(editing())return;fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});}'
+  + 'chk();setInterval(chk,10000);})();</script>';
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
 function loadEnvLocal(){
@@ -203,20 +218,25 @@ const kvCache = new Map(); // key -> { ts, value, promise }
 // 云端调用重试：覆盖 Supabase 免费层间歇 fetch failed / 冷启动抖动
 // 默认 2 次快速重试（失败后立即再试 1 次，间隔 600ms）。
 // 以前默认 5 次指数退避（最长 6.4s）导致保存明显变慢，且前端超时重试会造成重复产品。
-async function withRetry(fn, label, retries=2){
+async function withRetry(fn, label, retries=2, timeoutMs){
+  const limit = Number(timeoutMs) > 0 ? Number(timeoutMs) : SB_TIMEOUT_MS;
   let lastErr;
   for(let i=0;i<retries;i++){
     try{
       // 单调用超时（fix48：12s → 20s）：Supabase 免费层偶发 fetch 永久挂起必须强制释放，防止 withLock 死锁；
       // 同时本机直连 Supabase 实测 10s+，12s 会频繁误判超时。
-      return await Promise.race([fn(), new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')), SB_TIMEOUT_MS))]);
+      // fix52：允许调用方传更短的超时（后台点开关这类小操作不该让柒木等 80 秒）。
+      return await Promise.race([fn(), new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')), limit))]);
     }
     catch(e){
       lastErr=e;
-      console.error(`[${label}] 云端第${i+1}/${retries}次调用失败:`, e.message);
+      // fix52：把 undici 的真实底层原因（ECONNRESET / socket hang up / ENOTFOUND…）一起记进日志，
+      // 否则永远只看到 "fetch failed"，分不清是代理挂了还是 Supabase 抖动。
+      const cause = (e && e.cause) ? (' | cause=' + (e.cause.code || e.cause.message || String(e.cause))) : '';
+      console.error(`[${label}] 云端第${i+1}/${retries}次调用失败:`, (e && e.message) + cause);
       if(i<retries-1){
         switchNetworkPath(label);            // fix49：失败就换另一条路（直连 ⇄ 代理）再试
-        await new Promise(r=>setTimeout(r, 600));
+        await new Promise(r=>setTimeout(r, 500));
       }
     }
   }
@@ -571,12 +591,26 @@ function markProductDirty(id, mode){
 // 早期改成分行存储时，新写的 upsert 只套了 withRetry 却没检查 error 字段 —— 一旦 Supabase 免费层
 // 抖动（fetch failed）或 RLS 拦截，写入其实没成功，却被当成成功并清掉了 dirtyProductIds，
 // 症状正是「后台提示保存成功，一刷新又变回旧数据」。统一封装：解析 error 并抛错，交给重试兜底。
-async function sbRun(fn, label){
-  const r = await withRetry(fn, label);
+async function sbRun(fn, label, retries, timeoutMs){
+  const r = await withRetry(fn, label, retries===undefined?2:retries, timeoutMs);
   if(r && r.error) throw new Error((label||'supabase')+' 失败: '+(r.error.message||JSON.stringify(r.error)));
   return r;
 }
-async function flushDirtyProducts(){
+// fix52：后台点「上架/隐藏/售罄」这类小操作走这条快速通道——单次 9 秒、试 3 次、失败即换网络路径。
+// 为什么：原来沿用 20 秒 × 2 次，加上排序那一次写入，最坏要 80 秒才报错，柒木的感受就是「点不动，过一会儿弹错」。
+const OPS_FLUSH_TIMEOUT_MS = 9000;
+// fix52：后台点「上架/隐藏/售罄」时把「目标值」记在这里，落库时以它为准。
+// 为什么需要：flush 内部要 await 读云端基准、写云端，这期间并发回源可能把内存刷回旧值，
+// 直接读内存就会写错。目标值由用户动作确定，不参与任何同步，最可靠。
+const opsTargetValue = new Map();
+function setOpsTarget(id, patch){
+  const cur = opsTargetValue.get(id) || {};
+  opsTargetValue.set(id, Object.assign(cur, patch));
+}
+async function flushDirtyProducts(opts){
+  const o = opts || {};
+  const timeoutMs = Number(o.timeoutMs) > 0 ? Number(o.timeoutMs) : SB_TIMEOUT_MS;
+  const retries = Number(o.retries) > 0 ? Number(o.retries) : 2;
   if(!dirtyProductIds.size) return;
   const ids = Array.from(dirtyProductIds);
   dirtyProductIds.clear();
@@ -620,10 +654,13 @@ async function flushDirtyProducts(){
         return null;
       }
       // 以云端最新行为基准，只覆盖本次真正改动的"操作类字段"
+      // fix52：优先用「操作时记下的目标值」——await 期间可能有并发回源/同步把内存刷回旧值，
+      // 那样写进云端的就不是柒木刚点的那个状态（症状：点了开关，提示成功，但状态没变）。
+      const ov = opsTargetValue.get(id) || {};
       val = Object.assign({}, base, {
-        stock: local.stock,
-        hidden: local.hidden,
-        forceSoldOut: local.forceSoldOut,
+        stock: (ov.stock !== undefined ? ov.stock : local.stock),
+        hidden: (ov.hidden !== undefined ? ov.hidden : local.hidden),
+        forceSoldOut: (ov.forceSoldOut !== undefined ? ov.forceSoldOut : local.forceSoldOut),
         updatedAt: Date.now()
       });
       const localSkus = Array.isArray(local.skus) ? local.skus : [];
@@ -644,7 +681,7 @@ async function flushDirtyProducts(){
   opsNoBase.forEach(id=>failed.push(id));   // 未写入的行 → 计入失败：保留脏行 + 让上层能感知
   if(rows.length){
     try {
-      await sbRun(()=>sb.from('shop_data').upsert(rows), 'saveProductRows:'+rows.length);
+      await sbRun(()=>sb.from('shop_data').upsert(rows), 'saveProductRows:'+rows.length, retries, timeoutMs);
     } catch(e) {
       console.error('[saveProductRows] 批量失败:', e.message);
       ids.forEach(id=>failed.push(id));
@@ -652,13 +689,17 @@ async function flushDirtyProducts(){
   }
   // 注意：只把「真实产品 id」放回脏集，不要把 'product_order' 这个哨兵值塞进去
   //（旧写法会污染脏集，让 getProducts 误判"有未落库脏行"而一直返回内存旧副本）
-  failed.filter(id=>id!=='product_order').forEach(id=>dirtyProductIds.add(id));
-  // 同步排序 key（排序变更较少，有脏行时顺便写）
+  failed.forEach(id=>dirtyProductIds.add(id));
+  // ★ fix52 关键解耦 ★ 排序是「显示顺序」，跟产品本身的存没存上是两件事。
+  // 以前排序写失败会把整个操作判为失败 —— 柒木看到「保存失败」，可产品其实早写进去了，
+  // 于是反复点、反复报错（"点上架点不动，过一会儿弹错"就是这么来的）。
+  // 现在：只记日志 + 留待下次自然重试，绝不影响产品保存结果、绝不给用户报假失败。
+  let orderSaveFailed = false;
   try {
-    await saveProductOrder();
+    await saveProductOrder(false, timeoutMs, retries);
   } catch(e) {
-    console.error('[saveProductOrder]', e.message);
-    failed.push('product_order');
+    orderSaveFailed = true;
+    console.warn('[saveProductOrder] 排序暂未保存（不影响产品本身，下次自动重试）:', e.message);
   }
   // 关键修复：云端写入失败必须让前端知道。同时把当前内存整盘写一份本地 products.json 作为备份，
   // 避免"前端显示成功但重启后数据丢失"。
@@ -667,14 +708,30 @@ async function flushDirtyProducts(){
     throw new Error('云端保存失败（' + failed.join(', ') + '），已写本地备份，请检查网络后重试');
   }
   ids.forEach(id=>dirtyModes.delete(id));   // 只有全部写成功才清掉改动类型
+  ids.forEach(id=>opsTargetValue.delete(id));   // 目标值已落库，清掉
+  if(orderSaveFailed) console.warn('[flush] 产品已保存，仅显示顺序未同步');
   // ⚠️ 写入成功后必须让 productReadCache 立即看到最新内存，否则切波/保存后买家端可能还在用旧隐藏状态。
   productReadCache = { ts: Date.now(), value: products.slice(), promise: null, failed: false };
 }
-async function saveProductOrder(){
+// 排序行写入：fix52 两处加固
+//  ① 只在顺序真的变了才写（点「上架/隐藏」跟顺序无关，不该每次都多发一次网络往返，那是失败面最大的一环）；
+//  ② 以云端现有 order 为基准合并，本地内存不全（如启动时云端没读到、只有 37 条）时不会把排序写成短的。
+let lastOrderFingerprint = '';
+async function saveProductOrder(force, timeoutMs, retries){
   if(!USE_SUPABASE) return;
-  const order = products.map(p=>p.id);
+  const order = products.map(p=>p.id).filter(Boolean);
+  const fp = order.join(',');
+  if(!force && fp && fp === lastOrderFingerprint) return;
+  let merged = order;
+  try {
+    const { data } = await sb.from('shop_data').select('value').eq('key','product_order').maybeSingle();
+    const cloud = (data && Array.isArray(data.value)) ? data.value : [];
+    const extra = cloud.filter(id=>!order.includes(id));
+    if(extra.length) merged = order.concat(extra);
+  } catch(_){}
   // 关键修复：必须检查 error 字段，否则排序写入失败会被静默吞掉（supabase-js 不抛异常）
-  await sbRun(()=>sb.from('shop_data').upsert({ key:'product_order', value:order }), 'saveProductOrder');
+  await sbRun(()=>sb.from('shop_data').upsert({ key:'product_order', value:merged }), 'saveProductOrder', retries, timeoutMs);
+  lastOrderFingerprint = merged.join(',');
 }
 async function loadProductsFromRows(fallback=[]){
   if(!USE_SUPABASE) return readJson('products.json', fallback);
@@ -1203,6 +1260,45 @@ async function warmHtmlCache(){
 // 同一张图第二次起（含微信内置浏览器、其他买家）直接命中，不再回源。
 const imgCache = new Map(); // key -> { buf, type }
 const IMG_CACHE_MAX = 300;
+// fix51（2026-09-22）：图片再加一层「磁盘缓存」。内存缓存一重启就没了，
+// 扛不住本机到境外反复抖动（症状：后台 39 张主图集体变「暂无图片」）。落盘后只要成功拉到过一次就永远有图。
+const IMG_DISK = path.join(ROOT, '.imgcache');
+const IMG_DISK_MAX = 800; // 磁盘缓存最多保留张数，超出按最久写入清理
+let _imgDiskReady = false;
+try { fs.mkdirSync(IMG_DISK, { recursive: true }); _imgDiskReady = true; } catch(e){ _imgDiskReady = false; }
+function imgDiskPath(k, ext){ return path.join(IMG_DISK, crypto.createHash('sha1').update(String(k)).digest('hex') + ext); }
+function imgDiskRead(k){
+  if(!_imgDiskReady) return null;
+  try{
+    const b = imgDiskPath(k, '.bin');
+    if(!fs.existsSync(b)) return null;
+    const buf = fs.readFileSync(b);
+    if(!buf || !buf.length) return null;
+    const c = imgDiskPath(k, '.ct');
+    const type = fs.existsSync(c) ? (fs.readFileSync(c, 'utf8').trim() || 'image/jpeg') : 'image/jpeg';
+    return { buf, type };
+  }catch(e){ return null; }
+}
+function imgDiskWrite(k, buf, type){
+  if(!_imgDiskReady || !buf || !buf.length) return;
+  try{
+    fs.writeFileSync(imgDiskPath(k, '.bin'), buf);
+    fs.writeFileSync(imgDiskPath(k, '.ct'), type || 'image/jpeg');
+  }catch(e){}
+}
+function imgDiskPrune(){
+  if(!_imgDiskReady) return;
+  try{
+    const names = fs.readdirSync(IMG_DISK).filter(n => n.endsWith('.bin'));
+    if(names.length <= IMG_DISK_MAX) return;
+    const rows = names.map(n => { let t = 0; try{ t = fs.statSync(path.join(IMG_DISK, n)).mtimeMs; }catch(e){} return { n, t }; })
+                      .sort((a,b) => a.t - b.t);
+    rows.slice(0, rows.length - IMG_DISK_MAX).forEach(x => {
+      try{ fs.unlinkSync(path.join(IMG_DISK, x.n)); }catch(e){}
+      try{ fs.unlinkSync(path.join(IMG_DISK, x.n.replace(/\.bin$/, '.ct'))); }catch(e){}
+    });
+  }catch(e){}
+}
 // 回源并发闸：避免一次性几十个请求把 Node undici 连接池占满（会导致整站请求卡死超时）
 let imgFetching = 0;
 const IMG_MAX_CONCURRENT = 6;
@@ -1985,7 +2081,8 @@ const server = http.createServer(async (req, res)=>{
         // 内存已是最新的（products[idx]=item 在前），重试只重做云端 upsert，安全幂等。
         let saved=false, lastErr;
         for(let attempt=0; attempt<3; attempt++){
-          try { await flushDirtyProducts(); saved=true; break; }
+          // fix52：单轮上限 12s×2（原来 20s×2，三轮回合最坏要 3 分钟才报错），保持"能等到结果"
+          try { await flushDirtyProducts({ timeoutMs: 12000, retries: 2 }); saved=true; break; }
           catch(e){
             lastErr=e;
             console.error(`[POST /api/products] flushDirtyProducts 第${attempt+1}/3次失败:`, e.message);
@@ -2028,7 +2125,7 @@ const server = http.createServer(async (req, res)=>{
         ids.forEach(id=>{ const p=map.get(id); if(p){ next.push(p); map.delete(id); } });
         map.forEach(p=>next.push(p));
         products=next;
-        await saveProductOrder();
+        await saveProductOrder(true);   // fix52：拖拽排序是明确的顺序变更，强制写
         // 排序变更不大，整盘同步一次本地 seed；云端模式下只写 order key 即可
         if(!USE_SUPABASE) await withLock(()=> writeJsonAtomic('products.json', products));
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true})); return;
@@ -2039,10 +2136,21 @@ const server = http.createServer(async (req, res)=>{
         const idx = products.findIndex(x=>x.id===mToggleFSO[1]);
         if(idx===-1){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return; }
         const pid = mToggleFSO[1];
-        products[idx].forceSoldOut = !products[idx].forceSoldOut;
+        // fix52：先定下目标值再写，响应也回这个确定值（不再回读可能被并发同步改动的数组）
+        const wantFso = !products[idx].forceSoldOut;
+        products[idx].forceSoldOut = wantFso;
+        setOpsTarget(pid, { forceSoldOut: wantFso });
         markProductDirty(pid, 'ops');
-        await flushDirtyProducts();
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, forceSoldOut: products[idx].forceSoldOut})); return;
+        try {
+          await flushDirtyProducts({ timeoutMs: OPS_FLUSH_TIMEOUT_MS, retries: 3 });  // fix52：9s×3，失败快速反馈
+        } catch(e){
+          // fix52：必须回一个明确 JSON。旧版这里没有 catch，写库失败时请求会一路悬挂，
+          // 柒木的体感就是「点了没反应，过一会儿才弹错」。内存保持已改 + 脏行保留，网络恢复后自动补存。
+          res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'});
+          res.end(JSON.stringify({ok:false, message:'云端没写进去（'+(e&&e.message||e)+'）。已记住这次改动，网络恢复后会自动补存；也可以稍后再点一次。'}));
+          return;
+        }
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, forceSoldOut: wantFso})); return;
       }
       // 商家后台：快速切换「隐藏/上架」开关（隐藏后买家端完全不可见）
       const mToggleHidden = pathname.match(/^\/api\/products\/([\w-]+)\/toggle-hidden$/);
@@ -2050,11 +2158,21 @@ const server = http.createServer(async (req, res)=>{
         const idx = products.findIndex(x=>x.id===mToggleHidden[1]);
         if(idx===-1){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return; }
         const pid = mToggleHidden[1];
-        products[idx].hidden = !products[idx].hidden;
+        // fix52：同上，目标值先定、响应回确定值
+        const wantHidden = !products[idx].hidden;
+        products[idx].hidden = wantHidden;
+        setOpsTarget(pid, { hidden: wantHidden });
         markProductDirty(pid, 'ops');
-        await flushDirtyProducts();
+        try {
+          await flushDirtyProducts({ timeoutMs: OPS_FLUSH_TIMEOUT_MS, retries: 3 });  // fix52：9s×3，失败快速反馈
+        } catch(e){
+          // fix52：同上——写库失败也必须有明确回应，不能让请求悬挂（"点上架点不动"的直接原因之一）
+          res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'});
+          res.end(JSON.stringify({ok:false, message:'云端没写进去（'+(e&&e.message||e)+'）。已记住这次改动，网络恢复后会自动补存；也可以稍后再点一次。'}));
+          return;
+        }
         clearHtmlCache(); // 单个隐藏/上架也即时清买家端页面缓存，保证与批量隐藏同步生效
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, hidden: products[idx].hidden})); return;
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, hidden: wantHidden})); return;
       }
       // 商家后台：批量隐藏/上架多个产品（买家端立即不可见）。body: {ids:[...], hidden:true|false}
       if(method==='POST' && pathname==='/api/products/batch-hidden'){
@@ -2073,7 +2191,7 @@ const server = http.createServer(async (req, res)=>{
             markProductDirty(pid, 'ops');
             updated++;
           }
-          if(updated) await flushDirtyProducts();
+          if(updated) await flushDirtyProducts({ timeoutMs: OPS_FLUSH_TIMEOUT_MS, retries: 3 });
         });
         // 操作产品配置触发表，让买家端 / 与详情页缓存失效
         clearHtmlCache();
@@ -2109,7 +2227,7 @@ const server = http.createServer(async (req, res)=>{
                 if(!!p.hidden!==wantHidden){ p.hidden=wantHidden; markProductDirty(p.id, 'ops'); }
                 if(wantHidden) hid++; else shown++;
               }
-              await flushDirtyProducts();
+              await flushDirtyProducts({ timeoutMs: 12000, retries: 3 });
             });
             config.activeWave = wantsNone ? 'none' : waves.join(',');
             if(wantsNone) config.waveDur = '';
@@ -2235,6 +2353,14 @@ const server = http.createServer(async (req, res)=>{
         res.writeHead(200,{'Content-Type':hit.type,'Content-Length':hit.buf.length,'Cache-Control':'public, max-age=604800, immutable'});
         res.end(method==='HEAD' ? undefined : hit.buf); return;
       }
+      // fix51：磁盘缓存命中 —— 进程重启 / 本机断外网都还能出图
+      const dhit = imgDiskRead(cacheKey);
+      if(dhit){
+        if(imgCache.size >= IMG_CACHE_MAX) imgCache.delete(imgCache.keys().next().value);
+        imgCache.set(cacheKey, dhit);
+        res.writeHead(200,{'Content-Type':dhit.type,'Content-Length':dhit.buf.length,'Cache-Control':'public, max-age=604800, immutable'});
+        res.end(method==='HEAD' ? undefined : dhit.buf); return;
+      }
       if(!process.env.SUPABASE_URL){ res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'}); res.end('no storage'); return; }
       // 并发闸：排队等待，最长 6 秒，超时返回 503（前端会显示占位图，不影响整站）
       {
@@ -2267,6 +2393,7 @@ const server = http.createServer(async (req, res)=>{
         const type = r.headers.get('content-type') || 'image/jpeg';
         if(imgCache.size >= IMG_CACHE_MAX) imgCache.delete(imgCache.keys().next().value);
         imgCache.set(cacheKey, { buf, type });
+        imgDiskWrite(cacheKey, buf, type); imgDiskPrune(); // fix51：落盘，扛重启/断网
         res.writeHead(200,{'Content-Type':type,'Content-Length':buf.length,'Cache-Control':'public, max-age=604800, immutable'});
         res.end(method==='HEAD' ? undefined : buf); return;
       }catch(e){

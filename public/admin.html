@@ -2047,6 +2047,32 @@ async function saveSettings(){
 }
 
 // ---------- 产品管理 ----------
+// fix51（2026-09-22）：后台主图不再让浏览器直连 supabase.co，统一改走**同源** /img/ 代理
+// （本地=localhost:4301，云端=buchu-shop.onrender.com）。原因：直连 supabase.co 在国内网络上
+// 时通时不通，一断整个后台 39 张主图就集体退化成「暂无图片」占位图。
+// ⚠️ 只影响「显示地址」，绝不改数据：PRODUCTS[].image / #pMainImg.value 仍是原始绝对地址，
+//    保存时写回库里的还是原值，不会把 /img/ 这种相对路径写进数据库。
+function adminThumbUrl(u,w,h,q){
+  let s=String(u==null?'':u).trim();
+  if(!s) return '';
+  if(/^(data:|blob:)/.test(s)) return s;
+  const m=s.match(/\/storage\/v1\/object\/public\/(.+)$/);
+  if(m) s='/img/'+m[1];
+  if(s.indexOf('/img/')!==0) return s;
+  const sep=s.indexOf('?')>=0?'&':'?';
+  let qy='w='+w;
+  if(h&&Number(h)>0) qy+='&h='+h;
+  qy+='&q='+(q||70);
+  return s+sep+qy;
+}
+// 主图加载失败的两级兜底：① 同源代理不通 → 退回浏览器直连原图（两条路总有一条能通）；② 都不行 → 占位图。
+function adminImgFallback(img){
+  const fb=img.getAttribute('data-fb')||'';
+  if(fb && img.dataset.fbTried!=='1'){ img.dataset.fbTried='1'; img.src=fb; return; }
+  img.onerror=null;
+  img.src='/assets/products/default.svg';
+  img.classList.add('loaded');
+}
 function renderPM(){
   const wrap=document.getElementById('pmWrap');
   const itemsHtml=PRODUCTS.map((p,idx)=>`
@@ -2054,14 +2080,14 @@ function renderPM(){
       <label class="pm-check" onclick="event.stopPropagation()" ondragstart="event.stopPropagation();return false" onmousedown="event.stopPropagation()">
         <input type="checkbox" class="pm-sel" value="${p.id}" onchange="updateBatchDelete()" onclick="event.stopPropagation()">
       </label>
-      <img class="img" src="${p.image||'/assets/products/default.svg'}" ${idx>=6?'loading="lazy"':''} decoding="async" onload="this.classList.add('loaded')" onerror="this.src='/assets/products/default.svg';this.classList.add('loaded')">
+      <img class="img" src="${escapeHtml(adminThumbUrl(p.image,400,500,70)||'/assets/products/default.svg')}" data-fb="${escapeHtml(p.image||'')}" ${idx>=6?'loading="lazy"':''} decoding="async" onload="this.classList.add('loaded')" onerror="adminImgFallback(this)">
       <div class="name">${p.name||'未命名'}</div>
       <div class="price">${money(p.price||0)} <span style="color:#bbb;text-decoration:line-through;font-size:12px">${p.originalPrice?money(p.originalPrice):''}</span></div>
       <div class="sub">${stripTags(p.subtitle||p.desc||'无副标题')}</div>
       <div class="pm-acts">
         <button class="edit" onclick="editProduct('${p.id}')">编辑</button>
-        <button class="hide ${p.hidden?'on':''}" onclick="toggleHidden('${p.id}')">${p.hidden?'上架':'隐藏'}</button>
-        <button class="sold ${p.forceSoldOut?'on':''}" onclick="toggleForceSoldOut('${p.id}')">${p.forceSoldOut?'在售':'售罄'}</button>
+        <button class="hide ${p.hidden?'on':''}" onclick="toggleHidden('${p.id}',this)">${p.hidden?'上架':'隐藏'}</button>
+        <button class="sold ${p.forceSoldOut?'on':''}" onclick="toggleForceSoldOut('${p.id}',this)">${p.forceSoldOut?'在售':'售罄'}</button>
       </div>
     </div>
   `).join('');
@@ -2099,26 +2125,46 @@ function bindPMDrag(){
     });
   });
 }
-// 商家后台：产品列表卡片上一键切换「强制售罄」开关（不打开弹窗）
-async function toggleForceSoldOut(id){
-  const res = await fetch('/api/products/'+id+'/toggle-force-sold-out',{method:'POST'});
-  const data = await res.json();
-  if(res.ok && data.ok){
-    toast(data.forceSoldOut?'🚫 已强制售罄，前台不可购买':'📦 已恢复正常销售');
-    await load(); renderPM();
-  } else {
-    toast('切换失败：'+(data.message||data.error||''));
+// 商家后台：卡片上的「上架/隐藏」与「售罄/在售」开关。
+// fix52（2026-09-22）：柒木反馈「点上架点不动，过一会儿弹出失败」——
+//   原来这两个按钮点下去**没有任何即时反馈**，服务端要等云端写入超时（最坏 80 秒）才回错误，
+//   体感就是"卡住了"。现在：点了立刻变「保存中…」+ 立刻提示，45 秒硬超时兜底，
+//   失败时把原因说清楚（是网络/代理写不进云端，而不是"按钮坏了"）。
+async function adminToggle(path, btn, okMsg){
+  const oldTxt = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = '保存中…'; }
+  toast('正在保存，请稍候…（一般 1~3 秒）');
+  const ctl = new AbortController();
+  const timer = setTimeout(()=>ctl.abort(), 45000);
+  try{
+    const res = await fetch(path, {method:'POST', signal:ctl.signal, cache:'no-store'});
+    const data = await res.json().catch(()=>({}));
+    clearTimeout(timer);
+    if(res.ok && data.ok){
+      toast(okMsg(data));
+      await load(); renderPM();
+      return true;
+    }
+    toast('切换失败：'+((data && (data.message||data.error)) || ('HTTP '+res.status)));
+  }catch(e){
+    clearTimeout(timer);
+    const aborted = e && e.name==='AbortError';
+    toast('切换失败：'+(aborted
+      ? '云端一直没回应（本机网络/代理不稳）。请稍后重试；急着用可以直接用手机上的线上后台改。'
+      : ('网络异常（'+((e&&e.message)||e)+'），请稍后重试')));
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = oldTxt; }
   }
+  return false;
 }
-async function toggleHidden(id){
-  const res = await fetch('/api/products/'+id+'/toggle-hidden',{method:'POST'});
-  const data = await res.json();
-  if(res.ok && data.ok){
-    toast(data.hidden?'🙈 已隐藏，买家端不可见':'👁 已上架，买家端可见');
-    await load(); renderPM();
-  } else {
-    toast('切换失败：'+(data.message||data.error||''));
-  }
+// 商家后台：产品列表卡片上一键切换「强制售罄」开关（不打开弹窗）
+async function toggleForceSoldOut(id, btn){
+  await adminToggle('/api/products/'+id+'/toggle-force-sold-out', btn,
+    d=>d.forceSoldOut?'🚫 已强制售罄，前台不可购买':'📦 已恢复正常销售');
+}
+async function toggleHidden(id, btn){
+  await adminToggle('/api/products/'+id+'/toggle-hidden', btn,
+    d=>d.hidden?'🙈 已隐藏，买家端不可见':'👁 已上架，买家端可见');
 }
 
 function newProduct(){ editingProdId=null; openProdModal({}); }
@@ -2168,7 +2214,7 @@ function openProdModal(p){
     bundleItems: Array.isArray(s.bundleItems)?s.bundleItems:[]
   }));
   document.getElementById('pMainImg').value=p.image||'';
-  document.getElementById('pMainImgPreview').src=p.image||'/assets/products/default.svg';
+  document.getElementById('pMainImgPreview').src=adminThumbUrl(p.image,400,500,75)||'/assets/products/default.svg';
   renderDetailImgs(p.detailImages||[]);
   renderSkuList();
   document.getElementById('prodModal').classList.add('show');
@@ -2180,11 +2226,11 @@ function openProdModal(p){
 function closeProdModal(){ document.getElementById('prodModal').classList.remove('show'); }
 
 function renderDetailImgs(urls){
-  selectedGalUrls=urls.slice();
+  selectedGalUrls=urls.slice();   // ⚠️ 保存用的仍是原始地址，这里只改「显示地址」
   const box=document.getElementById('pDetailImgs');
   box.innerHTML=urls.map((u,i)=>`
     <div class="dimg">
-      <img src="${u}" onerror="this.style.display='none'">
+      <img src="${escapeHtml(adminThumbUrl(u,600,600,75)||'')}" data-fb="${escapeHtml(u||'')}" onerror="if(this.dataset.fb&&this.dataset.fbTried!=='1'){this.dataset.fbTried='1';this.src=this.dataset.fb;}else{this.style.display='none'}">
       <button class="rm" onclick="removeDetailImg(${i})">×</button>
     </div>
   `).join('');
@@ -2237,7 +2283,7 @@ function renderSkuList(){
         <button type="button" onclick="removeSkuRow(${idx})" style="border:none;background:#e74c3c;color:#fff;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer">删除</button>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <img id="skuImgPrev${idx}" src="${escapeHtml(s.image||'/assets/products/default.svg')}" onerror="this.src='/assets/products/default.svg'" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid #e0d6c8;background:#fff;flex:none;cursor:pointer" onclick="pickSkuImage(${idx})" title="点击从图库选择该SKU主图">
+        <img id="skuImgPrev${idx}" src="${escapeHtml(adminThumbUrl(s.image,120,120,70)||'/assets/products/default.svg')}" data-fb="${escapeHtml(s.image||'')}" onerror="adminImgFallback(this)" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid #e0d6c8;background:#fff;flex:none;cursor:pointer" onclick="pickSkuImage(${idx})" title="点击从图库选择该SKU主图">
         <button type="button" onclick="uploadSkuImage(${idx})" style="border:1px solid #e0d6c8;background:#fff;border-radius:8px;padding:7px 10px;font-size:12px;cursor:pointer;white-space:nowrap">📷 上传主图</button>
         <input type="text" placeholder="SKU 独立主图（留空则用产品主图）" value="${escapeHtml(s.image||'')}" onchange="updateSku(${idx},'image',this.value)" style="flex:1;min-width:150px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:12px">
         <span id="skuImgStatus${idx}" style="font-size:12px;color:#b8743f;white-space:nowrap"></span>
