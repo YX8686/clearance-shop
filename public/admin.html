@@ -1521,14 +1521,24 @@ async function exportTodayOrders(){
   const list=ORDERS.filter(o=>o.status==='今日可发');
   if(!list.length){ toast('没有已允许待发货的订单'); return; }
   if(!window.confirm(`确认把 ${list.length} 单「今日可发」订单导出到发货管家「今日配货单」，并同时下载一份商城发货单？\n（导出后这些订单会从「今日可发」移入「等待回传区」；下载的打单文件转给快递员即可）`)) return;
+  // fix53：★先把发货单下载下来，再同步发货管家★
+  // 旧版顺序是反的：先 POST 导出（要读/写云库），本机网络或代理一抖动就整段失败，
+  // 下载被一起拖死 —— 柒木看到的现象就是「点下载发货单，单子下不来」，一张都没拿到
+  // （server.log 里 [loadKV:mall_sessions] 云端第1/2次调用失败: timeout 就是这个按钮留下的）。
+  // 商城发货单是纯前端本地生成的，跟网络毫无关系，必须先落袋为安；导出失败只提示，不影响已下载的单子。
+  let sheetOk=false;
+  try{ downloadShipSheet(list); sheetOk=true; }
+  catch(e){ console.error('[docx]',e); }
   try{
     const r=await fetch('/api/mall-today-export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:new Date().toISOString().slice(0,10), orders:list.map(toExportOrder)})});
     const d=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(d.message||('HTTP '+r.status));
-    toast(`已导出 ${d.count} 单到发货管家「今日配货单」，已移入「等待回传区」`);
-    downloadShipSheet(list);   // 导出成功即下载可读的商城发货单（转快递员打单）
+    toast(`${sheetOk?'发货单已下载；':''}已把 ${d.count} 单同步到发货管家「今日配货单」，并移入「等待回传区」`);
     load();                    // 拉取云端最新状态：今日可发清空、进入等待回传区
-  }catch(e){ toast('导出失败：'+e.message); console.error('[mall-export]',e); }
+  }catch(e){
+    console.error('[mall-export]',e);
+    toast(`${sheetOk?'发货单已下载 ✓，':'发货单下载异常，'}同步发货管家失败：${e.message}｜订单没有变动，网络恢复后再点一次即可`);
+  }
 }
 /* ---------- 真·Word(.docx) 生成：纯前端零依赖（ZIP store 打包 + OOXML） ----------
    背景：旧版导出的 .doc 其实是「HTML 改名成 .doc」的伪 Word，Word/WPS 能容错打开，
@@ -1608,9 +1618,13 @@ function shipSheetRows(list){
   groupArr.forEach((group,idx)=>{
     const first=group[0];
     const codes=[...new Set(group.map(o=>o.shipCode).filter(Boolean))];
+    // fix53：主编号只显示「组内第一笔」的编号，与后台卡片上的「编号 XXX」保持完全一致。
+    // 旧版把整组编号用「/」拼起来（徐清单：卡片是 A54，发货单却印成 A54/E43），柒木对着卡片一看就以为编号错了，
+    // 发货员也容易看混。每笔各自的编号仍在下方逐笔明细行里标注（· 编号 A54 / · 编号 E43），信息不丢。
+    const mainCode = first.shipCode || codes[0] || '';
     rows.push({t:`【第 ${idx+1} 单】${group.length>1?`（合并 ${group.length} 笔 · ${first.name||''}）`:`订单号：${first.id||''}`}`, b:true});
     // 发货编号：单独一行、左对齐、大字号，位于收件人姓名上方；只显示编号本身（如 A1、A2）
-    if(codes.length) rows.push({t:codes.join('/'), big:true});
+    if(mainCode) rows.push({t:mainCode, big:true});
     rows.push({t:`${first.name||''} ${first.phone||''}`.replace(/\s+/g,' ').trim()});
     rows.push({t:first.address||''});
     rows.push({t:''});
