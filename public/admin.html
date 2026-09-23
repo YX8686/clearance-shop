@@ -1160,6 +1160,8 @@ function renderTodayShip(){
       // 没有发货明细：回退到产品标题 + ×qty
       return `<div class="so-item"><span>${renderItemName(i)}</span><span>${renderItemQty(i)}${itemDelBtn(o.id,idx)}</span></div>`;
     }).join('')).join('');
+    // 手工填单号：取合并组内已有的快递单号（同一包裹共用一条）
+    const groupTracking=(group.find(o=>o.tracking && String(o.tracking).trim())||{}).tracking||'';
     const div=document.createElement('div'); div.className='card merge-card';
     div.innerHTML=`
       <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}${first.shipCode?` <span class="ship-code" style="background:#b8743f;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;vertical-align:middle">编号 ${first.shipCode}</span>`:''}</span><span class="st st-ship">今日可发</span></div>
@@ -1169,6 +1171,15 @@ function renderTodayShip(){
       <div class="line"><span class="k">地址</span>${first.address}</div>
       <div class="items">${itemsHtml}</div>
       ${noteHtml(first)}
+      <div class="line" style="align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="k">快递单号</span>
+        <input type="text" id="tk-${first.id}" value="${escapeHtml(groupTracking)}" placeholder="手工填写 / 粘贴快递单号，回车即保存"
+          style="flex:1;min-width:200px;max-width:340px;padding:7px 10px;border:1px solid #e0d6c8;border-radius:6px;font-size:13px"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();saveTrackingGroup(['${ids.join("','")}'], this.value);}">
+        <button type="button" onclick="saveTrackingGroup(['${ids.join("','")}'], (document.getElementById('tk-${first.id}')||{}).value)"
+          style="padding:7px 12px;border:1px solid #1f9d55;background:#fff;color:#1f9d55;border-radius:6px;font-size:13px;cursor:pointer">保存单号</button>
+        <span id="tkmsg-${first.id}" style="font-size:12px;color:#9a8f82">${groupTracking?'✓ 已记录（订单仍在今日可发）':'只记单号，不改订单状态、不移走订单'}</span>
+      </div>
       <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-copy" style="background:#fff8dc;color:#a05200;border-color:#f0d060" onclick="copyShipCodeGroup(['${ids.join("','")}'])">生成编号文本</button> <button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
     list.appendChild(div);
   });
@@ -1841,6 +1852,38 @@ async function shipGroup(ids){
     if(r && r.ok){ const d=await r.json().catch(()=>({})); if(d.order){ ORDERS=ORDERS.map(x=>x.id===id?d.order:x); } pendingIds.delete(id); }
   }
   render();
+}
+// 「今日可发」手工填写快递单号（fix54）
+// 只把 tracking 字段写进这些订单：★不改变订单状态、不移动订单、不动金额/明细/编号★
+// （与「填写单号发货」的区别：那个会把订单转成「已发货」；这里填完订单仍留在「今日可发」，
+//   方便在发货单交快递员之前先把单号手工记下来。）
+async function saveTrackingGroup(ids, val){
+  const tr=String(val==null?'':val).trim().slice(0,60);
+  const msgId='tkmsg-'+ids[0];
+  const setMsg=(t,c)=>{ const m=document.getElementById(msgId); if(m){ m.textContent=t; m.style.color=c||'#9a8f82'; } };
+  setMsg('保存中…','#b8743f');
+  const prevMap={};
+  ids.forEach(id=>{ const o=ORDERS.find(x=>x.id===id); if(o){ prevMap[id]=JSON.parse(JSON.stringify(o)); o.tracking=tr; } });
+  render(); // 乐观显示，稍后由服务端返回值覆盖
+  let failMsg='';
+  for(const id of ids){
+    try{
+      const r=await fetch('/api/orders/'+id+'/tracking',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tracking:tr})});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok || !d.ok) throw new Error(d.message||('HTTP '+r.status));
+      if(d.order){ const idx=ORDERS.findIndex(x=>x.id===id); if(idx>=0) ORDERS[idx]=d.order; }
+    }catch(e){ failMsg=e.message||'网络错误'; }
+  }
+  if(failMsg){
+    Object.keys(prevMap).forEach(id=>{ const o=ORDERS.find(x=>x.id===id); if(o) o.tracking=prevMap[id].tracking; });
+    render();
+    setMsg('保存失败：'+failMsg,'#c0392b');
+    toast('单号没保存上：'+failMsg);
+    return;
+  }
+  render();
+  setMsg(tr?'✓ 已记录（订单仍在今日可发）':'已清空单号','#1f9d55');
+  toast(tr?('已记录单号 '+tr):'已清空单号');
 }
 function switchTab(btn){ document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('on')); btn.classList.add('on'); curTab=btn.dataset.s; render(); }
 

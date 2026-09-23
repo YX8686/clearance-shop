@@ -54,7 +54,7 @@ const PORT = process.env.PORT || 4100;
 // ② 图片版/Word 版发货单的编号对不上：合并单把组内所有编号拼成「A54/E43」，
 //    而后台卡片显示的是组内第一笔的编号「A54」，柒木对着看以为编号错了。
 //    改为主编号 = first.shipCode（与卡片严格一致），逐笔明细行里仍各自标注编号，信息不丢。
-const ADMIN_BUILD = 'fix53-2026-09-23-shipexport-download-first-code-consistent';
+const ADMIN_BUILD = 'fix54-2026-09-23-today-manual-tracking-input';
 // fix50（2026-09-22）：自检从「只在打开时查一次」升级为「每 10 秒查一次」。
 // 根因：只查一次的写法对「开了很久没关的旧标签页」完全无效 —— 那页永远跑旧 JS，
 // 旧 JS 在请求没发出去/失败时也会弹「保存成功」，于是「保存成功但没保存」反复出现。
@@ -1597,6 +1597,25 @@ const server = http.createServer(async (req, res)=>{
         if(!o){ res.writeHead(404); res.end('no'); return; }
         let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
         o.status='已发货'; o.tracking=String(body.tracking||'').slice(0,60); o.shippedAt=Date.now(); await saveOrderRowSync(o);
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+      }
+      // 手工填写/更新快递单号（fix54）★★只写 tracking 字段★★
+      // 严禁在此改 status / shippedAt / shipCode / 金额 / 明细 —— 就是「订单不能到处乱跑」的保障：
+      // 商家在「今日可发」手上先记下快递单号，订单仍留在原栏目，直到走完正常发货闭环。
+      const mTrack = pathname.match(/^\/api\/orders\/([\w-]+)\/tracking$/);
+      if(method==='POST' && mTrack){
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+        const tk = String(body.tracking==null?'':body.tracking).trim().slice(0,60);
+        await refreshOrderOne(mTrack[1]); // 只复核这一笔，避免整表往返
+        const o = orders.find(o=>o.id===mTrack[1]);
+        if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'订单不存在'})); return; }
+        if(o.status==='已取消'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'已取消的订单不能填写单号'})); return; }
+        const before={ status:o.status, tracking:o.tracking };
+        o.tracking = tk;
+        // 双重保险：即便上游哪里手滑改了状态，这里也强制还原，保证「只动单号」
+        if(o.status!==before.status) o.status = before.status;
+        await saveOrderRowSync(o);
+        console.log('[tracking]', o.id, before.tracking||'(空)', '->', tk||'(空)', '| status 保持', o.status);
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
       }
       // 允许/禁止发货管家采集（仅待发货状态可设置）
