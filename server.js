@@ -54,7 +54,7 @@ const PORT = process.env.PORT || 4100;
 // ② 图片版/Word 版发货单的编号对不上：合并单把组内所有编号拼成「A54/E43」，
 //    而后台卡片显示的是组内第一笔的编号「A54」，柒木对着看以为编号错了。
 //    改为主编号 = first.shipCode（与卡片严格一致），逐笔明细行里仍各自标注编号，信息不丢。
-const ADMIN_BUILD = 'fix55-2026-09-23-restore-manual-tracking-modal-today-input';
+const ADMIN_BUILD = 'fix56-2026-09-23-today-save-tracking-and-ship';
 // fix50（2026-09-22）：自检从「只在打开时查一次」升级为「每 10 秒查一次」。
 // 根因：只查一次的写法对「开了很久没关的旧标签页」完全无效 —— 那页永远跑旧 JS，
 // 旧 JS 在请求没发出去/失败时也会弹「保存成功」，于是「保存成功但没保存」反复出现。
@@ -1617,6 +1617,29 @@ const server = http.createServer(async (req, res)=>{
         await saveOrderRowSync(o);
         console.log('[tracking]', o.id, before.tracking||'(空)', '->', tk||'(空)', '| status 保持', o.status);
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+      }
+      // 「今日可发」保存单号并直接标记「已发货」（fix56）★★严格单笔★★
+      // 铁律：只动被点这一笔的 status/tracking/shippedAt。
+      // 绝不触碰其他订单、不做任何重排、不写 orders 大数组（防整表覆盖）。
+      // shipCode / 金额 / 明细 / paidAt / confirmedAt / 备注 一律原样保留。
+      const mTrackShip = pathname.match(/^\/api\/orders\/([\w-]+)\/tracking-and-ship$/);
+      if(method==='POST' && mTrackShip){
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+        const tk = String(body.tracking==null?'':body.tracking).trim().slice(0,60);
+        if(!tk){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'请先填写快递单号，再点「保存并发货」'})); return; }
+        await refreshOrderOne(mTrackShip[1]); // 只复核这一笔，避免整表往返
+        const o = orders.find(o=>o.id===mTrackShip[1]);
+        if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'订单不存在'})); return; }
+        if(o.status==='已取消'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'已取消的订单不能发货'})); return; }
+        if(o.status==='已发货'){
+          // 幂等：已经是已发货就原样返回，不重写、不刷新 shippedAt（防重复点造成数据抖动）
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status, alreadyShipped:true})); return;
+        }
+        const before={ status:o.status, tracking:o.tracking };
+        o.status='已发货'; o.tracking=tk; o.shippedAt=Date.now();
+        await saveOrderRowSync(o); // 只写 order:<id> 这一行的 key
+        console.log('[tracking-and-ship]', o.id, before.status, '-> 已发货 | 单号', tk);
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status, before})); return;
       }
       // 允许/禁止发货管家采集（仅待发货状态可设置）
       const mAllowPull = pathname.match(/^\/api\/orders\/([\w-]+)\/allow-pull$/);

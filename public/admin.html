@@ -1178,6 +1178,8 @@ function renderTodayShip(){
           onkeydown="if(event.key==='Enter'){event.preventDefault();saveTrackingGroup(['${ids.join("','")}'], this.value);}">
         <button type="button" onclick="saveTrackingGroup(['${ids.join("','")}'], (document.getElementById('tk-${first.id}')||{}).value)"
           style="padding:7px 12px;border:1px solid #1f9d55;background:#fff;color:#1f9d55;border-radius:6px;font-size:13px;cursor:pointer">保存单号</button>
+        <button type="button" onclick="saveTrackingAndShipGroup(['${ids.join("','")}'], (document.getElementById('tk-${first.id}')||{}).value)"
+          style="padding:7px 12px;border:1px solid #b8743f;background:#b8743f;color:#fff;border-radius:6px;font-size:13px;cursor:pointer">保存并发货</button>
         <span id="tkmsg-${first.id}" style="font-size:12px;color:#9a8f82">${groupTracking?'✓ 已记录（订单仍在今日可发）':'只记单号，不改订单状态、不移走订单'}</span>
       </div>
       <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-copy" style="background:#fff8dc;color:#a05200;border-color:#f0d060" onclick="copyShipCodeGroup(['${ids.join("','")}'])">生成编号文本</button> <button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
@@ -1954,6 +1956,39 @@ async function saveTrackingGroup(ids, val){
   render();
   setMsg(tr?'✓ 已记录（订单仍在今日可发）':'已清空单号','#1f9d55');
   toast(tr?('已记录单号 '+tr):'已清空单号');
+}
+// 「今日可发」保存单号 + 直接标记「已发货」（fix56）
+// 与 saveTrackingGroup 的唯一区别：这个会把订单真正转入「已发货」栏目（商家明确要求）。
+// ★只动被点这一张卡片对应的订单★（status/tracking/shippedAt 三个字段）；
+// 其他订单一律不碰、不重排、不跳转栏目（商家要求「订单位置不要乱动」）。
+// 服务端接口二次把关：单号为空/订单已取消一律拒绝；已发货则幂等返回不重写。
+async function saveTrackingAndShipGroup(ids, val){
+  const tr=String(val==null?'':val).trim().slice(0,60);
+  const msgId='tkmsg-'+ids[0];
+  const setMsg=(t,c)=>{ const m=document.getElementById(msgId); if(m){ m.textContent=t; m.style.color=c||'#9a8f82'; } };
+  if(!tr){ setMsg('请先填写快递单号','#c0392b'); toast('请先填写快递单号，再点「保存并发货」'); return; }
+  const first=ORDERS.find(x=>x.id===ids[0]);
+  const who=(first&&first.name)?first.name:'';
+  if(!window.confirm(`确认把这张卡上的 ${ids.length} 笔订单标记为「已发货」？\n\n收件人：${who}\n快递单号：${tr}\n\n这些订单会从「今日可发」移入「已发货」栏目。\n★其他订单一律不动★`)) return;
+  setMsg('发货中…','#b8743f');
+  let okCount=0; const failIds=[];
+  for(const id of ids){
+    try{
+      const r=await fetch('/api/orders/'+id+'/tracking-and-ship',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tracking:tr})});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok || !d.ok) throw new Error(d.message||('HTTP '+r.status));
+      if(d.order){ const idx=ORDERS.findIndex(x=>x.id===id); if(idx>=0) ORDERS[idx]=d.order; }
+      okCount++;
+    }catch(e){ failIds.push(id); }
+  }
+  render();
+  if(failIds.length){
+    setMsg(`已发货 ${okCount} 笔，${failIds.length} 笔失败`,'#c0392b');
+    toast(`✓ ${okCount} 笔已发货；${failIds.length} 笔失败：${failIds.join('、')}（稍后自动刷新会同步真实状态）`);
+  }else{
+    setMsg('✓ 已发货','#1f9d55');
+    toast(`✓ ${okCount} 笔已发货，已移入「已发货」栏目`);
+  }
 }
 function switchTab(btn){ document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('on')); btn.classList.add('on'); curTab=btn.dataset.s; render(); }
 
