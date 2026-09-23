@@ -1225,9 +1225,79 @@ function renderReturnZone(){
       <div class="line"><span class="k">地址</span>${first.address}</div>
       <div class="items">${itemsHtml}</div>
       ${noteHtml(first)}
-      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-copy" style="background:#fff8dc;color:#a05200;border-color:#f0d060" onclick="copyShipCodeGroup(['${ids.join("','")}'])">生成编号文本</button> <button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-copy" style="background:#fff8dc;color:#a05200;border-color:#f0d060" onclick="copyShipCodeGroup(['${ids.join("','")}'])">生成编号文本</button> <button class="btn-confirm" onclick="openManualTrackingModal(['${ids.join("','")}'])">✏️ 手动填单号</button> <button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
     list.appendChild(div);
   });
+}
+// ===== 等待回传区 · 手动填单号（fix55 还原：2026-09-09 上线、后被部署覆盖丢失的功能）=====
+// 单笔：直接走老的 ship(id) 流程（保留 prompt 二次确认风格）
+// 多笔：弹窗让用户勾选子订单 + 填单号，复用 /api/orders/:id/ship
+// 注意：这是「填单号 = 这单发了」的入口，会把订单转成「已发货」并离开等待回传区（与原版一致）。
+function openManualTrackingModal(ids){
+  const orders=(ids||[]).map(id=>ORDERS.find(x=>x.id===id)).filter(o=>o&&o.status==='待回传');
+  if(!orders.length){ toast('没有待回传的订单'); return; }
+  if(orders.length===1){
+    // 单笔走老的 ship()：含金额核对、prompt 二次确认
+    ship(orders[0].id);
+    return;
+  }
+  const customerName = escapeHtml(orders[0].name||'');
+  const subRows = orders.map(o=>`
+    <label class="modal-sub-row">
+      <input type="checkbox" checked data-id="${o.id}">
+      <span class="msr-id">${o.id}</span>
+      <span class="msr-time">下单 ${fmtTime(o.createdAt||o.paidAt)}</span>
+      <span class="msr-total">${money(o.total)}</span>
+    </label>`).join('');
+  const html = `
+    <h3 style="margin:0 0 4px">✏️ 手动填单号</h3>
+    <div style="font-size:12px;color:#9a8f82;margin-bottom:10px">客户：${customerName} · 合并 ${orders.length} 笔</div>
+    <div style="font-size:12px;color:#7a6f62;margin-bottom:4px">要发货的子订单（默认全部）：</div>
+    <div class="modal-sub-list">${subRows}</div>
+    <div style="font-size:12px;color:#7a6f62;margin:8px 0 4px">快递单号：</div>
+    <input type="text" id="mtTracking" placeholder="如 SF1234567890" style="width:100%;padding:8px;border:1px solid #e0d6c8;border-radius:6px;font-size:13px;box-sizing:border-box">
+    <div style="font-size:11px;color:#9a8f82;margin-top:4px">提示：合并组通常一个包裹，勾选的几笔填同一单号</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="btn btn-modal-cancel" onclick="closeModal()">取消</button>
+      <button class="btn btn-modal-ok" id="mtConfirm">确认发货</button>
+    </div>`;
+  showModal(html);
+  document.getElementById('mtConfirm').onclick = async ()=>{
+    const tr=(document.getElementById('mtTracking').value||'').trim();
+    if(!tr){ toast('请输入快递单号'); return; }
+    if(tr.length<4){ toast('单号太短，请检查'); return; }
+    const checkedIds = Array.from(document.querySelectorAll('.modal-sub-row input:checked')).map(i=>i.dataset.id);
+    if(!checkedIds.length){ toast('请至少勾选一笔订单'); return; }
+    closeModal();
+    await shipMultiTracking(checkedIds, tr);
+  };
+  setTimeout(()=>{ const el=document.getElementById('mtTracking'); if(el) el.focus(); }, 50);
+}
+// 多笔手动填单号：复用 /api/orders/:id/ship（同发货管家回传端点）
+async function shipMultiTracking(ids, tracking){
+  const tr = String(tracking||'').slice(0,60);
+  let okCount=0, failIds=[];
+  for(const id of ids){
+    const o = ORDERS.find(x=>x.id===id);
+    if(!o || o.status!=='待回传') continue;
+    const prev = JSON.parse(JSON.stringify(o));
+    o.status='已发货'; o.tracking=tr; o.shippedAt=Date.now();
+    ORDERS=ORDERS.map(x=>x.id===id?o:x);
+    try{
+      const r = await fetch('/api/orders/'+id+'/ship',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tracking:tr})});
+      if(r && r.ok){ okCount++; } else { failIds.push(id); ORDERS=ORDERS.map(x=>x.id===id?prev:x); }
+    }catch(e){ failIds.push(id); ORDERS=ORDERS.map(x=>x.id===id?prev:x); }
+  }
+  render();
+  if(okCount && !failIds.length) toast(`✓ 已发货 ${okCount} 笔`);
+  else if(okCount && failIds.length) toast(`✓ ${okCount} 笔成功，${failIds.length} 笔失败：${failIds.join(',')}`);
+  else toast('发货失败，请重试');
+  // 单笔发完跳「已发货」；多笔留在「等待回传」（剩余笔继续显示）
+  if(ids.length===1 && okCount){
+    curTab='已发货';
+    document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='已发货'));
+    render();
+  }
 }
 // 获取订单项对应的 bundleItems（发货明细）：优先用订单自带，其次按产品/SKU 反查
 // 渲染订单卡片的「微信号」行：始终提供输入框，可随时手动填写或修改

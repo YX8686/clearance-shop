@@ -54,7 +54,7 @@ const PORT = process.env.PORT || 4100;
 // ② 图片版/Word 版发货单的编号对不上：合并单把组内所有编号拼成「A54/E43」，
 //    而后台卡片显示的是组内第一笔的编号「A54」，柒木对着看以为编号错了。
 //    改为主编号 = first.shipCode（与卡片严格一致），逐笔明细行里仍各自标注编号，信息不丢。
-const ADMIN_BUILD = 'fix54-2026-09-23-today-manual-tracking-input';
+const ADMIN_BUILD = 'fix55-2026-09-23-restore-manual-tracking-modal-today-input';
 // fix50（2026-09-22）：自检从「只在打开时查一次」升级为「每 10 秒查一次」。
 // 根因：只查一次的写法对「开了很久没关的旧标签页」完全无效 —— 那页永远跑旧 JS，
 // 旧 JS 在请求没发出去/失败时也会弹「保存成功」，于是「保存成功但没保存」反复出现。
