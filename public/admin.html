@@ -999,7 +999,7 @@ function _renderInner(){
       <div class="h"><span class="oid">${o.id}</span><span class="st ${cls}">${lab}</span></div>
       <div class="line"><span class="k">下单时间</span>${fmtTime(o.createdAt)}</div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(o.name||'')}</div>
-      <div class="line"><span class="k">微信号</span>${o.wechat?`<b style="color:#b8743f">${escapeHtml(o.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">微信号</span>${wechatHtml(o,[o.id])}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(o.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${o.address}</div>
       ${o.shipCode?`<div class="line"><span class="k">客户编号</span><b style="color:#1f9d55">${escapeHtml(o.shipCode)}</b></div>`:''}
@@ -1080,7 +1080,7 @@ function renderMergedPending(){
     div.innerHTML=`
       <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-wait">待确认</span></div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
-      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">微信号</span>${wechatHtml(first,ids)}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       ${first.shipCode?`<div class="line"><span class="k">客户编号</span><b style="color:#1f9d55">${escapeHtml(first.shipCode)}</b></div>`:''}
@@ -1172,7 +1172,7 @@ function renderMergedShip(){
         </label>
       </div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
-      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">微信号</span>${wechatHtml(first,ids)}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       ${first.shipCode?`<div class="line"><span class="k">客户编号</span><b style="color:#1f9d55">${escapeHtml(first.shipCode)}</b></div>`:''}
@@ -1258,7 +1258,7 @@ function renderTodayShip(){
     div.innerHTML=`
       <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-ship">今日可发</span></div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
-      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">微信号</span>${wechatHtml(first,ids)}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       ${first.shipCode?`<div class="line"><span class="k">客户编号</span><b style="color:#1f9d55">${escapeHtml(first.shipCode)}</b></div>`:''}
@@ -1314,7 +1314,7 @@ function renderReturnZone(){
     div.innerHTML=`
       <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-ship">等待回传</span></div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
-      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
+      <div class="line"><span class="k">微信号</span>${wechatHtml(first,ids)}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       ${first.shipCode?`<div class="line"><span class="k">客户编号</span><b style="color:#1f9d55">${escapeHtml(first.shipCode)}</b></div>`:''}
@@ -1374,6 +1374,42 @@ function showModal(innerHtml){
   document.body.appendChild(modalEl);
 }
 function closeModal(){ if(modalEl){ modalEl.remove(); modalEl=null; } }
+
+// 渲染订单卡片的「微信号」行：始终提供输入框，可随时手动填写或修改（fix17 恢复：曾被 9936793 误删）
+function wechatHtml(o, ids){
+  const id=ids[0];
+  const cur=(o.wechat && String(o.wechat).trim()) ? String(o.wechat).trim() : '';
+  const tip = cur ? '' : '<span style="color:#c0392b;margin-right:6px">（买家未填写）</span>';
+  return `${tip}<input id="wechat-${id}" value="${escapeHtml(cur)}" placeholder="手动填写微信号" style="margin-left:0;padding:4px 8px;border:1px solid #e0d6c8;border-radius:6px;font-size:13px;width:130px;vertical-align:middle">
+          <button type="button" onclick="saveWechat(['${ids.join("','")}'])" style="margin-left:4px;padding:4px 10px;border:1px solid #b8743f;background:#fff;color:#b8743f;border-radius:6px;font-size:12px;cursor:pointer;vertical-align:middle">${cur?'修改':'保存'}</button>`;
+}
+// 手动填写/修改订单微信号，保存到云端（合并卡整组同步填写）
+async function saveWechat(ids){
+  ids=Array.isArray(ids)?ids:[ids];
+  const id=ids[0];
+  const input=document.getElementById('wechat-'+id);
+  if(!input) return;
+  const v=input.value.trim().slice(0,50);
+  if(!v){ toast('请填写微信号'); return; }
+  const updates=ids.map(i=>ORDERS.find(o=>o.id===i)).filter(Boolean);
+  const prevMap={}; updates.forEach(o=>{ prevMap[o.id]=JSON.parse(JSON.stringify(o)); o.wechat=v; pendingIds.add(o.id); });
+  render();
+  try{
+    for(const o of updates){
+      const r=await fetch('/api/orders/'+o.id+'/contact',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({wechat:v})});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok) throw new Error(d.error||'保存失败');
+      if(d.order){ const idx=ORDERS.findIndex(x=>x.id===o.id); if(idx>=0) ORDERS[idx]=d.order; }
+    }
+    toast('微信号已保存');
+  }catch(e){
+    updates.forEach(o=>{ const idx=ORDERS.findIndex(x=>x.id===o.id); if(idx>=0) ORDERS[idx]=prevMap[o.id]; });
+    render();
+    toast('微信号保存失败：'+e.message);
+  }finally{
+    setTimeout(()=>{ updates.forEach(o=>pendingIds.delete(o.id)); }, 2000);
+  }
+}
 
 // 编辑订单备注
 function editNote(id){

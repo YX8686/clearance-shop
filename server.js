@@ -1186,7 +1186,8 @@ const server = http.createServer(async (req, res)=>{
       const mContact = pathname.match(/^\/api\/orders\/([\w-]+)\/contact$/);
       if(method==='POST' && mContact){
         return withOrderLock(mContact[1], async ()=>{
-          await refreshOrdersFromCloud(); // 写前复核云端
+          // 写前复核：只拉当前这一单（O(1)），不再全量重拉 1052+ 单导致保存卡住十几秒没反应
+          await loadOrderRow(mContact[1]);
           const o = orders.find(o=>o.id===mContact[1]);
           if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
           let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
