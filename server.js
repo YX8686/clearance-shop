@@ -2,8 +2,6 @@
 // 本地双击图标零依赖即可跑；配置 SUPABASE_URL + SUPABASE_ANON_KEY 后自动切云端，数据持久化不丢。
 // Render 云端启动：先 listen 端口再异步 boot，避免健康检查超时。
 const http = require('http');
-const https = require('https');
-const net = require('net');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -16,53 +14,42 @@ const PUBLIC = path.join(ROOT, 'public');
 const VIEWS = path.join(ROOT, 'views');
 const GALLERY = path.join(PUBLIC, 'assets', 'gallery');
 const PORT = process.env.PORT || 4100;
-// 商家后台自检版本：任何 /admin 响应会注入 var my=这个常量到 HTML；
-// 客户端加载后会 fetch /api/admin-build 比对，不一致就 location.replace 强制刷新，
-// 这样柒木的桌面快捷方式再也不会被浏览器旧缓存坑（缓存了多久都能自动治）。
-// fix45（2026-09-21）：版本号必须随「前端 admin.html 的任何修复」一起升位——
-// 自检只比对版本字符串，若前端改了但这里不动，用户已经打开的旧标签页永远不会重载，
-// 会一直跑旧 JS（症状：保存成功但重开还是旧值）。
-// fix46（2026-09-21）：点「编辑」时不再只信页面内存 PRODUCTS，先向 GET /api/products/:id
-// 拉一次该产品的云端真值再填弹窗 —— 从根上消除「数据已存好、打开却显示旧值」，
-// 手机端（走 onrender 云端后台）和任何旧标签页都同样生效。
-// fix47（2026-09-21）：图片上传加固 —— Supabase Storage 抖动时重试 3 次；
-// 仍失败则返回空串让前端明确报错，绝不再静默回退成本地 '/assets/...' 相对路径
-// （那种路径云端 Render 取不到，会导致买家端产品主图裂图，真实故障：十全大补/精雕眼霜）。
-// fix48（2026-09-21）：本地后台「打开要 90~100 秒」「改库存保存显示成功但没变」的真根因 =
-// 本机直连 Supabase 极慢（实测单次 10s+；server.log 刷满 loadProducts timeout / saveProductRow
-// TypeError: fetch failed），而 decideNetwork 只用 3.5s 的 HEAD 探测就误判「直连可用」→
-// 全站读库/写库大面积超时（订单/产品读取 7s、boot 串行 4 次调用 ≈ 96s、保存失败）。
-// 现改为：代理端口可用就优先走本机代理（实测 ~3s），并把单次超时放宽到 20s。
-// fix49（2026-09-21）：根治「显示保存成功但其实没落库」——
-//  ① 保存后**回读校验**（updatedAt 不一致就报失败，绝不假成功）；
-//  ② 一次调用失败就**切换网络路径**（直连 ⇄ 本机代理）再试，不在同一条坏路上反复重试；
-//  ③ `flushDirtyProducts` 在 ops 模式**读不到云端基准时改成跳过**（原来会拿整份本地旧对象覆盖云端，
-//     把后台刚保存的名称/描述/SKU/图片冲掉）。
-// fix50（2026-09-22）：后台自检改为**每 10 秒轮询**（原来只在页面打开时查一次）——
-// 这样「开了很久没关的旧标签页」也会在版本变化后自动刷新，不再永远跑旧 JS、
-// 不再出现「旧页面弹了保存成功其实根本没发请求」。
-// fix51（2026-09-22）：后台产品主图集体变「暂无图片」——
-// 真根因不在商城代码：后台卡片是浏览器**直连 supabase.co**（买家端早就改走同源 /img/ 代理了，唯独后台漏了），
-// 而本机到境外的链路时通时不通（Clash 节点挂掉时 GitHub/Supabase/Render 全 000），图片请求全灭 → 前端回退占位图。
-// 两道加固：① admin.html 主图统一走同源 /img/ 代理（拉不到再退回浏览器直连，两条路总有一条通）；
-//          ② /img/ 增加**磁盘缓存**，只要成功拉到过一次就落盘，之后重启进程/断外网都还能出图。
-// fix53（2026-09-23）：「商 城发货单」两个故障——
-// ① 点「下载发货单」下不动：旧代码把「下载发货单」和「导出到发货管家」绑成一个动作，
-//    而且顺序是**先导出后下载**。导出要先读写云库 mall_sessions，本机网络/代理一抖动就整段失败
-//    （server.log 实证：[loadKV:mall_sessions] 云端第1/2次调用失败: timeout），下载被一起拖死 → 一张单子都拿不到。
-//    改为**先本地生成并下载发货单**（纯前端、零网络依赖），再尝试导出；导出失败只提示，不影响已下载的单子，也不动订单。
-// ② 图片版/Word 版发货单的编号对不上：合并单把组内所有编号拼成「A54/E43」，
-//    而后台卡片显示的是组内第一笔的编号「A54」，柒木对着看以为编号错了。
-//    改为主编号 = first.shipCode（与卡片严格一致），逐笔明细行里仍各自标注编号，信息不丢。
-const ADMIN_BUILD = 'fix56-2026-09-23-today-save-tracking-and-ship';
-// fix50（2026-09-22）：自检从「只在打开时查一次」升级为「每 10 秒查一次」。
-// 根因：只查一次的写法对「开了很久没关的旧标签页」完全无效 —— 那页永远跑旧 JS，
-// 旧 JS 在请求没发出去/失败时也会弹「保存成功」，于是「保存成功但没保存」反复出现。
-// 现在任何打开着的后台页，只要版本一变就会自动重载；正在编辑弹窗时不打断（避免丢输入）。
-const ADMIN_SELF_CHECK = '<script>(function(){var my="' + ADMIN_BUILD + '";'
-  + 'function editing(){try{var m=document.getElementById("prodModal");return !!(m&&m.classList.contains("show"));}catch(e){return false;}}'
-  + 'function chk(){if(editing())return;fetch("/api/admin-build",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(j&&j.v&&j.v!==my){try{location.replace(location.pathname+"?v="+j.v+"&t="+Date.now());}catch(e){location.reload(true);}}}).catch(function(){});}'
-  + 'chk();setInterval(chk,10000);})();</script>';
+
+// 商家后台构建版本号——每次改了 admin.html 行为/UI 就手动 +1。
+// admin.html 加载时拿这个值和"自己被服务时的嵌入版本"对比，不一致就强制刷一次，
+// 彻底根除"用户卡在旧缓存里导致功能失效"的问题（不再让用户手动清缓存/隐身）。
+const ADMIN_BUILD = 'fix2-2026-09-10-1328';
+
+// ===== 嵌入发货管家（2026-09-09）：把 ship-cloud 的 handler 作为子路由转发 =====
+// 共用 4100 端口、共用 Supabase 数据源；线上访问路径不变（直接访问商城域名的原 ship-cloud 路径即可）
+let shipCloudHandler = null;
+try{
+  shipCloudHandler = require('./buchu-ship-cloud/server.js').handler;
+  console.log('[ship-cloud] handler loaded, embedded into mall server');
+}catch(e){
+  console.error('[ship-cloud] failed to load handler:', e.message);
+}
+const SHIP_CLOUD_PREFIXES = ['/api/shipper/', '/api/manual-session/', '/api/manual-pool/', '/api/manual-raw/'];
+// 精确路径 + 受允许 method（null = 任意 method）。/api/orders 与 /api/products 在商城已有同名端点，
+// 故仅在 ship-cloud 关心的 method（POST）上转发，避免破坏 GET 走商城
+const SHIP_CLOUD_EXACT = {
+  '/api/tracking': 'POST',
+  '/api/pull-mall': 'POST',
+  '/api/pull-mall-confirm': 'POST',
+  '/api/mall-products': 'GET',
+  '/api/pending-tracking': 'GET',
+  '/api/confirm-tracking': 'POST',
+  '/api/pick-list': 'GET',
+  '/api/stock': null,
+  '/api/settings': null,
+};
+function isShipCloudPath(p, m){
+  if(!(p && typeof p==='string')) return false;
+  for(let i=0;i<SHIP_CLOUD_PREFIXES.length;i++) if(p.startsWith(SHIP_CLOUD_PREFIXES[i])) return true;
+  const want = Object.prototype.hasOwnProperty.call(SHIP_CLOUD_EXACT, p) ? SHIP_CLOUD_EXACT[p] : undefined;
+  if(want === undefined) return false;
+  return want === null || want === m;
+}
 
 // 读取 .env.local（本地双击图标时无需手动设置环境变量）
 function loadEnvLocal(){
@@ -84,14 +71,12 @@ loadEnvLocal();
 // supabase fetch 加超时（默认 fetch 不带超时，Supabase 免费层冷启动慢/抖动时会无限挂起，
 // 商家后台"确认收款"会卡到 30s+）。30s 已足够覆盖冷启动，但够短能让前端尽快感知失败。
 let sb = null;
-// 单次云端调用超时（fix48：12s → 20s）。本机直连 Supabase 实测 10s+，12s 会频繁误判超时。
-const SB_TIMEOUT_MS = Number(process.env.SUPABASE_TIMEOUT_MS) || 20000;
 if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
   try {
     const { createClient } = require('@supabase/supabase-js');
     const fetchWithTimeout = (url, opts) => {
       const ctl = new AbortController();
-      const t = setTimeout(() => ctl.abort(), SB_TIMEOUT_MS);
+      const t = setTimeout(() => ctl.abort(), 30000);
       return fetch(url, { ...opts, signal: ctl.signal }).finally(() => clearTimeout(t));
     };
     sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, { global: { fetch: fetchWithTimeout } });
@@ -100,96 +85,6 @@ if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
   }
 }
 const USE_SUPABASE = !!sb;
-
-// ---------- 网络路径自适应（2026-09-13 修复「本地后台点应用/保存一直卡住或失败」） ----------
-// 根因：柒木本机开着 Clash。TUN(虚拟网卡) 模式会把 DNS 劫持成 fake-ip，Node 直连 Supabase 直接失败；
-// 而 Node 默认也不读系统的"系统代理"，于是本地 4301 所有写库操作（活动排期/保存设置/确认收款）全部超时。
-// 方案：启动时先用 node:https 探一次直连（不走 undici，绝不污染后续 fetch 的 dispatcher）：
-//   · 直连可用（Clash 关闭 / 只是系统代理）→ 不启用代理，避免"代理端口不在"反而连不上；
-//   · 直连不可用（Clash TUN 开着）→ 启用 NODE_USE_ENV_PROXY + HTTP(S)_PROXY 走本机代理。
-// 这样柒木无论开不开 Clash，本地后台都能写库，不需要他手动调网络设置。
-let NET_MODE = 'direct';
-function enableEnvProxy(proxy){
-  // Node 22.21+ 支持：设 NODE_USE_ENV_PROXY=1 后，全局 fetch 会读 HTTP_PROXY/HTTPS_PROXY
-  process.env.NODE_USE_ENV_PROXY = '1';
-  if(!process.env.HTTP_PROXY) process.env.HTTP_PROXY = proxy;
-  if(!process.env.HTTPS_PROXY) process.env.HTTPS_PROXY = proxy;
-  NET_MODE = 'proxy';
-}
-// fix49：本机「直连」和「本机代理」两条路都时好时坏（实测同一分钟内一条 3s、一条 10s+）。
-// 一次调用失败时，就切到另一条路再试，而不是在同一条坏路上反复重试。
-function switchNetworkPath(label){
-  const proxy = String(process.env.SUPABASE_PROXY || '').trim();
-  if(!proxy) return;
-  if(NET_MODE === 'proxy'){
-    delete process.env.NODE_USE_ENV_PROXY;
-    delete process.env.HTTP_PROXY;
-    delete process.env.HTTPS_PROXY;
-    NET_MODE = 'direct';
-  } else {
-    process.env.NODE_USE_ENV_PROXY = '1';
-    process.env.HTTP_PROXY = proxy;
-    process.env.HTTPS_PROXY = proxy;
-    NET_MODE = 'proxy';
-  }
-  console.warn('[Net] ' + (label||'') + ' 失败 → 切换网络路径为 ' + NET_MODE);
-}
-function probeDirect(baseUrl, timeoutMs){
-  return new Promise(resolve=>{
-    let done = false;
-    const finish = v => { if(!done){ done = true; resolve(v); } };
-    let u;
-    try { u = new URL(String(baseUrl).replace(/\/+$/, '') + '/rest/v1/'); }
-    catch(e){ return finish(false); }
-    const mod = u.protocol === 'http:' ? http : https;
-    let r;
-    try {
-      r = mod.request({
-        hostname: u.hostname,
-        port: u.port || (u.protocol === 'http:' ? 80 : 443),
-        path: u.pathname,
-        method: 'HEAD',
-        timeout: timeoutMs
-      }, res=>{ res.resume(); finish(true); });
-    } catch(e){ return finish(false); }
-    r.on('timeout', ()=>{ try{ r.destroy(); }catch(e){} finish(false); });
-    r.on('error', ()=>{ finish(false); });
-    r.end();
-  });
-}
-// TCP 端口探测：本机代理（Clash 等）是否在监听
-function probePort(host, port, timeoutMs){
-  return new Promise(resolve=>{
-    let done = false;
-    const finish = v => { if(!done){ done = true; resolve(v); } };
-    let s;
-    try { s = net.connect({ host, port }); } catch(e){ return finish(false); }
-    const t = setTimeout(()=>{ try{ s.destroy(); }catch(e){} finish(false); }, timeoutMs);
-    s.on('connect', ()=>{ clearTimeout(t); try{ s.destroy(); }catch(e){} finish(true); });
-    s.on('error', ()=>{ clearTimeout(t); finish(false); });
-  });
-}
-// 2026-09-21（fix48）策略反转：本机实测「直连 Supabase 很慢」（单次 10s+，日志刷 timeout / fetch failed），
-// 「走本机代理 ~3s」。旧逻辑只用 3.5s 的 HEAD 探测就判「直连可用」→ 结果全站超时（后台打开 90~100s、保存失败）。
-// 新逻辑：代理端口在监听 → 优先走代理；代理不可用（Clash 没开）→ 才直连。
-async function decideNetwork(){
-  if(!USE_SUPABASE) return;
-  const proxy = String(process.env.SUPABASE_PROXY || '').trim();
-  if(!proxy){ NET_MODE = 'direct'; return; }
-  if(process.env.SUPABASE_FORCE_PROXY === '1'){
-    enableEnvProxy(proxy);
-    console.log('[Net] 已按 SUPABASE_FORCE_PROXY 强制走代理：' + proxy);
-    return;
-  }
-  const m = proxy.match(/^https?:\/\/([^:\/]+):(\d+)/);
-  if(m && await probePort(m[1], Number(m[2]), 800)){
-    enableEnvProxy(proxy);
-    console.log('[Net] 检测到本机代理端口可用，优先走代理：' + proxy);
-    return;
-  }
-  NET_MODE = 'direct';
-  console.log('[Net] 本机代理端口不可用，改用直连');
-}
 
 function ensureDir(d){ if(!fs.existsSync(d)) fs.mkdirSync(d, {recursive:true}); }
 ensureDir(DATA); ensureDir(PUBLIC); ensureDir(VIEWS); ensureDir(GALLERY);
@@ -226,26 +121,14 @@ const kvCache = new Map(); // key -> { ts, value, promise }
 // 云端调用重试：覆盖 Supabase 免费层间歇 fetch failed / 冷启动抖动
 // 默认 2 次快速重试（失败后立即再试 1 次，间隔 600ms）。
 // 以前默认 5 次指数退避（最长 6.4s）导致保存明显变慢，且前端超时重试会造成重复产品。
-async function withRetry(fn, label, retries=2, timeoutMs){
-  const limit = Number(timeoutMs) > 0 ? Number(timeoutMs) : SB_TIMEOUT_MS;
+async function withRetry(fn, label, retries=2){
   let lastErr;
   for(let i=0;i<retries;i++){
-    try{
-      // 单调用超时（fix48：12s → 20s）：Supabase 免费层偶发 fetch 永久挂起必须强制释放，防止 withLock 死锁；
-      // 同时本机直连 Supabase 实测 10s+，12s 会频繁误判超时。
-      // fix52：允许调用方传更短的超时（后台点开关这类小操作不该让柒木等 80 秒）。
-      return await Promise.race([fn(), new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')), limit))]);
-    }
+    try{ return await fn(); }
     catch(e){
       lastErr=e;
-      // fix52：把 undici 的真实底层原因（ECONNRESET / socket hang up / ENOTFOUND…）一起记进日志，
-      // 否则永远只看到 "fetch failed"，分不清是代理挂了还是 Supabase 抖动。
-      const cause = (e && e.cause) ? (' | cause=' + (e.cause.code || e.cause.message || String(e.cause))) : '';
-      console.error(`[${label}] 云端第${i+1}/${retries}次调用失败:`, (e && e.message) + cause);
-      if(i<retries-1){
-        switchNetworkPath(label);            // fix49：失败就换另一条路（直连 ⇄ 代理）再试
-        await new Promise(r=>setTimeout(r, 500));
-      }
+      console.error(`[${label}] 云端第${i+1}/${retries}次调用失败:`, e.message);
+      if(i<retries-1) await new Promise(r=>setTimeout(r, 600));
     }
   }
   throw lastErr;
@@ -343,44 +226,27 @@ async function saveImage(base64, fileName, storageSub){
   if(!m) return '';
   const ext = m[1]==='image/png'?'png':(m[1]==='image/jpeg'?'jpg':(m[1]==='image/webp'?'webp':'png'));
   const buf = Buffer.from(m[2], 'base64');
-  const file = String(fileName||'img').replace(/[\\/:*?"<>|]/g,'_').replace(/\.[^.]+$/,'') + '.' + ext;
+  // 强制唯一文件名：同名文件直接覆盖会导致 Supabase Storage / 浏览器缓存旧图，
+  // 用户后台「保存成功」但预览/列表仍显示旧图片。加时间戳+随机后缀确保 URL 每次都变。
+  const base = String(fileName||'img').replace(/[\\/:*?"<>|]/g,'_').replace(/\.[^.]+$/,'');
+  const uid = Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,6);
+  const file = base + '_' + uid + '.' + ext;
   const relDir = String(storageSub||'').replace(/\\/g,'/').replace(/^\/+|\/+$/g,'');
   const localDir = relDir ? path.join(PUBLIC, 'assets', relDir) : path.join(PUBLIC, 'assets');
   ensureDir(localDir);
   const localFile = path.join(localDir, file);
   const localUrl = relDir ? '/assets/' + relDir + '/' + file : '/assets/' + file;
 
-  // fix47（2026-09-21）：云端存储抖动（fetch failed / timeout）必须重试，且绝不返回本地相对路径。
-  // 旧逻辑：storage 上传一次失败 → 静默 catch → 落本地磁盘并返回 '/assets/...' 相对路径。
-  //   但云端 Render 上没有这个文件 → 产品主图在买家端直接裂图。
-  //   真实故障（2026-09-21）：「3588十全大补」「精雕眼霜15g」两张主图就是这样裂的，
-  //   图片只存在于商家电脑 localhost，云端 404。
-  // 新逻辑：storage 上传最多重试 3 次（间隔 0.8s / 1.6s）；仍失败则返回空串，
-  //   让调用方明确报「上传失败」（图库上传接口已有 if(!url) → 500 分支），
-  //   绝不把云端取不到的本地路径写进产品数据。
-  // 本地模式（未配 Supabase）保持原样：写 PUBLIC/assets 并返回相对路径，本地能正常显示。
   if(USE_SUPABASE){
-    const safeSub = toSafeStoragePath(storageSub);
-    const safeFile = toSafeStorageKey(file, true);
-    const objectPath = (safeSub ? safeSub + '/' : 'uploads/') + safeFile;
-    let lastErr = null;
-    for(let attempt=0; attempt<3; attempt++){
-      try{
-        const { error } = await sb.storage.from('shop').upload(objectPath, buf, { contentType: m[1], upsert: true });
-        if(error) throw error;
-        const { data:{ publicUrl } } = sb.storage.from('shop').getPublicUrl(objectPath);
-        if(!publicUrl) throw new Error('getPublicUrl 返回空');
-        return publicUrl;
-      }catch(e){
-        lastErr = e;
-        console.error('[saveImage] storage 第'+(attempt+1)+'/3次失败:', e && e.message);
-        if(attempt<2) await new Promise(r=>setTimeout(r, 800*(attempt+1)));
-      }
-    }
-    // 三次都失败：保留一份本地副本便于人工补救，但绝不把它返回给前端
-    try{ fs.writeFileSync(localFile, buf); console.error('[saveImage] 已留本地副本（云端不可达，未返回）:', localFile); }catch(_){}
-    console.error('[saveImage] 云端存储三次均失败，放弃上传:', lastErr && lastErr.message);
-    return '';
+    try{
+      const safeSub = toSafeStoragePath(storageSub);
+      const safeFile = toSafeStorageKey(file, true);
+      const objectPath = (safeSub ? safeSub + '/' : 'uploads/') + safeFile;
+      const { error } = await sb.storage.from('shop').upload(objectPath, buf, { contentType: m[1], upsert: true });
+      if(error) throw error;
+      const { data:{ publicUrl } } = sb.storage.from('shop').getPublicUrl(objectPath);
+      return publicUrl;
+    }catch(e){ console.error('[saveImage] storage failed, fallback local', e.message); }
   }
   fs.writeFileSync(localFile, buf);
   return localUrl;
@@ -406,11 +272,9 @@ const DEFAULT_CONFIG = {
   countdownManualIndex: -1
 };
 
-// fix49：启动即用本地缓存垫底（而不是空数组），这样即使云端慢到 boot 超时，
-// 后台也能立刻用「上一次的本地数据」打开，不会白屏。boot 完成后会用云端最新数据覆盖。
-let products = readJson('products.json', []);
+let products = [];
 let config = DEFAULT_CONFIG;
-let orders = [];   // 订单不预填磁盘缓存（boot 一定从云端覆盖；避免任何"用旧订单当写源"的可能）
+let orders = [];
 let booted = false;
 let bootPromise = null;
 
@@ -421,53 +285,39 @@ function ensureBoot(){
 }
 
 async function boot(){
-  // 必须在任何 Supabase 请求之前决定网络路径（undici 的全局 dispatcher 一旦用过就固定了）
-  try { await decideNetwork(); }
-  catch(e){ console.error('[boot] 网络探测失败，按直连处理：', e.message); }
   const seedProducts = readJson('products.json', []);
   const seedConfig = readJson('config.json', DEFAULT_CONFIG);
   const seedOrders = readJson('orders.json', []);
-  // fix48：products / config / orders 三类数据彼此独立 → 并发加载。
-  // 旧写法是串行 3 次云端往返之和（本机单次 4~10s，串行叠加就是后台「打开要 90~100 秒」的主因之一），
-  // 而 server 每个请求都要 await ensureBoot()，串行会把首屏整体拖住。并发后 boot ≈ 最慢的那一次。
-  // 各自失败仍降级到本地 data/*.json 种子，失败行为与旧版完全一致。
-  const [pRes, cRes, oRes] = await Promise.all([
-    (async()=>{ try{ return await loadProductsFromRows(seedProducts); }
-      catch(e){ console.error('[boot] products 加载失败，使用本地种子：', e.message); return seedProducts; } })(),
-    (async()=>{ try{ return await loadKV('config', seedConfig); }
-      catch(e){ console.error('[boot] config 加载失败，使用本地种子：', e.message); return seedConfig; } })(),
-    // 订单载入：优先从独立行 order:* 聚合（新方案，并发安全）；若无则回退旧 orders 大数组行并拆分迁移
-    (async()=>{
-      try{
-        if(!USE_SUPABASE) return seedOrders;
-        const { data, error } = await sb.from('shop_data').select('key,value').like('key','order:%');
-        if(!error && data && data.length) return data.map(r=>r.value).filter(Boolean);
-        const arr = await loadKV('orders', seedOrders);
-        const list = Array.isArray(arr)?arr:[];
-        if(list.length){
-          await Promise.all(list.map(o=> (o&&o.id) ? sb.from('shop_data').upsert({key:'order:'+o.id, value:o}).catch(e=>console.error('[migrate]',e.message)) : Promise.resolve()));
-          console.log('[migrate] 已拆分旧 orders 数组为', list.length, '条独立行');
-        }
-        return list;
-      }catch(e){ console.error('[boot] orders 加载失败，使用本地种子：', e.message); return seedOrders; }
-    })()
-  ]);
-  products = pRes;
+  // boot 阶段优雅降级：从云端 product:* 独立行聚合；失败时使用本地 data/*.json 种子
+  try { products = await loadProductsFromRows(seedProducts); }
+  catch(e){ console.error('[boot] products 加载失败，使用本地种子：', e.message); products = seedProducts; }
+  try { config = await loadKV('config', seedConfig); }
+  catch(e){ console.error('[boot] config 加载失败，使用本地种子：', e.message); config = seedConfig; }
   // 合并默认值：后续新增字段（如 hiddenCategories）不会在老配置里缺失
-  config = { ...DEFAULT_CONFIG, ...(typeof cRes==='object' && cRes ? cRes : {}) };
-  orders = Array.isArray(oRes) ? oRes : [];
+  config = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config ? config : {}) };
+  // 订单载入：优先从独立行 order:* 聚合（新方案，并发安全）；若无则回退旧 orders 大数组行并拆分迁移
+  try {
+    if(USE_SUPABASE){
+      const { data, error } = await sb.from('shop_data').select('key,value').like('key','order:%');
+      if(!error && data && data.length){
+        orders = data.map(r=>r.value).filter(Boolean);
+      } else {
+        const arr = await loadKV('orders', seedOrders);
+        orders = Array.isArray(arr)?arr:[];
+        if(orders.length){
+          await Promise.all(orders.map(o=> (o&&o.id) ? sb.from('shop_data').upsert({key:'order:'+o.id, value:o}).catch(e=>console.error('[migrate]',e.message)) : Promise.resolve()));
+          console.log('[migrate] 已拆分旧 orders 数组为', orders.length, '条独立行');
+        }
+      }
+    } else {
+      orders = seedOrders;
+    }
+  }
+  catch(e){ console.error('[boot] orders 加载失败，使用本地种子：', e.message); orders = seedOrders; }
   if(config.paymentQr && !config.paymentWechatQr) config.paymentWechatQr = config.paymentQr;
   booted = true;
   console.log('[Data] 模式=' + (USE_SUPABASE ? 'Supabase云端' : '本地文件') +
     '，产品数=' + products.length + '，订单数=' + orders.length);
-  // 为历史待发货订单补发编号（异步，不阻塞启动）
-  setTimeout(()=>{
-    const need = orders.filter(o=>['待发货','今日可发','待回传'].includes(o.status) && !o.shipCode);
-    if(need.length){
-      need.forEach(o=>{ ensureShipCode(o); saveOrderRow(o); });
-      console.log('[shipCode] 已为', need.length, '笔历史待发货订单补编号');
-    }
-  }, 0);
 }
 
 // 本地模式：启动时校验数据目录是否可写（防止沙箱/权限问题导致下单失败）
@@ -516,7 +366,18 @@ async function _flushOrderQueue(){
           try { await sb.from('shop_data').upsert({ key:'order:'+o.id, value:o }); } catch(e){}
         }
       }
-    } catch(e){ console.error('[orderFlush] exception:', e.message); }
+    } catch(e){
+      console.error('[orderFlush] exception:', e.message, '| 重新入队防丢单');
+      _orderWriteQueue.push(...batch); // 崩溃/异常时把本批重新放回队列，等下次重试，绝不静默丢弃
+    }
+  } else {
+    // 文件模式：把当前内存全量订单原子落盘（修复前这里完全没写，导致本地模式下订单状态变更重启即丢）
+    try {
+      await withLock(()=> writeJsonAtomic('orders.json', orders));
+    } catch(e){
+      console.error('[orderFlush disk] exception:', e.message, '| 重新入队防丢单');
+      _orderWriteQueue.push(...batch);
+    }
   }
   // 如果队列还有积压，立即排下一批
   if(_orderWriteQueue.length) _scheduleOrderFlush();
@@ -529,96 +390,40 @@ function saveOrderRow(order){
   if(_orderWriteQueue.length >= 50) _flushOrderQueue(); // 满了立即刷
   else _scheduleOrderFlush(); // 500ms 后批量刷
 }
-// 状态变更用（低频管理操作）：内存即时同步 + 立即单条 upsert（确保状态即时落盘）
+// 状态变更用（低频管理操作）：内存即时同步 + 立即单条落盘（确保状态即时持久化，重启不丢）
 async function saveOrderRowSync(order){
   if(USE_SUPABASE){
     const { error } = await sb.from('shop_data').upsert({ key:'order:'+order.id, value: order });
     if(error) throw new Error('Supabase saveOrderRow error: '+error.message);
     kvCache.set('order:'+order.id, { ts:Date.now(), value:order, promise:null });
+  } else {
+    // 文件模式：状态变更后立即原子写盘（修复前只改内存，重启即丢单）
+    await withLock(()=> writeJsonAtomic('orders.json', orders)).catch(e=>console.error('[saveOrderRowSync disk]', e.message));
   }
   const idx = orders.findIndex(o=>o.id===order.id);
   if(idx>=0) orders[idx]=order; else orders.push(order);
 }
 // 进程退出前刷盘，防丢单
 process.on('beforeExit', ()=>{ _flushOrderQueue(); flushDirtyProducts().catch(()=>{}); });
-// 兜底：任何未捕获异常都只记日志，绝不让服务静默死掉（否则商家后台整站打不开）
-process.on('uncaughtException', e=>{ console.error('[uncaughtException]', (e && e.stack) || e); });
-process.on('unhandledRejection', e=>{ console.error('[unhandledRejection]', (e && e.stack) || e); });
 function saveOrders(){ return withLock(()=> saveKV('orders', orders)); } // 仅作整批备份残留，下单/状态变更已改用 saveOrderRow
-function saveConfig(){
-  clearHtmlCache();
-  configDirty = true;
-  return withLock(()=> saveKV('config', config, 2))
-    .then(r=>{ configReadCache.ts = Date.now(); configDirty = false; return r; })
-    .catch(e=>{ configDirty = false; throw e; });
-}
-
-// ===== 发货编号：A1-A100, B1-B100, ... 顺序分配，持久化在订单上 =====
-const SHIP_CODE_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-const SHIP_CODE_MAX_NUM = 100;
-function getUsedShipCodes(){ return new Set(orders.map(o=>o.shipCode).filter(Boolean)); }
-function nextShipCode(){
-  const used = getUsedShipCodes();
-  for(const letter of SHIP_CODE_LETTERS){
-    for(let n=1; n<=SHIP_CODE_MAX_NUM; n++){
-      const code = letter + n;
-      if(!used.has(code)) return code;
-    }
-  }
-  return null; // 2600 个编号用尽
-}
-function ensureShipCode(order){
-  if(!order || order.shipCode) return order && order.shipCode;
-  order.shipCode = nextShipCode();
-  return order.shipCode;
-}
+function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config, 5)); }
 
 // ===== 产品存储加固：每个产品独立存储为 shop_data 的一行（key=product:<id>）=====
 // 旧方案：所有产品塞进 shop_data 的单行(key='products')，产品描述长、数量多后，
 // 每次编辑都要 upsert 整个大 JSON，导致保存变慢、Supabase 免费层容易超时/失败。
 // 新方案：每个产品 upsert 独立行，单行数据小、写入快，回到秒级保存；排序单独存 product_order。
 const dirtyProductIds = new Set();
-// 2026-09-20 新增：记录脏行的「改动类型」，决定落库时能不能整行覆盖。
-//   'full' = 商家后台保存产品（内容以本地为准，允许整行写）
-//   'ops'  = 只改了库存 / 上架状态（下单扣库存、取消恢复、改单、隐藏开关、强制售罄、切波）
-//            → 必须以「云端当前行」为基准，只把库存/状态字段盖上去，
-//              否则会把商家后台刚保存的名称 / 描述 / SKU 发货明细一起覆盖回旧值。
-// 真实故障（2026-09-20）：后台改 SKU 发货明细，提示保存成功，一刷新又变旧、买家端同步不生效。
-// 根因：云端 Render 实例 24h 在线，它的内存 products 只在启动时读过一次；
-//      顾客下单扣库存时把「整行业旧数据」upsert 回云端，正好盖掉后台刚保存的内容。
-const dirtyModes = new Map();
-const DIRTY_MODE_RANK = { ops: 1, full: 2 };
-function markProductDirty(id, mode){
-  if(!id) return;
-  dirtyProductIds.add(id);
-  const m = mode === 'ops' ? 'ops' : 'full';
-  const cur = dirtyModes.get(id);
-  if(!cur || DIRTY_MODE_RANK[m] > DIRTY_MODE_RANK[cur]) dirtyModes.set(id, m);
-}
+function markProductDirty(id){ if(id) dirtyProductIds.add(id); }
 // ⚠️ 关键：supabase-js 的查询遇到网络/权限错误**不抛异常**，而是把错误放进返回对象的 error 字段。
 // 早期改成分行存储时，新写的 upsert 只套了 withRetry 却没检查 error 字段 —— 一旦 Supabase 免费层
 // 抖动（fetch failed）或 RLS 拦截，写入其实没成功，却被当成成功并清掉了 dirtyProductIds，
 // 症状正是「后台提示保存成功，一刷新又变回旧数据」。统一封装：解析 error 并抛错，交给重试兜底。
-async function sbRun(fn, label, retries, timeoutMs){
-  const r = await withRetry(fn, label, retries===undefined?2:retries, timeoutMs);
+async function sbRun(fn, label){
+  const r = await withRetry(fn, label);
   if(r && r.error) throw new Error((label||'supabase')+' 失败: '+(r.error.message||JSON.stringify(r.error)));
   return r;
 }
-// fix52：后台点「上架/隐藏/售罄」这类小操作走这条快速通道——单次 9 秒、试 3 次、失败即换网络路径。
-// 为什么：原来沿用 20 秒 × 2 次，加上排序那一次写入，最坏要 80 秒才报错，柒木的感受就是「点不动，过一会儿弹错」。
-const OPS_FLUSH_TIMEOUT_MS = 9000;
-// fix52：后台点「上架/隐藏/售罄」时把「目标值」记在这里，落库时以它为准。
-// 为什么需要：flush 内部要 await 读云端基准、写云端，这期间并发回源可能把内存刷回旧值，
-// 直接读内存就会写错。目标值由用户动作确定，不参与任何同步，最可靠。
-const opsTargetValue = new Map();
-function setOpsTarget(id, patch){
-  const cur = opsTargetValue.get(id) || {};
-  opsTargetValue.set(id, Object.assign(cur, patch));
-}
-async function flushDirtyProducts(opts){
-  const o = opts || {};
-  const timeoutMs = Number(o.timeoutMs) > 0 ? Number(o.timeoutMs) : SB_TIMEOUT_MS;
-  const retries = Number(o.retries) > 0 ? Number(o.retries) : 2;
+async function flushDirtyProducts(){
   if(!dirtyProductIds.size) return;
   const ids = Array.from(dirtyProductIds);
   dirtyProductIds.clear();
@@ -626,88 +431,27 @@ async function flushDirtyProducts(opts){
   if(!USE_SUPABASE){
     // 本地模式仍整盘写入 products.json
     await withLock(()=> writeJsonAtomic('products.json', products));
-    ids.forEach(id=>dirtyModes.delete(id));
     return;
   }
-  // ★ 2026-09-20 关键修复（本文件最重要的一处）★
-  // 写库前先取「云端当前行」当基准，按改动类型决定合并范围：
-  //   · mode='ops'  → 云端为准，只把库存 / 隐藏 / 强制售罄 盖上去。绝不覆盖名称/描述/SKU发货明细/图片。
-  //   · mode='full' → 后台保存产品（内容以本地为准），整行写回。
-  // 为什么必须这么做：内存 products 是"写源"，而各实例（尤其 24h 在线的云端 Render 实例）
-  // 这份内存只在启动时读过云端。顾客下单扣库存时会整行 upsert，
-  // 于是把旧版本的名称/描述/SKU 发货明细一起写回云端 ——
-  // 后台刚保存的产品内容被静默覆盖，症状就是「提示保存成功，再点进去还是旧值，买家端也不生效」。
-  let cloudRows = new Map();
-  try{
-    const keys = ids.map(id=>'product:'+id);
-    const r = await withRetry(()=>sb.from('shop_data').select('key,value').in('key', keys), 'flushReadBase', 2);
-    if(r && r.error) throw new Error(r.error.message || 'read base failed');
-    ((r && r.data) || []).forEach(x=>{ if(x && x.key) cloudRows.set(String(x.key).slice('product:'.length), x.value); });
-  }catch(e){
-    console.error('[flushDirtyProducts] 写前读云端基准失败（本次退化为整行写入）:', e.message);
-  }
-  // 云端模式：批量 upsert，把 N 次单条网络往返合并为 1 次，显著降低 Supabase 免费层抖动概率
-  // fix49：ops 模式但「写前读基准」失败（base 拿不到）时，**绝不能**拿整份本地旧对象覆盖云端
-  //（那会把后台刚保存的名称/描述/SKU/图片冲掉）。此时跳过该行、保留为脏行，下次拿到基准再写。
-  const opsNoBase = [];
-  const rows = ids.map(id=>{
-    const local = products.find(x=>x.id===id);
-    if(!local) return null;
-    let val = local;
-    const mode = dirtyModes.get(id) || 'full';
-    const base = cloudRows.get(id);
-    if(mode === 'ops'){
-      if(!(base && typeof base==='object' && !Array.isArray(base))){
-        opsNoBase.push(id);
-        return null;
-      }
-      // 以云端最新行为基准，只覆盖本次真正改动的"操作类字段"
-      // fix52：优先用「操作时记下的目标值」——await 期间可能有并发回源/同步把内存刷回旧值，
-      // 那样写进云端的就不是柒木刚点的那个状态（症状：点了开关，提示成功，但状态没变）。
-      const ov = opsTargetValue.get(id) || {};
-      val = Object.assign({}, base, {
-        stock: (ov.stock !== undefined ? ov.stock : local.stock),
-        hidden: (ov.hidden !== undefined ? ov.hidden : local.hidden),
-        forceSoldOut: (ov.forceSoldOut !== undefined ? ov.forceSoldOut : local.forceSoldOut),
-        updatedAt: Date.now()
-      });
-      const localSkus = Array.isArray(local.skus) ? local.skus : [];
-      const baseSkus  = Array.isArray(base.skus)  ? base.skus  : [];
-      // SKU 只同步库存字段，SKU 名称 / 发货明细 / 独立主图 / 副标题 一律保留云端最新
-      val.skus = baseSkus.map(bs=>{
-        const ls = localSkus.find(x=>String(x.id)===String(bs.id));
-        return (ls && ls.stock!==undefined) ? Object.assign({}, bs, { stock: ls.stock }) : bs;
-      });
-      // 本地有、云端没有的 SKU（极少见）：保留本地，避免丢 SKU
-      localSkus.forEach(ls=>{ if(!val.skus.some(bs=>String(bs.id)===String(ls.id))) val.skus.push(ls); });
-    }
-    // 让内存也跟上云端内容，避免下一次又拿旧内容去写
-    try{ if(val !== local) Object.assign(local, val); }catch(_){}
-    return { key:'product:'+id, value:val };
-  }).filter(Boolean);
+  // 云端模式：逐行 upsert；失败的 id 重新加入 dirty 待下次窗口重试
   const failed = [];
-  opsNoBase.forEach(id=>failed.push(id));   // 未写入的行 → 计入失败：保留脏行 + 让上层能感知
-  if(rows.length){
+  for(const id of ids){
+    const p = products.find(x=>x.id===id);
+    if(!p) continue;
     try {
-      await sbRun(()=>sb.from('shop_data').upsert(rows), 'saveProductRows:'+rows.length, retries, timeoutMs);
+      await sbRun(()=>sb.from('shop_data').upsert({ key:'product:'+id, value:p }), 'saveProductRow:'+id);
     } catch(e) {
-      console.error('[saveProductRows] 批量失败:', e.message);
-      ids.forEach(id=>failed.push(id));
+      console.error('[saveProductRow] 失败:', id, e.message);
+      failed.push(id);
     }
   }
-  // 注意：只把「真实产品 id」放回脏集，不要把 'product_order' 这个哨兵值塞进去
-  //（旧写法会污染脏集，让 getProducts 误判"有未落库脏行"而一直返回内存旧副本）
   failed.forEach(id=>dirtyProductIds.add(id));
-  // ★ fix52 关键解耦 ★ 排序是「显示顺序」，跟产品本身的存没存上是两件事。
-  // 以前排序写失败会把整个操作判为失败 —— 柒木看到「保存失败」，可产品其实早写进去了，
-  // 于是反复点、反复报错（"点上架点不动，过一会儿弹错"就是这么来的）。
-  // 现在：只记日志 + 留待下次自然重试，绝不影响产品保存结果、绝不给用户报假失败。
-  let orderSaveFailed = false;
+  // 同步排序 key（排序变更较少，有脏行时顺便写）
   try {
-    await saveProductOrder(false, timeoutMs, retries);
+    await saveProductOrder();
   } catch(e) {
-    orderSaveFailed = true;
-    console.warn('[saveProductOrder] 排序暂未保存（不影响产品本身，下次自动重试）:', e.message);
+    console.error('[saveProductOrder]', e.message);
+    failed.push('product_order');
   }
   // 关键修复：云端写入失败必须让前端知道。同时把当前内存整盘写一份本地 products.json 作为备份，
   // 避免"前端显示成功但重启后数据丢失"。
@@ -715,31 +459,12 @@ async function flushDirtyProducts(opts){
     await withLock(()=> writeJsonAtomic('products.json', products)).catch(err=>console.error('[local backup] 失败:', err.message));
     throw new Error('云端保存失败（' + failed.join(', ') + '），已写本地备份，请检查网络后重试');
   }
-  ids.forEach(id=>dirtyModes.delete(id));   // 只有全部写成功才清掉改动类型
-  ids.forEach(id=>opsTargetValue.delete(id));   // 目标值已落库，清掉
-  if(orderSaveFailed) console.warn('[flush] 产品已保存，仅显示顺序未同步');
-  // ⚠️ 写入成功后必须让 productReadCache 立即看到最新内存，否则切波/保存后买家端可能还在用旧隐藏状态。
-  productReadCache = { ts: Date.now(), value: products.slice(), promise: null, failed: false };
 }
-// 排序行写入：fix52 两处加固
-//  ① 只在顺序真的变了才写（点「上架/隐藏」跟顺序无关，不该每次都多发一次网络往返，那是失败面最大的一环）；
-//  ② 以云端现有 order 为基准合并，本地内存不全（如启动时云端没读到、只有 37 条）时不会把排序写成短的。
-let lastOrderFingerprint = '';
-async function saveProductOrder(force, timeoutMs, retries){
+async function saveProductOrder(){
   if(!USE_SUPABASE) return;
-  const order = products.map(p=>p.id).filter(Boolean);
-  const fp = order.join(',');
-  if(!force && fp && fp === lastOrderFingerprint) return;
-  let merged = order;
-  try {
-    const { data } = await sb.from('shop_data').select('value').eq('key','product_order').maybeSingle();
-    const cloud = (data && Array.isArray(data.value)) ? data.value : [];
-    const extra = cloud.filter(id=>!order.includes(id));
-    if(extra.length) merged = order.concat(extra);
-  } catch(_){}
+  const order = products.map(p=>p.id);
   // 关键修复：必须检查 error 字段，否则排序写入失败会被静默吞掉（supabase-js 不抛异常）
-  await sbRun(()=>sb.from('shop_data').upsert({ key:'product_order', value:merged }), 'saveProductOrder', retries, timeoutMs);
-  lastOrderFingerprint = merged.join(',');
+  await sbRun(()=>sb.from('shop_data').upsert({ key:'product_order', value:order }), 'saveProductOrder');
 }
 async function loadProductsFromRows(fallback=[]){
   if(!USE_SUPABASE) return readJson('products.json', fallback);
@@ -809,15 +534,9 @@ async function getProducts(){
   if(productReadCache.ts > 0 && productReadCache.value && now - productReadCache.ts < PRODUCT_READ_TTL_MS && !productReadCache.failed) return productReadCache.value;
   const promise = (async()=>{
     try{
-      const list = await withRetry(()=>loadProductsFromRows(products), 'loadProducts', 2);
-      // ★ 2026-09-20 修复：把云端最新内容同步进「写源」内存 products（就地合并，保留对象引用）。
-      // 以前这里只更新 productReadCache（读缓存），从不更新 products，而 flushDirtyProducts 是拿
-      // products 里的对象整行 upsert —— 于是一个内存长期不刷新的实例（尤其 24h 在线的云端实例）
-      // 在顾客下单扣库存时会把"旧版本整行"写回云端，静默覆盖商家后台刚保存的产品内容。
-      // 症状：后台提示保存成功，再点进去还是旧值，买家端同步不生效。
-      if(!dirtyProductIds.size) applyFreshProductList(list);
-      productReadCache = { ts: Date.now(), value: products.slice(), promise: null, failed: false };
-      return productReadCache.value;
+      const list = await loadProductsFromRows(products);
+      productReadCache = { ts: Date.now(), value: list, promise: null, failed: false };
+      return list;
     }catch(e){
       console.error('[getProducts] 读云端失败，使用内存副本：', e.message);
       productReadCache = { ts: Date.now(), value: products, promise: null, failed: true };
@@ -828,69 +547,6 @@ async function getProducts(){
   const result = await promise;
   productReadCache.promise = null;
   return result;
-}
-// 把云端最新产品内容合并进内存写源。就地 Object.assign 保留原有对象引用，
-// 避免打断正在进行中的库存扣减（那些地方是同步 mutate products 里的对象）。
-function applyFreshProductList(list){
-  if(!Array.isArray(list) || !list.length) return;
-  const byId = new Map(products.map(p=>[p.id, p]));
-  const next = [];
-  for(const f of list){
-    if(!f || !f.id) continue;
-    const cur = byId.get(f.id);
-    if(cur){ Object.assign(cur, f); next.push(cur); }
-    else next.push(f);
-  }
-  if(!next.length) return;
-  if(next.length !== products.length || next.some((p,i)=>p!==products[i])){
-    products.length = 0;
-    for(const p of next) products.push(p);
-  }
-}
-// ===== 配置回源（与 getProducts 同策略）=====
-// 云端买家端(Render)与本机商家后台(4301)共用同一 Supabase。config 若只在启动时读一次，
-// 本机后台切波/改公告后云端永远读的是旧值 —— 症状正是「后台点了应用，买家端毫无变化」。
-// 这里每 3 秒回源一次；原地 Object.assign 保持 config 引用不变，避免打断正在进行的写入。
-let configReadCache = { ts: 0, promise: null };
-let configDirty = false;   // 正在写 config（切波/保存设置）时置 true，防止后台回源把内存改动冲掉
-const CONFIG_READ_TTL_MS = 3000;
-function cfgSafe(c){ return (c && typeof c==='object' && !Array.isArray(c)) ? c : {}; }
-async function getConfig(){
-  if(!USE_SUPABASE) return config;
-  if(configDirty) return config;   // 有未落库的本地改动（正在切波/保存设置）→ 绝不回源覆盖
-  if(configReadCache.promise) return configReadCache.promise;
-  const now = Date.now();
-  if(configReadCache.ts > 0 && now - configReadCache.ts < CONFIG_READ_TTL_MS) return config;
-  const p = (async()=>{
-    try{
-      const fresh = await loadKV('config', config);
-      // ⚠️ 回源落地前必须再判一次 configDirty：否则「本机刚切好波次、正在写云端」的这几秒里，
-      //    后台快照轮询会把内存 config 覆盖回旧值 → activeWave 丢失（买家端分类栏/倒计时错乱）。
-      if(!configDirty && fresh && typeof fresh==='object' && !Array.isArray(fresh)) Object.assign(config, fresh);
-    }catch(e){
-      console.error('[getConfig] 读云端失败，使用内存副本：', e.message);
-    }
-    configReadCache.ts = Date.now();
-    return config;
-  })();
-  configReadCache.promise = p;
-  const r = await p;
-  configReadCache.promise = null;
-  return r;
-}
-// 写操作前把内存产品列表与云端对齐：本机后台（或另一个实例）改了产品后，本实例内存会过期；
-// 若直接基于过期内存做"隐藏/切波"，会把旧数据整行写回、覆盖别人的修改（也会造成"无差异→空操作"）。
-async function syncProductsFromCloud(){
-  if(!USE_SUPABASE) return;
-  if(dirtyProductIds.size) return; // 有未落库的本地改动，先不回源，避免丢改动
-  try{
-    const fresh = await loadProductsFromRows(products);
-    if(Array.isArray(fresh) && fresh.length){
-      products.length = 0;
-      for(const x of fresh) products.push(x);
-      productReadCache = { ts: Date.now(), value: products, promise: null, failed: false };
-    }
-  }catch(e){ console.error('[syncProducts] 回源失败:', e.message); }
 }
 // 后台重试：Supabase 免费层偶发 fetch failed 时，单行 flush 可能失败；每 5s 把残留脏行再刷一次，
 // 确保最终一致，且管理员界面因 getProducts 优先返回内存脏行而不受影响。
@@ -924,40 +580,32 @@ function enrichOrderBundles(o){
   return { ...o, items };
 }
 // 后台/管理端想强制从云端复核时调用：重新聚合 order:* 独立行（不阻塞常规读路径）
-// ★ 性能加固（2026-09-18 压测）：订单上千时全量聚合要 1.5s+。而「确认收款/改备注/发货」等
-//   单笔接口原来每次都全量复核 → 300 单要 6~9 分钟。现改为：
-//   ① 全量刷新做节流（SYNC_TTL 内复用，避免连续调用打爆）；
-//   ② 单笔操作改用 refreshOrderOne(id) 只读这一行（≈100ms）。
-const SYNC_TTL_MS = 1500;
-let _ordersSyncAt = 0, _ordersSyncPromise = null;
-async function refreshOrdersFromCloud(force){
+async function refreshOrdersFromCloud(){
   if(!USE_SUPABASE) return orders;
-  if(!force && _ordersSyncPromise) return _ordersSyncPromise;
-  if(!force && _ordersSyncAt && Date.now() - _ordersSyncAt < SYNC_TTL_MS) return orders;
-  _ordersSyncPromise = (async()=>{
-    try{
-      const { data, error } = await sb.from('shop_data').select('key,value').like('key','order:%');
-      if(!error && data) orders = data.map(r=>r.value).filter(Boolean);
-      _ordersSyncAt = Date.now();
-    }catch(e){ console.error('[refreshOrdersFromCloud]', e.message); }
-    finally{ _ordersSyncPromise = null; }
-    return orders;
-  })();
-  return _ordersSyncPromise;
+  try {
+    const { data, error } = await sb.from('shop_data').select('key,value').like('key','order:%');
+    if(!error && data) orders = data.map(r=>r.value).filter(Boolean);
+  } catch(e){ console.error('[refreshOrdersFromCloud]', e.message); }
+  return orders;
 }
-
-// 只复核一笔订单（单笔写操作前用，避免全量聚合）
-async function refreshOrderOne(id){
-  if(!USE_SUPABASE || !id) return null;
-  try{
-    const { data, error } = await sb.from('shop_data').select('value').eq('key','order:'+id).maybeSingle();
-    if(error || !data || !data.value) return null;
-    const fresh = data.value;
-    const idx = orders.findIndex(o=>o.id===id);
-    if(idx>=0) orders[idx] = fresh; else orders.push(fresh);
-    kvCache.set('order:'+id, { ts:Date.now(), value:fresh, promise:null });
-    return fresh;
-  }catch(e){ return null; }
+// 单笔订单按 id 精确加载（回传/改单高频路径专用）。
+// 比起 refreshOrdersFromCloud 的「全表 select + 整体重赋值 orders」，这里只拉 order:<id> 单行，
+// ① 回传并发下从 O(N) 全表拉取降到 O(1)，大促回传高峰不再把整张订单表反复搬；
+// ② 只把这一行 merge 进内存（orders[idx]=o / push），绝不做整体替换，
+//    从根上消除了「全表重赋值把另一单刚落盘的改动短暂冲掉」的竞态窗口（重复发货的潜在来源）。
+// 不存在时返回 null，交由调用方 shipGuard 判 404。
+async function loadOrderRow(id){
+  if(!USE_SUPABASE) return orders.find(o=>o.id===id) || null;
+  try {
+    const { data, error } = await sb.from('shop_data').select('value').eq('key','order:'+id).single();
+    if(!error && data && data.value){
+      const o = data.value;
+      const idx = orders.findIndex(x=>x.id===id);
+      if(idx>=0) orders[idx]=o; else orders.push(o);
+      return o;
+    }
+  } catch(e){ console.error('[loadOrderRow]', id, e.message); }
+  return orders.find(o=>o.id===id) || null;
 }
 // 订单写入前必须先刷新内存副本：手机端在云端下的订单，本地服务内存里可能没有，
 // 直接 find 内存会 404 静默失败（症状：后台点"确认收款"提示成功但状态不变）
@@ -1008,11 +656,38 @@ function pickShopShareImage(list){
   }
   return '';
 }
+// 全局唯一订单号：实例分片(2) + 随机(6) + 进程内自增序号，杜绝 Render 多实例碰撞导致的
+// 「同 id 互相覆盖 → 丢单/重复」问题（旧实现仅 8 位随机 + 进程内查重，多实例并发可生成相同 id）。
+const _instanceShard = crypto.randomBytes(2).toString('hex');
+let _orderSeq = 0;
 function genId(){
   let id;
-  do { id = crypto.randomBytes(4).toString('hex').toUpperCase(); }
-  while(orders.find(o=>o.id===id));
+  do {
+    id = (_instanceShard + crypto.randomBytes(3).toString('hex') + (++_orderSeq).toString(36)).toUpperCase();
+  } while(orders.find(o=>o.id===id));
   return id;
+}
+
+// ===== 订单级互斥锁：把「刷新云端→校验状态→改状态→落盘」对同一个订单 id 原子化 =====
+// 旧实现各状态接口各自 refresh→find→mutate→save，全程 await 会让出事件循环；多请求并发改同一单时
+// （如同时 confirm + cancel、双取消、双确认）会丢失更新（库存恢复两次 / 状态部分处理）。
+// 加 per-order Promise 链，使同一单的多次操作严格串行，杜绝竞态。
+const _orderLocks = new Map(); // id -> Promise 链
+function withOrderLock(id, fn){
+  const existing = _orderLocks.get(id) || Promise.resolve();
+  const p = existing.then(()=>fn(), ()=>fn());
+  _orderLocks.set(id, p.catch(()=>{}));
+  p.finally(()=>{ if(_orderLocks.get(id)===p) _orderLocks.delete(id); }).catch(()=>{});
+  return p;
+}
+
+// 状态正向流转守卫：已发货是终态之一，绝不能回退；已取消绝不可复活为已发货（避免重复发货）。
+// 返回 {ok, noop?, code?, error?}
+function shipGuard(o){
+  if(!o) return { ok:false, code:404, error:'no' };
+  if(o.status==='已取消') return { ok:false, code:400, error:'cancelled_cannot_ship' };
+  if(o.status==='已发货') return { ok:true, noop:true }; // 幂等：已发货不再处理
+  return { ok:true };
 }
 
 const MIME = {
@@ -1026,35 +701,17 @@ function sendFile(res, filePath){
   fs.readFile(filePath, (err, buf)=>{
     if(err){ res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'}); res.end('Not found'); return; }
     const ext = path.extname(filePath).toLowerCase();
-    // 静态资源加长缓存：减少活动期间 Render 免费实例的重复请求（图片/字体 7 天，js/css 1 天）
-    const IMG_EXT = ['.png','.jpg','.jpeg','.webp','.gif','.svg','.ico','.woff','.woff2','.ttf','.otf'];
-    const JS_EXT  = ['.js','.css','.mjs'];
-    const cc = IMG_EXT.includes(ext) ? 'public, max-age=604800'
-             : JS_EXT.includes(ext)  ? 'public, max-age=86400'
-             : 'no-store';
-    res.writeHead(200, {'Content-Type': MIME[ext]||'application/octet-stream', 'Cache-Control': cc});
+    res.writeHead(200, {'Content-Type': MIME[ext]||'application/octet-stream'});
     res.end(buf);
   });
 }
 
-// 读取请求体。⚠️ 超限必须 reject（旧版只 req.destroy() 不 reject，导致请求永远挂起、前端一直转圈）
-const MAX_BODY_BYTES = 20 * 1024 * 1024;   // 20MB（前端图片已压缩，正常几百 KB）
 function readBody(req){
   return new Promise((resolve,reject)=>{
-    let data='', size=0, done=false;
-    req.on('data', c=>{
-      if(done) return;
-      size += c.length;
-      if(size > MAX_BODY_BYTES){
-        done = true;
-        try{ req.destroy(); }catch(e){}
-        reject(new Error('请求体过大（超过 ' + Math.round(MAX_BODY_BYTES/1048576) + 'MB），请压缩图片后重试'));
-        return;
-      }
-      data+=c;
-    });
-    req.on('end', ()=>{ if(!done){ done=true; resolve(data); } });
-    req.on('error', e=>{ if(!done){ done=true; reject(e); } });
+    let data='';
+    req.on('data', c=>{ data+=c; if(data.length>1e7) req.destroy(); });
+    req.on('end', ()=> resolve(data));
+    req.on('error', reject);
   });
 }
 
@@ -1067,321 +724,20 @@ function renderTemplate(name, vars){
 // 让微信/QQ/TIM 等爬虫与真实用户秒开页面：避免「冷启动 + 每次打云端 Supabase」导致首页十几秒、
 // 微信爬虫超时直接退化为纯文字链接、抓不到 OG 大图卡片。
 // 后台改完产品/配置会主动清缓存（见 saveProducts/saveConfig），兼顾新鲜度与速度。
-const htmlCache = new Map();     // key -> { html, ts, fp }
-// 页面缓存是「跨请求共享」的，所以 OG 里的站址必须用固定的公网正式域名，
-// 不能再用每个请求的 Host（否则会把 A 域名渲染出来的页面发给 B 域名）。
-const PUBLIC_BASE = (process.env.PUBLIC_BASE_URL || 'https://buchu-shop.onrender.com').replace(/\/+$/,'');
-const htmlInflight = new Map();  // key -> Promise<string>：同一页面同一时刻只允许一次渲染（请求合并）
-let htmlGen = 0;                 // 缓存代次：后台改数据后 +1，让"改动前发起的渲染"结果作废
-const HTML_REFRESH_MAX = 10 * 60 * 1000;      // 兜底：指纹没变也最多 10 分钟后台刷一次
-const HTML_STALE_MAX   = 6 * 60 * 60 * 1000;  // 旧页面最多留 6 小时当兜底，超了就重新渲染
-const RENDER_WAIT_MAX  = 5000;                // 数据变了时单个访客最多等渲染多久（超时先给旧页，渲染继续）
-const waitMs = ms => new Promise(r => { const t = setTimeout(r, ms); if(t && t.unref) t.unref(); });
-const PAGE_MISSING = '\u0001__page_missing__';  // 详情页不存在/已隐藏的哨兵值（也缓存，避免反复查库）
-
-// ★★★ 页面缓存铁律（2026-09-18 踩坑后重写，改这里之前请看完）★★★
-// ① 一次「全量渲染」= 读 Supabase + 渲染 230KB 模板，本地 2.9 秒，线上 0.1 核要十几秒
-//    → 绝不能让 N 个并发各自渲染一次，必须用 single-flight 合并。
-// ② 但**绝不能只靠固定 TTL 判断页面是否该刷新**：
-//    本机商家后台(4301) 和云端(Render) 是**两个进程**、共用同一个 Supabase。
-//    本机改完产品，云端那个进程根本不知道数据变了 → 买家端会一直看到旧页面。
-//    曾经写成「60 秒 TTL + stale-while-revalidate」，而且回写条件写成 `!htmlCache.has(key)`，
-//    导致后台刷新出来的新页面被直接丢弃 → **买家端彻底不再更新**（这是 2026-09-18 的真实故障）。
-// ③ 正确做法：**缓存是否有效由「数据指纹」决定，而不是时间**；而且指纹必须**纯内存算**
-//    · 指纹没变 → 直接命中（零网络等待；最多 10 分钟兜底后台刷一次）
-//    · 指纹变了 → 立刻返回旧页面（访客不用等），同时后台只刷新一次，几秒后全站就都是新的
-//    · 完全没有旧页面 → 并发请求共享同一份在途渲染
-//    ⚠️ 指纹里**绝对不能 await 读 Supabase**：那样每个请求都要多等一次网络往返（本机 1~4 秒），
-//       页面缓存就白做了。内存快照由 refreshSnapshotInBackground() 在后台保持新鲜。
-function peekHtml(key, maxAge){
+const htmlCache = new Map(); // key -> { html, ts }
+const HTML_CACHE_TTL = 5000; // 5 秒（2026-09-10 收紧：之前 30s 太长，admin 改完买家要等 30s 才看到，已发多次"设置不生效"误判）
+function getCachedHtml(key){
   const c = htmlCache.get(key);
-  return (c && Date.now() - c.ts < maxAge) ? c.html : null;
+  if(c && Date.now() - c.ts < HTML_CACHE_TTL) return c.html;
+  if(c) htmlCache.delete(key);
+  return null;
 }
-function getCachedHtml(key){ return peekHtml(key, HTML_REFRESH_MAX); }
-function setCachedHtml(key, html){ if(html) htmlCache.set(key, { html, ts: Date.now(), fp: '' }); }
-function clearHtmlCache(){
-  htmlGen++;
-  // 本实例刚改完数据 → **直接删掉缓存**，让下一个访客渲染出最新页面（本机约 3 秒）。
-  // ⚠️ 别改成"只把指纹置空、保留旧 HTML"：那样商家点完「应用到买家端」第一眼看到的还是旧页面，
-  //    会被当成"改了不生效 / 不稳定"（2026-09-18 真实反馈：切换波次后买家端仍显示全部产品）。
-  htmlCache.clear();
-  productReadCache = { ts: 0, value: products, promise: null, failed: false };
-}
-
-// ★★ 数据指纹：**纯内存计算，绝不允许在这里 await 读网络** ★★
-// 为什么强调：这里每个页面请求都会走一次。一旦写成 `await getProducts()`，
-// 每个「距上次校验超过节流窗口」的请求都要多等一次 Supabase 往返（本机 1~4 秒），
-// 页面缓存等于白做。所以指纹只读**内存快照**：
-//   · products 的权威快照 = productReadCache.value（getProducts 每 3 秒回源更新一次）
-//   · config 由 getConfig() 原地 Object.assign 更新
-// 内存快照靠 refreshSnapshotInBackground() 在后台保持新鲜（不阻塞任何请求）。
-function computeFingerprint(){
-  let h = 2166136261;
-  const mix = s => { s = String(s == null ? '' : s); for(let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } };
-  try{
-    const list = (productReadCache.value && productReadCache.value.length) ? productReadCache.value : products;
-    mix(JSON.stringify(list));
-    mix(JSON.stringify(cfgSafe(config)));
-  }catch(e){}
-  return (h >>> 0).toString(36);
-}
-
-// 后台把内存快照刷新到最新：请求触发 + 3 秒节流 + 单飞，**不阻塞当前请求**。
-let snapAt = 0, snapping = null;
-const SNAP_TTL_MS = 3000;
-function refreshSnapshotInBackground(){
-  if(snapping) return;
-  if(Date.now() - snapAt < SNAP_TTL_MS) return;
-  snapAt = Date.now();
-  snapping = (async()=>{
-    try{ await getProducts(); await getConfig(); }catch(e){}
-    finally{ snapping = null; }
-  })();
-}
-// 没人访问时也让快照保持新鲜（每 2.5 秒一次）——这决定了「后台改完 → 买家端自动变新」的时延：
-// 约 2.5 秒（发现变化）+ 一次渲染（本机约 1~3 秒）= 通常 4~6 秒。
-if(USE_SUPABASE) setInterval(()=>{ refreshSnapshotInBackground(); }, 2500);
-
-async function renderPageCached(key, build){
-  refreshSnapshotInBackground();     // 只让后台去回源，绝不让访客等
-  const fp  = computeFingerprint();  // 纯内存，微秒级
-  const cur = htmlCache.get(key);
-  // ① 数据没变（且未超过 10 分钟兜底窗口）→ 直接命中
-  if(cur && cur.fp && cur.fp === fp && Date.now() - cur.ts < HTML_REFRESH_MAX) return cur.html;
-  const startRender = ()=>{
-    const gen = htmlGen, startedAt = Date.now();
-    const p = Promise.resolve()
-      .then(build)
-      .then(h=>{
-        if(!h || gen !== htmlGen) return h;
-        const now = htmlCache.get(key);
-        // ★ 只有「比本次渲染更早写入」的缓存才允许被覆盖。
-        //   旧写法是 `!htmlCache.has(key)` —— 而「先给旧页、后台刷新」时缓存里一直有旧页，
-        //   于是新渲染结果永远写不进去，买家端就永远停在旧页面。别再改回去。
-        if(!now || !now.fp || now.ts <= startedAt) htmlCache.set(key, { html:h, ts:Date.now(), fp });
-        return h;
-      })
-      .catch(e=>{ console.error('[renderPage]', key, e.message); return null; })
-      .finally(()=>{ if(htmlInflight.get(key) === p) htmlInflight.delete(key); });
-    htmlInflight.set(key, p);
-    return p;
-  };
-  const inflight = htmlInflight.get(key);
-  // ② 数据变了 / 没有缓存 → 渲染（并发合并成一份）。渲染期间最多等 RENDER_WAIT_MAX，
-  //    等不到就先给旧页面（渲染继续在后台跑，下一个访客就能拿到新页面）。
-  //    ⚠️ 这里**不能直接返回旧页面**：商家点完「应用到买家端」马上刷新时，
-  //       第一眼必须是新的 —— 否则就会被当成"改了不生效 / 不稳定"（2026-09-18 真实反馈）。
-  const p = inflight || startRender();
-  if(!cur) return p;                                   // 完全没有旧页面：必须等渲染
-  const done = await Promise.race([ p, waitMs(RENDER_WAIT_MAX).then(()=>null) ]);
-  return done || cur.html;
-}
-
-// 首页渲染（供缓存与开机预热共用）
-async function buildHomeHtml(){
-  const list = await getProducts();
-  const ogImage = pickShopShareImage(list);
-  const safeConfig = { ...DEFAULT_CONFIG, ...cfgSafe(await getConfig()) };
-  const html = renderTemplate('home.html', {
-    SHOP_NAME: htmlEscape(safeConfig.shopName),
-    OG_TITLE: htmlEscape(safeConfig.shopName),
-    OG_DESC: htmlEscape(safeConfig.announcement || '不初限时狂欢商城 · 全场超低价回馈老客户'),
-    OG_IMAGE: htmlEscape(absUrl(ogImage, PUBLIC_BASE)),
-    OG_URL: htmlEscape(PUBLIC_BASE + '/'),
-    PRODUCTS_JSON: jsonForScript(localizeProducts(list)),
-    CONFIG_JSON: jsonForScript(safeConfig)
-  });
-  return html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
-}
-
-// 详情页渲染（供缓存与开机预热共用）。不存在/已隐藏返回 PAGE_MISSING 哨兵
-async function buildProductHtml(pid, urlWave){
-  const list = await getProducts();
-  const p = list.find(x=>x.id===pid);
-  if(!p) return PAGE_MISSING;
-  const cfgNow = await getConfig();
-  const hiddenCats = Array.isArray(cfgNow.hiddenCategories)?cfgNow.hiddenCategories:[];
-  // 波次直链：?wave=w2 时，即使全局隐藏也允许显示该波商品（与首页一致）
-  let inUrlWave = false;
-  if(urlWave){
-    const wv = String(urlWave).split(',').map(s=>s.trim()).filter(Boolean).filter(s=>['w1','w2','w3','w4','none'].includes(s));
-    if(wv.length){
-      if(wv.includes('none')) inUrlWave = true;
-      else{
-        const pre = wv.map(w=>({w1:'w1g',w2:'w2g',w3:'w3g',w4:''}[w])).filter(Boolean);
-        if(pre.some(pr=>!pr)) inUrlWave = true;
-        else { const g=String(p.waveGroup||'').trim(); if(g && pre.some(pr=>g.indexOf(pr)===0)) inUrlWave = true; }
-      }
-    }
-  }
-  // 当前生效波次（config.activeWave）：本波商品即使内存里的 hidden 标记还是旧的/没刷新完，
-  // 也必须能打开 —— 根治「切第二波/第三波后点商品说'商品不存在'」这类白页。
-  let inActiveWave = false;
-  {
-    const aw = String(cfgNow.activeWave||'').split(',').map(s=>s.trim()).filter(Boolean);
-    if(aw.length){
-      const preA = aw.map(w=>({w1:'w1g',w2:'w2g',w3:'w3g',w4:''}[w]));
-      if(aw.includes('none') || preA.some(pr=>pr==='')) inActiveWave = true;
-      else { const g=String(p.waveGroup||'').trim(); if(g && preA.filter(Boolean).some(pr=>g.indexOf(pr)===0)) inActiveWave = true; }
-    }
-  }
-  if(!inUrlWave && !inActiveWave && (p.hidden || (p.category && hiddenCats.includes(p.category)))) return PAGE_MISSING;
-  const ogImage = inferShareImage(p) || pickShopShareImage(list);
-  const safeConfig = { ...DEFAULT_CONFIG, ...cfgSafe(cfgNow) };
-  const html = renderTemplate('product.html', {
-    SHOP_NAME: htmlEscape(safeConfig.shopName),
-    OG_TITLE: htmlEscape(p.name),
-    OG_DESC: htmlEscape(String(p.desc||'').replace(/<[^>]+>/g,'').slice(0,200) || safeConfig.shopName),
-    OG_IMAGE: htmlEscape(absUrl(ogImage, PUBLIC_BASE)),
-    OG_URL: htmlEscape(PUBLIC_BASE + '/product/'+p.id),
-    OG_PRICE: htmlEscape(p.price || ''),
-    HERO_IMAGE: htmlEscape(thumbImg(p.image, 800, 1000, 75) || '/assets/product-placeholder.svg'),
-    PRODUCT_JSON: jsonForScript(localizeProduct(p)),
-    PRODUCTS_JSON: jsonForScript(localizeProducts(list)),
-    CONFIG_JSON: jsonForScript(safeConfig)
-  });
-  return html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
-}
-
-// 开机预热页面缓存：让「服务刚醒来的第一个访客」也不用等渲染（Render 免费实例冷启动后尤其关键）
-async function warmHtmlCache(){
-  if(process.env.NO_PREWARM) return;
-  try{
-    const t0 = Date.now();
-    await renderPageCached('home', buildHomeHtml);
-    const list = await getProducts();
-    const cfgNow = await getConfig();
-    const hiddenCats = Array.isArray(cfgNow.hiddenCategories)?cfgNow.hiddenCategories:[];
-    const ids = list.filter(p=>!p.hidden && !(p.category && hiddenCats.includes(p.category))).map(p=>p.id);
-    let n = 0;
-    for(const id of ids){
-      try{ await renderPageCached('product:'+id, ()=>buildProductHtml(id)); n++; }catch(e){}
-      await new Promise(r=>setTimeout(r,0));
-    }
-    console.log('[html prewarm] 已预热首页 +', n, '个详情页，共', htmlCache.size, '页，用时', Date.now()-t0, 'ms');
-  }catch(e){ console.error('[html prewarm]', e.message); }
-}
-
-// ---------- 图片加速（本域代理 + 进程内缓存 + 长缓存头） ----------
-// 根因：Supabase Storage 的 public 对象返回 Cache-Control: no-cache，浏览器/微信每次都要回源，
-// 手机上单张主图要等 3~5 秒。这里统一走 /img/ 代理，并在本地缓存字节 + 下发 7 天强缓存，
-// 同一张图第二次起（含微信内置浏览器、其他买家）直接命中，不再回源。
-const imgCache = new Map(); // key -> { buf, type }
-const IMG_CACHE_MAX = 300;
-// fix51（2026-09-22）：图片再加一层「磁盘缓存」。内存缓存一重启就没了，
-// 扛不住本机到境外反复抖动（症状：后台 39 张主图集体变「暂无图片」）。落盘后只要成功拉到过一次就永远有图。
-const IMG_DISK = path.join(ROOT, '.imgcache');
-const IMG_DISK_MAX = 800; // 磁盘缓存最多保留张数，超出按最久写入清理
-let _imgDiskReady = false;
-try { fs.mkdirSync(IMG_DISK, { recursive: true }); _imgDiskReady = true; } catch(e){ _imgDiskReady = false; }
-function imgDiskPath(k, ext){ return path.join(IMG_DISK, crypto.createHash('sha1').update(String(k)).digest('hex') + ext); }
-function imgDiskRead(k){
-  if(!_imgDiskReady) return null;
-  try{
-    const b = imgDiskPath(k, '.bin');
-    if(!fs.existsSync(b)) return null;
-    const buf = fs.readFileSync(b);
-    if(!buf || !buf.length) return null;
-    const c = imgDiskPath(k, '.ct');
-    const type = fs.existsSync(c) ? (fs.readFileSync(c, 'utf8').trim() || 'image/jpeg') : 'image/jpeg';
-    return { buf, type };
-  }catch(e){ return null; }
-}
-function imgDiskWrite(k, buf, type){
-  if(!_imgDiskReady || !buf || !buf.length) return;
-  try{
-    fs.writeFileSync(imgDiskPath(k, '.bin'), buf);
-    fs.writeFileSync(imgDiskPath(k, '.ct'), type || 'image/jpeg');
-  }catch(e){}
-}
-function imgDiskPrune(){
-  if(!_imgDiskReady) return;
-  try{
-    const names = fs.readdirSync(IMG_DISK).filter(n => n.endsWith('.bin'));
-    if(names.length <= IMG_DISK_MAX) return;
-    const rows = names.map(n => { let t = 0; try{ t = fs.statSync(path.join(IMG_DISK, n)).mtimeMs; }catch(e){} return { n, t }; })
-                      .sort((a,b) => a.t - b.t);
-    rows.slice(0, rows.length - IMG_DISK_MAX).forEach(x => {
-      try{ fs.unlinkSync(path.join(IMG_DISK, x.n)); }catch(e){}
-      try{ fs.unlinkSync(path.join(IMG_DISK, x.n.replace(/\.bin$/, '.ct'))); }catch(e){}
-    });
-  }catch(e){}
-}
-// 回源并发闸：避免一次性几十个请求把 Node undici 连接池占满（会导致整站请求卡死超时）
-let imgFetching = 0;
-const IMG_MAX_CONCURRENT = 6;
-function localImg(u){
-  if(!u) return u;
-  const m = String(u).match(/\/storage\/v1\/object\/public\/(.+)$/);
-  return m ? '/img/' + m[1] : u;
-}
-// 缩略图 URL：把 /img/... 原图追加 ?w=&h=&q=，交由下方图片代理走 Supabase 转换端点下发小图。
-// 仅对 Supabase 公共图生效；本地占位图（/assets/...）原样返回，绝不破坏。
-function thumbImg(u, w, h, q){
-  const base = localImg(u);
-  if(!base || base.indexOf('/img/')!==0) return base;
-  const sep = base.indexOf('?')>=0 ? '&' : '?';
-  let qry = 'w='+w;
-  if(h && Number(h)>0) qry += '&h='+h;
-  qry += '&q='+(q||75);
-  return base + sep + qry;
-}
-function localizeProduct(p){
-  if(!p || typeof p!=='object') return p;
-  const c = Object.assign({}, p);
-  if(c.image) c.image = localImg(c.image);
-  if(Array.isArray(c.images)) c.images = c.images.map(localImg);
-  if(Array.isArray(c.detailImages)) c.detailImages = c.detailImages.map(localImg);
-  if(Array.isArray(c.skus)) c.skus = c.skus.map(s=> (s&&typeof s==='object') ? Object.assign({}, s, { image: localImg(s.image) }) : s);
-  if(Array.isArray(c.bundleItems)) c.bundleItems = c.bundleItems.map(b=> (b&&typeof b==='object') ? Object.assign({}, b, { image: localImg(b.image) }) : b);
-  return c;
-}
-function localizeProducts(list){ return (list||[]).map(localizeProduct); }
-// 开机预热：把全部产品图片预先拉进内存缓存（不阻塞服务启动）。
-// ⚠️ 必须「串行 + 单张超时 + 让出事件循环」：早前版本一次性并发几十个 fetch，
-//    把 Node undici 连接池占满，导致服务器自身所有请求（含商家后台上传）全部卡死超时。
-async function prewarmImages(){
-  if(!process.env.SUPABASE_URL) return;
-  if(process.env.NO_PREWARM==='1') return;
-  try{
-    const list = await getProducts();
-    const keys = [];
-    const seen = new Set();
-    for(const p of list){
-      const urls = [p.image, ...(p.images||[]), ...(p.detailImages||[]),
-        ...(p.skus||[]).map(s=> s&&s.image), ...(p.bundleItems||[]).map(b=> b&&b.image)].filter(Boolean);
-      for(const u of urls){
-        const m = String(u).match(/\/storage\/v1\/object\/public\/(.+)$/);
-        if(!m) continue;
-        if(imgCache.has(m[1]) || seen.has(m[1])) continue;
-        seen.add(m[1]); keys.push(m[1]);
-      }
-    }
-    let n = 0;
-    for(const key of keys){
-      if(imgCache.size >= IMG_CACHE_MAX) break;
-      try{
-        const ctl = new AbortController(); const tm = setTimeout(()=>ctl.abort(), 8000);
-        const r = await fetch(process.env.SUPABASE_URL + '/storage/v1/object/public/' + key, { signal: ctl.signal });
-        clearTimeout(tm);
-        if(r.ok){
-          const buf = Buffer.from(await r.arrayBuffer());
-          if(imgCache.size < IMG_CACHE_MAX) imgCache.set(key, { buf, type: r.headers.get('content-type') || 'image/jpeg' });
-          n++;
-        }
-      }catch(e){}
-      await new Promise(s=>setTimeout(s, 80));   // 让出事件循环，避免拖慢在线请求
-    }
-    console.log('[img prewarm] 已预热缓存', n, '张图片，共', imgCache.size, '张');
-  }catch(e){ console.error('[img prewarm]', e.message); }
-}
+function setCachedHtml(key, html){ htmlCache.set(key, { html, ts: Date.now() }); }
+function clearHtmlCache(){ htmlCache.clear(); productReadCache = { ts: 0, value: products, promise: null, failed: false }; }
 
 // ---------- 路由 ----------
 const server = http.createServer(async (req, res)=>{
-  // fix49：boot 最多只等 8 秒。弱网（Supabase 慢/超时时）原来会「连 /admin 都打不开」——
-  // 因为每个请求都无上限地 await ensureBoot()。现在超时后先用本地缓存数据响应，boot 在后台继续跑，
-  // 跑完（内存刷新）后下一次请求就是最新数据。
-  try { await Promise.race([ ensureBoot(), new Promise(r=>setTimeout(r, 8000)) ]); } catch(e){
+  try { await ensureBoot(); } catch(e){
     console.error('[Boot Error]', e);
     res.writeHead(503,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'boot_failed', message:e.message})); return;
   }
@@ -1395,6 +751,17 @@ const server = http.createServer(async (req, res)=>{
   const BASE = proto + '://' + host;
 
   try {
+    // ===== 发货管家子路由（路径命中则转发，不再走商城分发）=====
+    if(shipCloudHandler && isShipCloudPath(pathname, method)){
+      return shipCloudHandler(req, res);
+    }
+    if(method==='GET' && pathname==='/api/admin-build'){
+      // 商家后台自检版本端点：admin.html 加载时会 fetch 这里对比自己嵌入的版本号，
+      // 不一致就 location.replace 强制刷一次。no-store 防止任何中间层缓存。
+      res.writeHead(200, {'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store, must-revalidate', 'Pragma':'no-cache'});
+      res.end(JSON.stringify({ v: ADMIN_BUILD, t: Date.now() }));
+      return;
+    }
     // ===== API =====
     if(pathname.startsWith('/api/')){
       // 商品 / 配置 / 订单列表（只读）
@@ -1402,27 +769,8 @@ const server = http.createServer(async (req, res)=>{
         const list = await getProducts();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(list)); return;
       }
-      // fix46（2026-09-21）：单个产品「云端真值」读取。
-      // 后台点「编辑」时先调它：直接读云端 product:<id> 这一行，绕过本实例的内存副本与读缓存，
-      // 保证弹窗里显示的一定是数据库里的最新内容（根因：editProduct 原来只读页面内存 PRODUCTS，
-      // 内存一旧，就会出现「保存成功、打开还是旧值」）。
-      // 若该产品正有待写回的 dirty 标记、或云端瞬时读失败，则回退到内存副本，保证接口永远可用。
-      const mGetOneProd = pathname.match(/^\/api\/products\/([\w-]+)$/);
-      if(method==='GET' && mGetOneProd){
-        const pid = mGetOneProd[1];
-        let item = null;
-        try{
-          if(USE_SUPABASE && sb && !dirtyProductIds.has(pid)){
-            const { data, error } = await withRetry(()=>sb.from('shop_data').select('value').eq('key','product:'+pid).maybeSingle(), 'getProductRow:'+pid, 2);
-            if(!error && data && data.value) item = data.value;
-          }
-        }catch(e){ console.error('[GET /api/products/:id] 读云端失败，回退内存副本：', e.message); }
-        if(!item) item = products.find(x=>x.id===pid) || null;
-        if(!item){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, error:'not_found'})); return; }
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, product:item})); return;
-      }
       if(method==='GET' && pathname==='/api/config'){
-        const out = { ...DEFAULT_CONFIG, ...cfgSafe(await getConfig()) };
+        const out = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config && !Array.isArray(config) ? config : {}) };
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(out)); return;
       }
       if(method==='GET' && pathname==='/api/orders'){
@@ -1459,26 +807,11 @@ const server = http.createServer(async (req, res)=>{
       }
       // 创建订单
       if(method==='POST' && pathname==='/api/orders'){
-        let body; try { body = JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
+        let body; try { body = JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
         const items = (body.items||[]).filter(it=> it && it.id && Number(it.qty)>0);
         if(!items.length){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'empty'})); return; }
         if(!body.name || !body.phone || !body.address){
           res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'missing_contact'})); return;
-        }
-        // ★★ fix41 防重复下单（2026-09-18 真实事故）★★
-        // 事故：买家手机端一次点击被浏览器/网络连发 29 次 → 凭空生成 29 笔一模一样订单，
-        //       每笔都扣了库存（且多是"待付款"），把商品库存直接锁死 / 归零。
-        // 规则：同一手机号 + 同一购物车内容，在 15 秒窗口内只认第一单，后续直接返回那一单。
-        // 只靠内存 orders 判定（saveOrderRow 是同步入内存的），不新增任何字段、不改数据格式。
-        const _sig = (o)=> String(o.phone||'').trim() + '|' +
-          (o.items||[]).map(it=>String(it.id)+'#'+String(it.skuId||'')+'x'+Number(it.qty||0)).sort().join(',');
-        const _mySig = String(body.phone||'').trim() + '|' +
-          items.map(it=>(String(it.id||'').split('#')[0])+'#'+String(it.skuId||(String(it.id||'').split('#')[1]||''))+'x'+Number(it.qty)).sort().join(',');
-        const _now = Date.now();
-        const _dup = orders.find(o=> o && o.status !== '已取消' && _now - (Number(o.createdAt)||0) < 15000 && _sig(o) === _mySig);
-        if(_dup){
-          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'});
-          res.end(JSON.stringify({ id:_dup.id, deduped:true })); return;
         }
         const detail = items.map(it=>{
           // 兼容旧格式：购物车键可能以 "产品id#SKUid" 形式整体传入
@@ -1505,7 +838,7 @@ const server = http.createServer(async (req, res)=>{
           }
           return { id:pid, skuId, skuName, name, price, qty:Number(it.qty), image, bundleItems: skuBundle.length?skuBundle:(p&&p.bundleItems?p.bundleItems:[]) };
         });
-        const total = detail.reduce((s,x)=> s + x.price*x.qty, 0);
+        const total = Math.round(detail.reduce((s,x)=> s + x.price*x.qty, 0) * 100) / 100;
 
         // ===== 库存校验与扣减（stock 为数字才限量；null/未填视为不限量）=====
         // 注：products 以内存副本为权威（启动已载入云端最新），不再每单 syncProducts() 往返，
@@ -1547,9 +880,9 @@ const server = http.createServer(async (req, res)=>{
           const needQty = needMap[k];
           if(skuId){
             const sku = (p.skus||[]).find(s=>String(s.id)===skuId);
-            if(sku && sku.stock!=null){ sku.stock = Math.max(0, Math.floor(Number(sku.stock)) - needQty); stockDeducted = true; markProductDirty(pid, 'ops'); }
+            if(sku && sku.stock!=null){ sku.stock = Math.max(0, Math.floor(Number(sku.stock)) - needQty); stockDeducted = true; markProductDirty(pid); }
           } else if(p.stock!=null){
-            p.stock = Math.max(0, Math.floor(Number(p.stock)) - needQty); stockDeducted = true; markProductDirty(pid, 'ops');
+            p.stock = Math.max(0, Math.floor(Number(p.stock)) - needQty); stockDeducted = true; markProductDirty(pid);
           }
         }
 
@@ -1570,89 +903,56 @@ const server = http.createServer(async (req, res)=>{
       // 客户确认已发送付款截图
       const mPaid = pathname.match(/^\/api\/orders\/([\w-]+)\/paid$/);
       if(method==='POST' && mPaid){
-        await refreshOrderOne(mPaid[1]); // 只复核这一笔（全量聚合在千单时要 1.5s+）
-        const o = orders.find(o=>o.id===mPaid[1]);
-        if(!o){ res.writeHead(404); res.end('no'); return; }
-        if(o.status==='待付款'){ o.status='待确认'; o.paidScreenshotAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o); }
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        return withOrderLock(mPaid[1], async ()=>{
+          await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
+          const o = orders.find(o=>o.id===mPaid[1]);
+          if(!o){ res.writeHead(404); res.end('no'); return; }
+          if(o.status==='待付款'){ o.status='待确认'; o.paidScreenshotAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o); }
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        });
       }
       // 确认收款
       const mConfirm = pathname.match(/^\/api\/orders\/([\w-]+)\/confirm$/);
       if(method==='POST' && mConfirm){
-        await refreshOrderOne(mConfirm[1]); // 只复核这一笔
-        const o = orders.find(o=>o.id===mConfirm[1]);
-        if(!o){ res.writeHead(404); res.end('no'); return; }
-        if(o.status==='待付款' || o.status==='待确认'){
-          o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now();
-          ensureShipCode(o); // 进入待发货时自动分配唯一编号
-          await saveOrderRowSync(o);
-        }
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        return withOrderLock(mConfirm[1], async ()=>{
+          await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
+          const o = orders.find(o=>o.id===mConfirm[1]);
+          if(!o){ res.writeHead(404); res.end('no'); return; }
+          if(o.status==='待付款' || o.status==='待确认'){
+            o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o);
+          }
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        });
       }
-      // 发货
+      // 发货（→已发货，正向终态；已取消绝不复活、已发货幂等）
       const mShip = pathname.match(/^\/api\/orders\/([\w-]+)\/ship$/);
       if(method==='POST' && mShip){
-        await refreshOrderOne(mShip[1]); // 只复核这一笔
-        const o = orders.find(o=>o.id===mShip[1]);
-        if(!o){ res.writeHead(404); res.end('no'); return; }
-        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
-        o.status='已发货'; o.tracking=String(body.tracking||'').slice(0,60); o.shippedAt=Date.now(); await saveOrderRowSync(o);
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
-      }
-      // 手工填写/更新快递单号（fix54）★★只写 tracking 字段★★
-      // 严禁在此改 status / shippedAt / shipCode / 金额 / 明细 —— 就是「订单不能到处乱跑」的保障：
-      // 商家在「今日可发」手上先记下快递单号，订单仍留在原栏目，直到走完正常发货闭环。
-      const mTrack = pathname.match(/^\/api\/orders\/([\w-]+)\/tracking$/);
-      if(method==='POST' && mTrack){
-        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
-        const tk = String(body.tracking==null?'':body.tracking).trim().slice(0,60);
-        await refreshOrderOne(mTrack[1]); // 只复核这一笔，避免整表往返
-        const o = orders.find(o=>o.id===mTrack[1]);
-        if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'订单不存在'})); return; }
-        if(o.status==='已取消'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'已取消的订单不能填写单号'})); return; }
-        const before={ status:o.status, tracking:o.tracking };
-        o.tracking = tk;
-        // 双重保险：即便上游哪里手滑改了状态，这里也强制还原，保证「只动单号」
-        if(o.status!==before.status) o.status = before.status;
-        await saveOrderRowSync(o);
-        console.log('[tracking]', o.id, before.tracking||'(空)', '->', tk||'(空)', '| status 保持', o.status);
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
-      }
-      // 「今日可发」保存单号并直接标记「已发货」（fix56）★★严格单笔★★
-      // 铁律：只动被点这一笔的 status/tracking/shippedAt。
-      // 绝不触碰其他订单、不做任何重排、不写 orders 大数组（防整表覆盖）。
-      // shipCode / 金额 / 明细 / paidAt / confirmedAt / 备注 一律原样保留。
-      const mTrackShip = pathname.match(/^\/api\/orders\/([\w-]+)\/tracking-and-ship$/);
-      if(method==='POST' && mTrackShip){
-        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
-        const tk = String(body.tracking==null?'':body.tracking).trim().slice(0,60);
-        if(!tk){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'请先填写快递单号，再点「保存并发货」'})); return; }
-        await refreshOrderOne(mTrackShip[1]); // 只复核这一笔，避免整表往返
-        const o = orders.find(o=>o.id===mTrackShip[1]);
-        if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'订单不存在'})); return; }
-        if(o.status==='已取消'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'已取消的订单不能发货'})); return; }
-        if(o.status==='已发货'){
-          // 幂等：已经是已发货就原样返回，不重写、不刷新 shippedAt（防重复点造成数据抖动）
-          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status, alreadyShipped:true})); return;
-        }
-        const before={ status:o.status, tracking:o.tracking };
-        o.status='已发货'; o.tracking=tk; o.shippedAt=Date.now();
-        await saveOrderRowSync(o); // 只写 order:<id> 这一行的 key
-        console.log('[tracking-and-ship]', o.id, before.status, '-> 已发货 | 单号', tk);
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status, before})); return;
+        return withOrderLock(mShip[1], async ()=>{
+          await loadOrderRow(mShip[1]); // 只精确拉本单（O(1)），不再全表重赋值，消除回传并发下的竞态窗口
+          const o = orders.find(o=>o.id===mShip[1]);
+          const g = shipGuard(o);
+          if(!g.ok){ res.writeHead(g.code,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:g.error})); return; }
+          let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+          if(!g.noop){
+            o.status='已发货'; o.tracking=String(body.tracking||'').slice(0,60); o.shippedAt=Date.now(); await saveOrderRowSync(o);
+          }
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        });
       }
       // 允许/禁止发货管家采集（仅待发货状态可设置）
       const mAllowPull = pathname.match(/^\/api\/orders\/([\w-]+)\/allow-pull$/);
       if(method==='POST' && mAllowPull){
-        await syncOrders();
-        const o = orders.find(o=>o.id===mAllowPull[1]);
-        if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
-        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
-        o.allowPull = !!body.allowPull;
-        o.allowPullAt = o.allowPull ? Date.now() : null;
-        await saveOrderRowSync(o);
-        if(!USE_SUPABASE) await saveKV('orders', orders).catch(e=>console.error('[allow-pull disk]',e.message));
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
+        return withOrderLock(mAllowPull[1], async ()=>{
+          await syncOrders();
+          const o = orders.find(o=>o.id===mAllowPull[1]);
+          if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
+          let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+          o.allowPull = !!body.allowPull;
+          o.allowPullAt = o.allowPull ? Date.now() : null;
+          await saveOrderRowSync(o);
+          if(!USE_SUPABASE) await saveKV('orders', orders).catch(e=>console.error('[allow-pull disk]',e.message));
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
+        });
       }
       // 批量允许/禁止（仅操作 status==='待发货' 的订单）
       const mBatchAllow = pathname.match(/^\/api\/orders\/batch-allow-pull$/);
@@ -1688,9 +988,24 @@ const server = http.createServer(async (req, res)=>{
       // 导出成功后把每笔订单标记为 status='待回传'（离开「今日可发」、进入「等待回传区」），防止重复导出。
       const mMallExport = pathname.match(/^\/api\/mall-today-export$/);
       if(method==='POST' && mMallExport){
-        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
+        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
         const date = String(body.date||new Date().toISOString().slice(0,10));
-        const exported = Array.isArray(body.orders) ? body.orders.filter(o=>o && o.id && o.phone) : [];
+        // 防重复导出（修复前：仅按客户端传来的 body.orders 标记待回传，但会把同一批订单又塞进新 session，
+        // 导致发货员在两个 session 都看到 → 重复发货）。现在改为「服务端按状态去重」：
+        // 仅接受当前确为「今日可发/待发货」且未被任何历史 session 收录过的订单。
+        const reqIds = Array.isArray(body.orders) ? body.orders.map(o=>o && o.id).filter(Boolean) : [];
+        let existingSessionIds = new Set();
+        try { const arr = await loadKV('mall_sessions', []); (Array.isArray(arr)?arr:[]).forEach(s=>(s.orders||[]).forEach(o=>existingSessionIds.add(o.id))); } catch(e){}
+        await refreshOrdersFromCloud().catch(e=>console.error('[mall-export refresh]', e.message));
+        const exported = [];
+        orders.forEach(o=>{
+          if((o.status==='今日可发' || o.status==='待发货') && reqIds.includes(o.id) && !existingSessionIds.has(o.id)){
+            exported.push({ id:o.id, phone:o.phone, name:o.name, address:o.address });
+          }
+        });
+        if(!exported.length){
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, sessionId:null, ts:Date.now(), count:0, totalSessions:(await loadKV('mall_sessions',[])).length, returnedIds:[], note:'nothing_to_export'})); return;
+        }
         const session = {
           sessionId: 'M'+Date.now().toString(36)+Math.random().toString(36).slice(2,4),
           ts: Date.now(), date, orders: exported
@@ -1701,9 +1016,6 @@ const server = http.createServer(async (req, res)=>{
           const list = Array.isArray(arr) ? arr : [];
           list.push(session);
           await saveKV('mall_sessions', list);
-          // 关键：先刷新内存订单副本。Render 冷启动/内存可能过期或为空，直接 find 会找不到订单，
-          // 导致「标记为待回传」这一步空转、防重复失效。refreshOrdersFromCloud() 正是 /api/orders 用的那份权威数据源。
-          await refreshOrdersFromCloud().catch(e=>console.error('[mall-export refresh]', e.message));
           // 防重复：把已导出的「今日可发」订单标记为「待回传」，使其离开「今日可发」、进入「等待回传区」
           const byId = new Map(exported.map(o=>[o.id, o]));
           const dirty = [];
@@ -1717,10 +1029,11 @@ const server = http.createServer(async (req, res)=>{
       // 取消订单（允许待付款 / 待确认 状态，含商家端「未收到该款项」）
       const mCancel = pathname.match(/^\/api\/orders\/([\w-]+)\/cancel$/);
       if(method==='POST' && mCancel){
-        await refreshOrderOne(mCancel[1]); // 只复核这一笔
-        const o = orders.find(o=>o.id===mCancel[1]);
-        if(!o){ res.writeHead(404); res.end(JSON.stringify({error:'no'})); return; }
-        if(o.status!=='待付款' && o.status!=='待确认'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_pending_or_confirm_can_cancel'})); return; }
+        return withOrderLock(mCancel[1], async ()=>{
+          await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本把状态/单号覆盖回去
+          const o = orders.find(o=>o.id===mCancel[1]);
+          if(!o){ res.writeHead(404); res.end(JSON.stringify({error:'no'})); return; }
+          if(o.status!=='待付款' && o.status!=='待确认'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_pending_or_confirm_can_cancel'})); return; }
         let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
         // 恢复库存：仅本功能上线后下单（stockDeducted 标记）的订单才恢复，历史订单不回溯
         let stockRestored = false;
@@ -1732,9 +1045,9 @@ const server = http.createServer(async (req, res)=>{
             const qty = Number(it.qty)||0;
             if(it.skuId){
               const sku = (p.skus||[]).find(s=>String(s.id)===it.skuId);
-              if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) + qty; stockRestored = true; markProductDirty(it.id, 'ops'); }
+              if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) + qty; stockRestored = true; markProductDirty(it.id); }
             } else if(p.stock!=null){
-              p.stock = Math.floor(Number(p.stock)) + qty; stockRestored = true; markProductDirty(it.id, 'ops');
+              p.stock = Math.floor(Number(p.stock)) + qty; stockRestored = true; markProductDirty(it.id);
             }
           });
         }
@@ -1755,9 +1068,9 @@ const server = http.createServer(async (req, res)=>{
               const qty = Number(it.qty)||0;
               if(it.skuId){
                 const sku = (p.skus||[]).find(s=>String(s.id)===it.skuId);
-                if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) - qty; markProductDirty(it.id, 'ops'); }
+                if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) - qty; markProductDirty(it.id); }
               } else if(p.stock!=null){
-                p.stock = Math.floor(Number(p.stock)) - qty; markProductDirty(it.id, 'ops');
+                p.stock = Math.floor(Number(p.stock)) - qty; markProductDirty(it.id);
               }
             });
           }
@@ -1765,11 +1078,13 @@ const server = http.createServer(async (req, res)=>{
         }
         if(stockRestored) saveProductsDebounced();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        });
       }
       // 恢复已取消订单：商家核实后重新成立，进入待发货（库存恢复后再次扣除）
       const mRestore = pathname.match(/^\/api\/orders\/([\w-]+)\/restore$/);
       if(method==='POST' && mRestore){
-        const o = orders.find(o=>o.id===mRestore[1]);
+        return withOrderLock(mRestore[1], async ()=>{
+          const o = orders.find(o=>o.id===mRestore[1]);
         if(!o){ res.writeHead(404); res.end(JSON.stringify({error:'no'})); return; }
         if(o.status!=='已取消'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_cancelled_can_restore'})); return; }
         // 重新扣减库存：仅本功能上线后下单（stockDeducted 标记）的订单才扣，历史订单不回溯
@@ -1781,9 +1096,9 @@ const server = http.createServer(async (req, res)=>{
             const qty = Number(it.qty)||0;
             if(it.skuId){
               const sku = (p.skus||[]).find(s=>String(s.id)===it.skuId);
-              if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) - qty; stockRededucted = true; markProductDirty(it.id, 'ops'); }
+              if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) - qty; stockRededucted = true; markProductDirty(it.id); }
             } else if(p.stock!=null){
-              p.stock = Math.floor(Number(p.stock)) - qty; stockRededucted = true; markProductDirty(it.id, 'ops');
+              p.stock = Math.floor(Number(p.stock)) - qty; stockRededucted = true; markProductDirty(it.id);
             }
           });
         }
@@ -1793,7 +1108,6 @@ const server = http.createServer(async (req, res)=>{
         o.status='待发货';
         o.restoredAt=Date.now();
         o.restoredCount=(o.restoredCount||0)+1;
-        ensureShipCode(o); // 恢复进入待发货时补编号
         try {
           await saveOrderRowSync(o);
         } catch(e){
@@ -1808,9 +1122,9 @@ const server = http.createServer(async (req, res)=>{
               const qty = Number(it.qty)||0;
               if(it.skuId){
                 const sku = (p.skus||[]).find(s=>String(s.id)===it.skuId);
-                if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) + qty; markProductDirty(it.id, 'ops'); }
+                if(sku && sku.stock!=null){ sku.stock = Math.floor(Number(sku.stock)) + qty; markProductDirty(it.id); }
               } else if(p.stock!=null){
-                p.stock = Math.floor(Number(p.stock)) + qty; markProductDirty(it.id, 'ops');
+                p.stock = Math.floor(Number(p.stock)) + qty; markProductDirty(it.id);
               }
             });
           }
@@ -1818,18 +1132,20 @@ const server = http.createServer(async (req, res)=>{
         }
         if(stockRededucted) saveProductsDebounced();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        });
       }
       // ---------- 修改订单商品（删除某几项 / 换货补货追加）：重算 total，被删商品恢复库存 ----------
       const mUpdateItems = pathname.match(/^\/api\/orders\/([\w-]+)\/update-items$/);
       if(method==='POST' && mUpdateItems){
-        await refreshOrderOne(mUpdateItems[1]); // 只复核这一笔
-        const o = orders.find(o=>o.id===mUpdateItems[1]);
-        if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
-        // 仅未发货订单可改商品（已发货/已取消不可直接改）
-        if(o.status==='已发货' || o.status==='已取消'){
+        return withOrderLock(mUpdateItems[1], async ()=>{
+          await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本覆盖
+          const o = orders.find(o=>o.id===mUpdateItems[1]);
+          if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
+          // 仅未发货订单可改商品（已发货/已取消不可直接改）
+          if(o.status==='已发货' || o.status==='已取消'){
           res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'only_unshipped_can_edit'})); return;
         }
-        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
         if(!Array.isArray(body.items)){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'items_required'})); return; }
         const keyOf = x => x.skuId ? (String(x.id)+'#'+String(x.skuId)) : String(x.id);
         const newItems = body.items.map(it=>({
@@ -1851,44 +1167,28 @@ const server = http.createServer(async (req, res)=>{
           if(!newKeys.has(keyOf(it)) && o.stockDeducted){
             const p=products.find(p=>p.id===it.id); if(!p) return;
             const qty=Number(it.qty)||0;
-            if(it.skuId){ const sku=(p.skus||[]).find(s=>String(s.id)===it.skuId); if(sku&&sku.stock!=null){ sku.stock=Math.floor(Number(sku.stock))+qty; stockRestored=true; markProductDirty(it.id, 'ops');} }
-            else if(p.stock!=null){ p.stock=Math.floor(Number(p.stock))+qty; stockRestored=true; markProductDirty(it.id, 'ops'); }
+            if(it.skuId){ const sku=(p.skus||[]).find(s=>String(s.id)===it.skuId); if(sku&&sku.stock!=null){ sku.stock=Math.floor(Number(sku.stock))+qty; stockRestored=true; markProductDirty(it.id);} }
+            else if(p.stock!=null){ p.stock=Math.floor(Number(p.stock))+qty; stockRestored=true; markProductDirty(it.id); }
           }
         });
         const prevItems=o.items, prevTotal=o.total, prevStatus=o.status, prevCancelledAt=o.cancelledAt;
         o.items=newItems;
-        o.total=newItems.reduce((s,x)=>s+(x.isManualAdd?0:x.price*x.qty),0);
+        o.total=Math.round(newItems.reduce((s,x)=>s+(x.isManualAdd?0:x.price*x.qty),0)*100)/100;
         if(newItems.length===0){ o.status='已取消'; o.cancelledAt=Date.now(); }
         try { await saveOrderRowSync(o); }
         catch(e){
           o.items=prevItems; o.total=prevTotal; o.status=prevStatus;
           if(prevCancelledAt===undefined) delete o.cancelledAt; else o.cancelledAt=prevCancelledAt;
-          if(stockRestored){ (o.items||[]).forEach(it=>{ const p=products.find(p=>p.id===it.id); if(!p) return; const qty=Number(it.qty)||0; if(it.skuId){ const sku=(p.skus||[]).find(s=>String(s.id)===it.skuId); if(sku&&sku.stock!=null){ sku.stock=Math.floor(Number(sku.stock))-qty; markProductDirty(it.id, 'ops');} } else if(p.stock!=null){ p.stock=Math.floor(Number(p.stock))-qty; markProductDirty(it.id, 'ops');} }); }
+          if(stockRestored){ (o.items||[]).forEach(it=>{ const p=products.find(p=>p.id===it.id); if(!p) return; const qty=Number(it.qty)||0; if(it.skuId){ const sku=(p.skus||[]).find(s=>String(s.id)===it.skuId); if(sku&&sku.stock!=null){ sku.stock=Math.floor(Number(sku.stock))-qty; markProductDirty(it.id);} } else if(p.stock!=null){ p.stock=Math.floor(Number(p.stock))-qty; markProductDirty(it.id);} }); }
           res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'save_failed', message:e.message})); return;
         }
         if(stockRestored) saveProductsDebounced();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
-      }
-      // ---------- 修改订单联系信息 / 备注（微信号、备注等） ----------
-      const mContact = pathname.match(/^\/api\/orders\/([\w-]+)\/contact$/);
-      if(method==='POST' && mContact){
-        await refreshOrderOne(mContact[1]); // 只复核这一笔
-        const o = orders.find(o=>o.id===mContact[1]);
-        if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
-        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
-        const prev = { wechat:o.wechat, note:o.note };
-        if(body.wechat!=null) o.wechat = String(body.wechat).trim().slice(0,50);
-        if(body.note!=null) o.note = String(body.note).trim().slice(0,500);
-        try { await saveOrderRowSync(o); }
-        catch(e){
-          o.wechat = prev.wechat; o.note = prev.note;
-          res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'save_failed', message:e.message})); return;
-        }
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
+        });
       }
       // ---------- 新建手工订单（商家后台补单/换货追加）：沿用客户信息，商品可手工填写，不扣系统库存 ----------
       if(method==='POST' && pathname==='/api/orders/manual'){
-        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
+        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
         if(!body.name || !body.phone || !body.address){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'missing_contact'})); return; }
         const rawItems = Array.isArray(body.items)?body.items:[];
         if(!rawItems.length){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'empty'})); return; }
@@ -1909,7 +1209,7 @@ const server = http.createServer(async (req, res)=>{
             bundleItems: Array.isArray(it.bundleItems)?it.bundleItems:[]
           };
         });
-        const total = detail.reduce((s,x)=>s+x.price*x.qty,0);
+        const total = Math.round(detail.reduce((s,x)=>s+x.price*x.qty,0)*100)/100;
         const id = genId();
         const order = {
           id, items:detail, total,
@@ -1922,14 +1222,13 @@ const server = http.createServer(async (req, res)=>{
           isManual:true,
           createdAt:Date.now(), paidAt:Date.now(), confirmedAt:Date.now(), shippedAt:null
         };
-        if(order.status==='待发货' || order.status==='今日可发') ensureShipCode(order); // 手工直接进发货队列也自动编号
         saveOrderRow(order);
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, id, order})); return;
       }
       // 更新配置（店铺名/联系人/公告/收款码）
       const mConfig = pathname.match(/^\/api\/config$/);
       if(method==='POST' && mConfig){
-        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
+        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
         if(body.shopName!=null) config.shopName=String(body.shopName).slice(0,50);
         if(body.contactName!=null) config.contactName=String(body.contactName).slice(0,30);
         if(body.announcement!=null) config.announcement=String(body.announcement).slice(0,300);
@@ -1945,9 +1244,6 @@ const server = http.createServer(async (req, res)=>{
           const arr=Array.isArray(body.hiddenCategories)?body.hiddenCategories:[];
           config.hiddenCategories=arr.map(x=>String(x).trim().slice(0,50)).filter(Boolean);
         }
-        // 2026-09-12 加：当前活动波次（none=日常 / w1=第一波 / w2 / w3 / w4=返场）
-        if(body.activeWave!=null) config.activeWave=String(body.activeWave).trim().slice(0,10);
-        if(body.hours!=null){ const h=Number(body.hours); if(Number.isFinite(h)&&h>0){ config.waveEndsAt=Date.now()+Math.round(h*3600*1000); config.activityDeadline=new Date(config.waveEndsAt).toISOString(); } }
         if(body.paymentQrBase64){ const url=await saveImage(body.paymentQrBase64,'payment-qr'); if(url) config.paymentQr=url; }
         if(body.paymentWechatQrBase64){ const url=await saveImage(body.paymentWechatQrBase64,'payment-wechat'); if(url) config.paymentWechatQr=url; }
         if(body.paymentAlipayQrBase64){ const url=await saveImage(body.paymentAlipayQrBase64,'payment-alipay'); if(url) config.paymentAlipayQr=url; }
@@ -1976,7 +1272,7 @@ const server = http.createServer(async (req, res)=>{
       }
       // 图库：新建文件夹
       if(method==='POST' && pathname==='/api/gallery/folder'){
-        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
+        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
         const name=String(body.name||'').trim().replace(/[\\/:*?"<>|]/g,'_').slice(0,50);
         if(!name){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'empty'})); return; }
         const target=path.join(GALLERY,name);
@@ -1986,7 +1282,7 @@ const server = http.createServer(async (req, res)=>{
       }
       // 图库：上传图片到指定文件夹
       if(method==='POST' && pathname==='/api/gallery/upload'){
-        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
+        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
         const folder=String(body.folder||'默认图库').trim().replace(/[\\/:*?"<>|]/g,'_');
         const m=String(body.base64||'').match(/^data:(image\/\w+);base64,(.+)$/);
         if(!m){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad image'})); return; }
@@ -2056,7 +1352,7 @@ const server = http.createServer(async (req, res)=>{
       }
       // 产品管理：增 / 改
       if(method==='POST' && pathname==='/api/products'){
-        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
+        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
         const p=body;
         const clientSaveId = String(p.clientSaveId || '').trim();
         // 幂等：同一 clientSaveId 已处理过，直接返回上次结果，不再写库
@@ -2085,8 +1381,6 @@ const server = http.createServer(async (req, res)=>{
           stock: p.stock!==undefined?Math.max(0, Number(p.stock)||0):(existing.stock||0),
           forceSoldOut: p.forceSoldOut!==undefined?!!p.forceSoldOut:(existing.forceSoldOut||false), // 后台弹窗没提供该字段，必须与旧数据合并，防止被清空
           hidden: p.hidden!==undefined?!!p.hidden:(existing.hidden||false),
-          // 2026-09-12 加：活动分组（第一波1/2/3组、第二波A/B组、第三波定制/盲盒、返场）
-          waveGroup: String(p.waveGroup!==undefined?p.waveGroup:(existing.waveGroup||'')).trim().slice(0,30),
           category: String(p.category!==undefined?p.category:(existing.category||'')).trim().slice(0,50),
           desc: p.desc!==undefined?sanitizeHtml(String(p.desc).trim()).slice(0,30000):(existing.desc||''),
           image: String(p.image!==undefined?p.image:(existing.image||'/assets/products/default.svg')).trim(),
@@ -2097,10 +1391,13 @@ const server = http.createServer(async (req, res)=>{
           skus: p.skus!==undefined?(Array.isArray(p.skus)?p.skus.slice(0,20).map(s=>({
             id: String(s.id||'').trim() || crypto.randomBytes(3).toString('hex').toUpperCase(),
             name: String(s.name||'').trim().slice(0,100),
-            subtitle: String(s.subtitle!==undefined?s.subtitle:(existing.skus&&existing.skus.find(es=>es.id===s.id)?existing.skus.find(es=>es.id===s.id).subtitle:'')).trim().slice(0,80),
             price: Math.max(0, Number(s.price)||0),
+            // 2026-09-11 加：商家可填的"单片/单件参考价"，买家端红字均价优先按这个显示
+            perPrice: Math.max(0, Number(s.perPrice)||0),
             stock: Math.max(0, Math.floor(Number(s.stock)||0)),
             image: String(s.image||'').trim().slice(0,300),
+            // 2026-09-10 加：SKU 副标题（客户端橘色小注解展示），不填保持空，前端条件渲染
+            subtitle: String(s.subtitle||'').trim().slice(0,80),
             bundleItems: skuBundle(s.bundleItems)
           })).filter(s=>s.name):[]):(existing.skus||[]),
           // 有 SKU 时，主价格/库存自动以 SKU 最低价和总库存为准，避免列表与 SKU 不同步
@@ -2109,18 +1406,6 @@ const server = http.createServer(async (req, res)=>{
         if(item.skus && item.skus.length){
           item.price = Math.min(...item.skus.map(s=>Number(s.price)||0));
           item.stock = item.skus.reduce((sum,s)=>sum+(Number(s.stock)||0),0);
-        }
-        // 关键修复（2026-09-12）：改了「活动分组」必须立刻重算 hidden。
-        // 否则上一波切波时留下的 hidden=false 会让这个品在当前波次的买家端继续露出
-        //（症状：把产品改成「返场爆品」并保存成功，切到第二波却还能看到它）。
-        // 2026-09-13 升级：支持多波次同时开启（如 w2,w3），waveGroup 变化时按当前所有生效波次重算 hidden。
-        const curWaves = String(config.activeWave||'').split(',').map(s=>s.trim()).filter(Boolean);
-        const WAVE_PREFIX_MAP = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'' };
-        const activePrefixes = curWaves.map(w=>WAVE_PREFIX_MAP[w]).filter((p,i,arr)=>p!=null && arr.indexOf(p)===i);
-        const hasAllPrefix = activePrefixes.some(p=>!p);
-        if(activePrefixes.length && !hasAllPrefix && String(existing.waveGroup||'').trim() !== String(item.waveGroup||'').trim()){
-          const wg = String(item.waveGroup||'').trim();
-          item.hidden = !activePrefixes.some(pre=>wg.indexOf(pre)===0);
         }
         if(isNew){ item.createdAt=item.updatedAt; products.push(item); }
         else { const idx=products.findIndex(x=>x.id===id); item.createdAt=products[idx].createdAt||item.updatedAt; products[idx]=item; }
@@ -2131,8 +1416,7 @@ const server = http.createServer(async (req, res)=>{
         // 内存已是最新的（products[idx]=item 在前），重试只重做云端 upsert，安全幂等。
         let saved=false, lastErr;
         for(let attempt=0; attempt<3; attempt++){
-          // fix52：单轮上限 12s×2（原来 20s×2，三轮回合最坏要 3 分钟才报错），保持"能等到结果"
-          try { await flushDirtyProducts({ timeoutMs: 12000, retries: 2 }); saved=true; break; }
+          try { await flushDirtyProducts(); saved=true; break; }
           catch(e){
             lastErr=e;
             console.error(`[POST /api/products] flushDirtyProducts 第${attempt+1}/3次失败:`, e.message);
@@ -2141,17 +1425,6 @@ const server = http.createServer(async (req, res)=>{
         }
         if(!saved){
           res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'云端保存失败：'+lastErr.message})); return;
-        }
-        // fix49：写后回读校验 —— 只有云端确实存下了（回读到的 updatedAt 与本次一致）才报成功，
-        // 从根上杜绝「显示保存成功、其实没落库」这种最误导人的情况。
-        try{
-          const rb = await withRetry(()=>sb.from('shop_data').select('value').eq('key','product:'+item.id).maybeSingle(), 'verifySave:'+item.id, 2);
-          const v = rb && rb.data && rb.data.value;
-          if(!v || Number(v.updatedAt) !== Number(item.updatedAt)){
-            res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'云端未确认写入（回读不一致），请再点一次「保存产品」重试'})); return;
-          }
-        }catch(e){
-          res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, message:'云端写入状态未确认（回读失败：'+e.message+'），请稍后重试'})); return;
         }
         recordSaveId(clientSaveId, item);
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, product:item})); return;
@@ -2168,14 +1441,14 @@ const server = http.createServer(async (req, res)=>{
       }
       // 产品管理：排序
       if(method==='POST' && pathname==='/api/products/reorder'){
-        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'bad_request', message:e.message||'请求数据格式错误'})); return; }
+        let body; try { body=JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
         const ids=Array.isArray(body.ids)?body.ids:[];
         const map=new Map(products.map(p=>[p.id,p]));
         const next=[];
         ids.forEach(id=>{ const p=map.get(id); if(p){ next.push(p); map.delete(id); } });
         map.forEach(p=>next.push(p));
         products=next;
-        await saveProductOrder(true);   // fix52：拖拽排序是明确的顺序变更，强制写
+        await saveProductOrder();
         // 排序变更不大，整盘同步一次本地 seed；云端模式下只写 order key 即可
         if(!USE_SUPABASE) await withLock(()=> writeJsonAtomic('products.json', products));
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true})); return;
@@ -2186,21 +1459,10 @@ const server = http.createServer(async (req, res)=>{
         const idx = products.findIndex(x=>x.id===mToggleFSO[1]);
         if(idx===-1){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return; }
         const pid = mToggleFSO[1];
-        // fix52：先定下目标值再写，响应也回这个确定值（不再回读可能被并发同步改动的数组）
-        const wantFso = !products[idx].forceSoldOut;
-        products[idx].forceSoldOut = wantFso;
-        setOpsTarget(pid, { forceSoldOut: wantFso });
-        markProductDirty(pid, 'ops');
-        try {
-          await flushDirtyProducts({ timeoutMs: OPS_FLUSH_TIMEOUT_MS, retries: 3 });  // fix52：9s×3，失败快速反馈
-        } catch(e){
-          // fix52：必须回一个明确 JSON。旧版这里没有 catch，写库失败时请求会一路悬挂，
-          // 柒木的体感就是「点了没反应，过一会儿才弹错」。内存保持已改 + 脏行保留，网络恢复后自动补存。
-          res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'});
-          res.end(JSON.stringify({ok:false, message:'云端没写进去（'+(e&&e.message||e)+'）。已记住这次改动，网络恢复后会自动补存；也可以稍后再点一次。'}));
-          return;
-        }
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, forceSoldOut: wantFso})); return;
+        products[idx].forceSoldOut = !products[idx].forceSoldOut;
+        markProductDirty(pid);
+        await flushDirtyProducts();
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, forceSoldOut: products[idx].forceSoldOut})); return;
       }
       // 商家后台：快速切换「隐藏/上架」开关（隐藏后买家端完全不可见）
       const mToggleHidden = pathname.match(/^\/api\/products\/([\w-]+)\/toggle-hidden$/);
@@ -2208,21 +1470,10 @@ const server = http.createServer(async (req, res)=>{
         const idx = products.findIndex(x=>x.id===mToggleHidden[1]);
         if(idx===-1){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return; }
         const pid = mToggleHidden[1];
-        // fix52：同上，目标值先定、响应回确定值
-        const wantHidden = !products[idx].hidden;
-        products[idx].hidden = wantHidden;
-        setOpsTarget(pid, { hidden: wantHidden });
-        markProductDirty(pid, 'ops');
-        try {
-          await flushDirtyProducts({ timeoutMs: OPS_FLUSH_TIMEOUT_MS, retries: 3 });  // fix52：9s×3，失败快速反馈
-        } catch(e){
-          // fix52：同上——写库失败也必须有明确回应，不能让请求悬挂（"点上架点不动"的直接原因之一）
-          res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'});
-          res.end(JSON.stringify({ok:false, message:'云端没写进去（'+(e&&e.message||e)+'）。已记住这次改动，网络恢复后会自动补存；也可以稍后再点一次。'}));
-          return;
-        }
-        clearHtmlCache(); // 单个隐藏/上架也即时清买家端页面缓存，保证与批量隐藏同步生效
-        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, hidden: wantHidden})); return;
+        products[idx].hidden = !products[idx].hidden;
+        markProductDirty(pid);
+        await flushDirtyProducts();
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, hidden: products[idx].hidden})); return;
       }
       // 商家后台：批量隐藏/上架多个产品（买家端立即不可见）。body: {ids:[...], hidden:true|false}
       if(method==='POST' && pathname==='/api/products/batch-hidden'){
@@ -2231,103 +1482,20 @@ const server = http.createServer(async (req, res)=>{
         if(!ids.length){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no ids'})); return; }
         const hidden = body.hidden===true;
         let updated = 0;
-        await syncProductsFromCloud();
         await withLock(async()=>{
           for(const pid of ids){
             const idx = products.findIndex(x=>x.id===pid);
             if(idx===-1) continue;
             if(products[idx].hidden === hidden) continue; // 已经是目标状态就跳过
             products[idx].hidden = hidden;
-            markProductDirty(pid, 'ops');
+            markProductDirty(pid);
             updated++;
           }
-          if(updated) await flushDirtyProducts({ timeoutMs: OPS_FLUSH_TIMEOUT_MS, retries: 3 });
+          if(updated) await flushDirtyProducts();
         });
         // 操作产品配置触发表，让买家端 / 与详情页缓存失效
         clearHtmlCache();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, updated, hidden})); return;
-      }
-      // 商家后台：一键切换活动波次。自动上架本波商品、隐藏非本波商品，并把买家端分类栏切成该波分组。
-      // 2026-09-13 升级：支持同时选择多个波次（如第二波+第三波同时上）。
-      if(method==='POST' && pathname==='/api/admin/apply-wave'){
-        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
-        // 支持 {waves:['w2','w3']} 或向后兼容 {wave:'w2'}
-        let waves = Array.isArray(body.waves) ? body.waves.map(String).map(s=>s.trim()).filter(Boolean) : [];
-        if(!waves.length && body.wave!=null) waves = [String(body.wave||'none').trim()];
-        const WAVE_PREFIX = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'' };
-        // none / 空 = 全部显示
-        const wantsNone = waves.includes('none') || waves.length===0;
-        const activePrefixes = wantsNone ? [] : waves.map(w=>WAVE_PREFIX[w]).filter((p,i,arr)=>p!=null && arr.indexOf(p)===i);
-        const hasAllPrefix = activePrefixes.some(p=>!p); // 含 w4 或空 prefix 时全部显示
-        const h=Number(body.hours);
-        let shown=0, hid=0, lastErr=null;
-        // 幂等重试 3 次：products 与 config 必须都写成功，否则会出现
-        // 「产品已按本波切换、但 activeWave 还是上一波」→ 买家端产品对、倒计时文案错。
-        for(let attempt=0; attempt<3; attempt++){
-          try{
-            await syncProductsFromCloud();
-            shown=0; hid=0;
-            await withLock(async()=>{
-              for(const p of products){
-                const g=String(p.waveGroup||'').trim();
-                let wantHidden;
-                if(wantsNone || hasAllPrefix) wantHidden=false;
-                else if(!g) wantHidden=true;
-                else wantHidden = !activePrefixes.some(pre=>g.indexOf(pre)===0);
-                if(!!p.hidden!==wantHidden){ p.hidden=wantHidden; markProductDirty(p.id, 'ops'); }
-                if(wantHidden) hid++; else shown++;
-              }
-              await flushDirtyProducts({ timeoutMs: 12000, retries: 3 });
-            });
-            config.activeWave = wantsNone ? 'none' : waves.join(',');
-            if(wantsNone) config.waveDur = '';
-            // 公告滚动条按「当前波次开始时间」轮播，必须与活动倒计时同步。
-            // 旧版沿用全局 activityStart（2026-09-12），导致四句话永远停在最后一句。
-            config.activityStart = new Date().toISOString();
-            if(Number.isFinite(h)&&h>0){
-              config.waveEndsAt = Date.now()+Math.round(h*3600*1000);
-              config.activityDeadline = new Date(config.waveEndsAt).toISOString();
-              config.waveDur = Math.round(h)+'h';
-            }
-            await saveConfig();
-            clearHtmlCache();
-            res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, wave:config.activeWave, shown, hidden:hid, attempt:attempt+1})); return;
-          }catch(e){
-            lastErr=e;
-            console.error('[apply-wave] 第'+(attempt+1)+'次失败:', e && e.message);
-            if(attempt<2) await new Promise(r=>setTimeout(r,700));
-          }
-        }
-        clearHtmlCache();
-        res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, error:'切换失败（已自动重试3次，产品与波次均未改动）：'+((lastErr&&lastErr.message)||lastErr)})); return;
-      }
-
-      // 网络自检：用于排查「本地后台保存/切换活动一直失败」是网络还是数据问题。
-      // 返回当前网络模式 + 一次真实的 Supabase 读探测用时。
-      if(method==='GET' && pathname==='/api/diag'){
-        const out = { netMode: NET_MODE, useSupabase: USE_SUPABASE, host: null, proxy: null, readOk: null, readMs: null, error: null };
-        try { out.host = process.env.SUPABASE_URL ? new URL(process.env.SUPABASE_URL).host : null; } catch(e){}
-        out.proxy = String(process.env.SUPABASE_PROXY || '') || null;
-        if(USE_SUPABASE){
-          const t0 = Date.now();
-          try {
-            const { error } = await withRetry(()=>sb.from('shop_data').select('key').limit(1), 'diag');
-            if(error) throw new Error(error.message);
-            out.readOk = true;
-          } catch(e){ out.readOk = false; out.error = e.message; }
-          out.readMs = Date.now() - t0;
-        }
-        res.writeHead(200, { 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' });
-        res.end(JSON.stringify(out)); return;
-      }
-
-      // 商家后台自检版本端点：admin.html 加载时会 fetch 这里对比自己嵌入的版本号，
-      // 不一致就 location.replace 强制刷一次。no-store 防止任何中间层缓存。
-      // 必须放在 /api/* 块内部，避免被 1340 行兜底 404 吃掉。
-      if(method==='GET' && pathname==='/api/admin-build'){
-        res.writeHead(200, {'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store, must-revalidate', 'Pragma':'no-cache'});
-        res.end(JSON.stringify({ v: ADMIN_BUILD, t: Date.now() }));
-        return;
       }
 
       res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return;
@@ -2335,39 +1503,69 @@ const server = http.createServer(async (req, res)=>{
 
     // ===== 页面 =====
     if((method==='GET'||method==='HEAD') && (pathname==='/' || pathname==='')){
-      const html = await renderPageCached('home', buildHomeHtml);
-      if(!html || html===PAGE_MISSING){ res.writeHead(503,{'Content-Type':'text/html; charset=utf-8'}); res.end('页面生成中，请稍后重试'); return; }
-      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;
+      const cached = getCachedHtml('home');
+      if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':cached); return; }
+      const list = await getProducts();
+      const ogImage = pickShopShareImage(list);
+      const safeConfig = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config && !Array.isArray(config) ? config : {}) };
+      let html = renderTemplate('home.html', {
+        SHOP_NAME: htmlEscape(safeConfig.shopName),
+        OG_TITLE: htmlEscape(safeConfig.shopName),
+        OG_DESC: htmlEscape(safeConfig.announcement || '不初限时狂欢商城 · 全场超低价回馈老客户'),
+        OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
+        OG_URL: htmlEscape(BASE + '/'),
+        PRODUCTS_JSON: jsonForScript(list),
+        CONFIG_JSON: jsonForScript(safeConfig)
+      });
+      html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
+      setCachedHtml('home', html);
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'}); res.end(method==='HEAD'?'':html); return;
     }
 
-      const mProd = pathname.match(/^\/product\/([\w-]+)$/);
+      const mProd = pathname.match(/^\/(?:product|p2|p3|p4)\/([\w-]+)$/);
       if((method==='GET'||method==='HEAD') && mProd){
-        const pid = mProd[1];
-        let urlWave = '';
-        try{ const u = new URL(req.url, 'http://localhost'); urlWave = u.searchParams.get('wave')||''; }catch(e){}
-        const pkey = 'product:'+pid+(urlWave?(':'+urlWave):'');
-        const html = await renderPageCached(pkey, ()=>buildProductHtml(pid, urlWave));
-        if(html === PAGE_MISSING){
-          // 商品不存在 / 已下架：绝不把「只有'商品不存在'四个字的白页」甩给买家。
-          // 302 回商城首页（保留波次直链参数），买家至少落在当前活动页继续逛、继续下单。
-          const back = '/' + (urlWave ? ('?wave='+encodeURIComponent(urlWave)) : '');
-          res.writeHead(302,{'Location':back,'Cache-Control':'no-store','Content-Type':'text/html; charset=utf-8'});
-          res.end(method==='HEAD'?'':'<!doctype html><meta charset="utf-8"><title>返回商城</title><meta http-equiv="refresh" content="0;url='+back+'">');
-          return;
+        const pkey = 'product:'+mProd[1];
+        const cached = getCachedHtml(pkey);
+        if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'}); res.end(method==='HEAD'?'':cached); return; }
+        const list = await getProducts();
+        const p = list.find(p=>p.id===mProd[1]);
+        if(!p){ res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return; }
+        // 隐藏产品或被隐藏分类下的产品：买家端详情页直接返回不存在
+        const hiddenCats = Array.isArray(config.hiddenCategories)?config.hiddenCategories:[];
+        if(p.hidden || (p.category && hiddenCats.includes(p.category))){
+          res.writeHead(404,{'Content-Type':'text/html; charset=utf-8'}); res.end('商品不存在'); return;
         }
-        if(!html){ res.writeHead(503,{'Content-Type':'text/html; charset=utf-8'}); res.end('页面生成中，请稍后重试'); return; }
-        res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(method==='HEAD'?'':html); return;
+        const ogImage = inferShareImage(p) || pickShopShareImage(list);
+        const safeConfig = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config && !Array.isArray(config) ? config : {}) };
+        // 2026-09-09 22:30 加：服务端预填主图，让浏览器在 HTML 解析时就并行下载（之前是 src="" 等 JS 再设，等几秒才出图）
+        // 2026-09-24 加：破坏缓存，避免同名文件覆盖后浏览器/Storage CDN 仍显示旧图
+        const rawHeroImage = p.image || (Array.isArray(p.skus) && p.skus.length && p.skus[0].image) || '/assets/product-placeholder.svg';
+        const heroImage = rawHeroImage + (rawHeroImage.indexOf('?')>=0?'&':'?') + 't=' + Date.now();
+        let html = renderTemplate('product.html', {
+          SHOP_NAME: htmlEscape(safeConfig.shopName),
+          OG_TITLE: htmlEscape(p.name),
+          OG_DESC: htmlEscape(String(p.desc||'').replace(/<[^>]+>/g,'').slice(0,200) || safeConfig.shopName),
+          OG_IMAGE: htmlEscape(absUrl(ogImage, BASE)),
+          OG_URL: htmlEscape(BASE + '/product/'+p.id),
+          OG_PRICE: htmlEscape(p.price || ''),
+          HERO_IMAGE: htmlEscape(heroImage),
+          PRODUCT_JSON: jsonForScript(p),
+          PRODUCTS_JSON: jsonForScript(list),
+          CONFIG_JSON: jsonForScript(safeConfig)
+        });
+      html = html.replace(/<meta (?:property|name)="(?:og:[^"]+|twitter:[^"]+|product:[^"]+)" content="">\n?/g, '');
+      setCachedHtml(pkey, html);
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'}); res.end(method==='HEAD'?'':html); return;
     }
 
     const mOrder = pathname.match(/^\/order\/([\w-]+)$/);
     if(method==='GET' && mOrder){
       const list = await getOrders();
       const o = list.find(o=>o.id===mOrder[1]) || null;
-      const cfgNow = await getConfig();
       const html = renderTemplate('order.html', {
-        SHOP_NAME: htmlEscape(cfgNow.shopName),
+        SHOP_NAME: htmlEscape(config.shopName),
         ORDER_JSON: jsonForScript(o?enrichOrderBundles(o):o),
-        CONFIG_JSON: jsonForScript(cfgNow)
+        CONFIG_JSON: jsonForScript(config)
       });
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}); res.end(method==='HEAD'?'':html); return;
     }
@@ -2375,7 +1573,11 @@ const server = http.createServer(async (req, res)=>{
     if(method==='GET' && pathname==='/admin'){
       fs.readFile(path.join(PUBLIC,'admin.html'), (err, buf)=>{
         if(err){ res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'}); res.end('Not found'); return; }
-        const html = buf.toString('utf8').replace('</head>', ADMIN_SELF_CHECK + '</head>');
+        // 注入"自检 + 强制刷"脚本：把这个 admin.html 服务时的版本号写进 window.__AB，
+        // 脚本异步 fetch /api/admin-build，对不上就 location.replace 带 _cb 时间戳重新拉。
+        // 这样即使用户浏览器卡在旧缓存，下次打开/刷新时会自动跳到最新版，永久自愈。
+        const inj = '<script>(function(){var my="'+ADMIN_BUILD+'";fetch("/api/admin-build?_t="+Date.now(),{cache:"no-store"}).then(function(r){return r.json();}).then(function(d){if(d&&d.v&&d.v!==my){var u=location.pathname+"?_cb="+Date.now();location.replace(u);}}).catch(function(){});})();</script>';
+        const html = buf.toString('utf8').replace('</head>', inj + '</head>');
         res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); res.end(html);
       });
       return;
@@ -2383,76 +1585,6 @@ const server = http.createServer(async (req, res)=>{
 
     if(method==='GET' && pathname==='/business_rules.js'){ sendFile(res, path.join(PUBLIC,'business_rules.js')); return; }
     if(method==='GET' && pathname==='/xlsx.full.min.js'){ sendFile(res, path.join(PUBLIC,'xlsx.full.min.js')); return; }
-
-    // 图片加速代理：/img/shop/gallery/xxx.jpg → Supabase Storage，进程内缓存 + 7 天强缓存
-    // 缩略图：浏览器端 thumbUrl/thumbImg 会追加 ?w=&h=&q=，此时走 Supabase 图片转换端点下发小图（约 1/8 体积），
-    // 转换失败时自动回退原图，保证任何情况下都能出图、绝不让买家看到裂图。
-    const mImg = pathname.match(/^\/img\/(.+)$/);
-    if((method==='GET'||method==='HEAD') && mImg){
-      const key = mImg[1];
-      if(key.includes('..') || !/^shop\//.test(key)){ res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'}); res.end('not found'); return; }
-      // 缩略图参数（浏览器端追加）
-      const sp = u.searchParams;
-      const tw = parseInt(sp.get('w')||'',10);
-      const th = parseInt(sp.get('h')||'',10);
-      const tq = parseInt(sp.get('q')||'',10) || 70;
-      const isThumb = Number.isFinite(tw) && tw>0;
-      const cacheKey = key + (isThumb ? ('#'+tw+'x'+(Number.isFinite(th)&&th>0?th:'')+'q'+tq) : '');
-      const hit = imgCache.get(cacheKey);
-      if(hit){
-        res.writeHead(200,{'Content-Type':hit.type,'Content-Length':hit.buf.length,'Cache-Control':'public, max-age=604800, immutable'});
-        res.end(method==='HEAD' ? undefined : hit.buf); return;
-      }
-      // fix51：磁盘缓存命中 —— 进程重启 / 本机断外网都还能出图
-      const dhit = imgDiskRead(cacheKey);
-      if(dhit){
-        if(imgCache.size >= IMG_CACHE_MAX) imgCache.delete(imgCache.keys().next().value);
-        imgCache.set(cacheKey, dhit);
-        res.writeHead(200,{'Content-Type':dhit.type,'Content-Length':dhit.buf.length,'Cache-Control':'public, max-age=604800, immutable'});
-        res.end(method==='HEAD' ? undefined : dhit.buf); return;
-      }
-      if(!process.env.SUPABASE_URL){ res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'}); res.end('no storage'); return; }
-      // 并发闸：排队等待，最长 6 秒，超时返回 503（前端会显示占位图，不影响整站）
-      {
-        const deadline = Date.now() + 6000;
-        while(imgFetching >= IMG_MAX_CONCURRENT){
-          if(Date.now() > deadline){ res.writeHead(503,{'Content-Type':'text/plain; charset=utf-8'}); res.end('busy'); return; }
-          await new Promise(s=>setTimeout(s, 60));
-        }
-      }
-      imgFetching++;
-      try{
-        const ctl = new AbortController(); const tm = setTimeout(()=>ctl.abort(), 20000);
-        let r;
-        if(isThumb){
-          // 优先走 Supabase 图片转换端点（小图），失败回退原图
-          const base = process.env.SUPABASE_URL + '/storage/v1/render/image/public/' + key;
-          const turl = base + '?width='+tw + (Number.isFinite(th)&&th>0 ? '&height='+th : '') + '&resize=cover&quality='+tq;
-          try{
-            r = await fetch(turl, { signal: ctl.signal });
-            if(!r.ok) throw new Error('transform '+r.status);
-          }catch(e){
-            r = await fetch(process.env.SUPABASE_URL + '/storage/v1/object/public/' + key, { signal: ctl.signal });
-          }
-        } else {
-          r = await fetch(process.env.SUPABASE_URL + '/storage/v1/object/public/' + key, { signal: ctl.signal });
-        }
-        clearTimeout(tm);
-        if(!r.ok){ res.writeHead(r.status===404?404:502,{'Content-Type':'text/plain; charset=utf-8'}); res.end('img fetch failed: '+r.status); return; }
-        const buf = Buffer.from(await r.arrayBuffer());
-        const type = r.headers.get('content-type') || 'image/jpeg';
-        if(imgCache.size >= IMG_CACHE_MAX) imgCache.delete(imgCache.keys().next().value);
-        imgCache.set(cacheKey, { buf, type });
-        imgDiskWrite(cacheKey, buf, type); imgDiskPrune(); // fix51：落盘，扛重启/断网
-        res.writeHead(200,{'Content-Type':type,'Content-Length':buf.length,'Cache-Control':'public, max-age=604800, immutable'});
-        res.end(method==='HEAD' ? undefined : buf); return;
-      }catch(e){
-        console.error('[img proxy]', key, e.message);
-        res.writeHead(502,{'Content-Type':'text/plain; charset=utf-8'}); res.end('img error'); return;
-      }finally{
-        imgFetching--;
-      }
-    }
 
     if(method==='GET' && pathname.startsWith('/assets/')){
       const rel = path.normalize(pathname.slice(1));
@@ -2479,8 +1611,5 @@ const server = http.createServer(async (req, res)=>{
       exec('cmd /c start "" "http://localhost:'+PORT+'/"');
     }
   });
-  ensureBoot()
-    .then(()=>warmHtmlCache())                       // 先把首页/详情页渲染好，第一个访客也不用等
-    .catch(e=>console.error('[Boot Error]', e));
-  setTimeout(()=>prewarmImages(), 3000);
+  ensureBoot().catch(e=>console.error('[Boot Error]', e));
 })();
