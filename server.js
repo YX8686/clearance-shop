@@ -298,14 +298,20 @@ async function boot(){
   // 订单载入：优先从独立行 order:* 聚合（新方案，并发安全）；若无则回退旧 orders 大数组行并拆分迁移
   try {
     if(USE_SUPABASE){
-      // 修复 Supabase 单次查询 1000 行上限：分页拉取全部 order:* 行
-      let _all = []; let _perr = null;
-      for (let _off = 0; ; _off += 1000) {
-        const { data: _pg, error: _e } = await sb.from('shop_data').select('key,value').like('key','order:%').range(_off, _off + 999);
+      // 修复 Supabase 单次查询 1000 行硬上限：分页拉取全部 order:* 行
+      // Supabase 单次最多返回 1000 行（API 硬限制，无法提高），故按 1000/页循环翻页；
+      // SAFE_MAX_ORDER_ROWS 仅作无限循环护栏，远高于 2000，正常业务不会触顶。
+      const PAGE_SIZE = 1000;            // Supabase 单次返回上限（API 硬限制）
+      const SAFE_MAX_ORDER_ROWS = 20000; // 护栏：远高于 2000，防止极端异常下死循环
+      let _all = []; let _perr = null; let _off = 0;
+      while (_off < SAFE_MAX_ORDER_ROWS) {
+        const { data: _pg, error: _e } = await sb.from('shop_data').select('key,value').like('key','order:%').range(_off, _off + PAGE_SIZE - 1);
         if (_e) { _perr = _e; break; }
         if (_pg && _pg.length) _all.push(..._pg);
-        if (!_pg || _pg.length < 1000) break;
+        if (!_pg || _pg.length < PAGE_SIZE) break; // 本页没满，说明已拉到最后一批
+        _off += PAGE_SIZE;
       }
+      if (_off >= SAFE_MAX_ORDER_ROWS) console.warn('[loadOrders] 订单数已达护栏上限', SAFE_MAX_ORDER_ROWS, '，请检查是否异常');
       if(!_perr && _all.length){
         orders = _all.map(r=>r.value).filter(Boolean);
       } else {
@@ -620,14 +626,20 @@ function enrichOrderBundles(o){
 async function refreshOrdersFromCloud(){
   if(!USE_SUPABASE) return orders;
   try {
-    // 修复 Supabase 单次查询 1000 行上限：分页拉取全部 order:* 行
-    let _all = []; let _perr = null;
-    for (let _off = 0; ; _off += 1000) {
-      const { data: _pg, error: _e } = await sb.from('shop_data').select('key,value').like('key','order:%').range(_off, _off + 999);
+    // 修复 Supabase 单次查询 1000 行硬上限：分页拉取全部 order:* 行
+    // Supabase 单次最多返回 1000 行（API 硬限制，无法提高），故按 1000/页循环翻页；
+    // SAFE_MAX_ORDER_ROWS 仅作无限循环护栏，远高于 2000，正常业务不会触顶。
+    const PAGE_SIZE = 1000;            // Supabase 单次返回上限（API 硬限制）
+    const SAFE_MAX_ORDER_ROWS = 20000; // 护栏：远高于 2000，防止极端异常下死循环
+    let _all = []; let _perr = null; let _off = 0;
+    while (_off < SAFE_MAX_ORDER_ROWS) {
+      const { data: _pg, error: _e } = await sb.from('shop_data').select('key,value').like('key','order:%').range(_off, _off + PAGE_SIZE - 1);
       if (_e) { _perr = _e; break; }
       if (_pg && _pg.length) _all.push(..._pg);
-      if (!_pg || _pg.length < 1000) break;
+      if (!_pg || _pg.length < PAGE_SIZE) break; // 本页没满，说明已拉到最后一批
+      _off += PAGE_SIZE;
     }
+    if (_off >= SAFE_MAX_ORDER_ROWS) console.warn('[refreshOrdersFromCloud] 订单数已达护栏上限', SAFE_MAX_ORDER_ROWS, '，请检查是否异常');
     if(!_perr && _all.length) orders = _all.map(r=>r.value).filter(Boolean);
   } catch(e){ console.error('[refreshOrdersFromCloud]', e.message); }
   return orders;
