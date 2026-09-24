@@ -991,6 +991,7 @@ function _renderInner(){
     if(o.status==='已取消') acts=`<button class="btn-restore" onclick="restoreOrder('${o.id}')">核实重新成立，进入待发货</button>`;
     if(o.status==='已发货') acts=`<button class="btn-copy" onclick="copyShip('${o.id}')">复制发货信息</button>`;
     if(editable) acts+=swapBtnHtml(o.id);
+    acts+=`<button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${o.id}')">备注</button>`;
     const div=document.createElement('div'); div.className='card';
     const showPayTime = o.status==='待确认' || o.status==='待发货' || o.status==='待回传' || o.status==='已发货';
     const payLine=showPayTime?`<div class="line"><span class="k">付款时间</span>${fmtTime(o.paidAt)}</div>`:'';
@@ -1001,8 +1002,10 @@ function _renderInner(){
       <div class="line"><span class="k">微信号</span>${o.wechat?`<b style="color:#b8743f">${escapeHtml(o.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(o.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${o.address}</div>
+      ${o.shipCode?`<div class="line"><span class="k">客户编号</span><b style="color:#1f9d55">${escapeHtml(o.shipCode)}</b></div>`:''}
       ${payLine}
       <div class="items">${items}<div style="border-top:1px dashed #e0d6c8;margin-top:6px;padding-top:6px;font-weight:700">合计 ${money(o.total)}</div></div>
+      ${noteHtml(o)}
       ${o.status==='已发货'?('<div class="line"><span class="k">单号</span><b style="color:#1f9d55">'+o.tracking+'</b></div>'):''}
       <div class="acts">${acts}</div>`;
     list.appendChild(div);
@@ -1080,9 +1083,11 @@ function renderMergedPending(){
       <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
+      ${first.shipCode?`<div class="line"><span class="k">客户编号</span><b style="color:#1f9d55">${escapeHtml(first.shipCode)}</b></div>`:''}
       ${progressHtml}
       <div class="items">${orderBlocks}</div>
-      <div class="acts" style="flex-wrap:wrap;gap:8px">${swapBtnHtml(first.id)}<button class="btn-confirm" onclick="confirmPaidGroup(['${ids.join("','")}'])">客户已发截图，确认收款${group.length>1?`（${group.length}笔一起）`:''}</button></div>`;
+      ${noteHtml(first)}
+      <div class="acts" style="flex-wrap:wrap;gap:8px">${swapBtnHtml(first.id)}<button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button><button class="btn-confirm" onclick="confirmPaidGroup(['${ids.join("','")}'])">客户已发截图，确认收款${group.length>1?`（${group.length}笔一起）`:''}</button></div>`;
     list.appendChild(div);
   });
 }
@@ -1170,8 +1175,10 @@ function renderMergedShip(){
       <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
+      ${first.shipCode?`<div class="line"><span class="k">客户编号</span><b style="color:#1f9d55">${escapeHtml(first.shipCode)}</b></div>`:''}
       ${orderBlocks}
-      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-ship" onclick="shipGroup(['${ids.join("','")}'])">填写单号发货</button> ${swapBtnHtml(first.id)}</div>`;
+      ${noteHtml(first)}
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-copy" style="background:#fff8dc;color:#a05200;border-color:#f0d060" onclick="copyShipCodeGroup(['${ids.join("','")}'])">生成编号文本</button> <button class="btn-ship" onclick="shipGroup(['${ids.join("','")}'])">填写单号发货</button> ${swapBtnHtml(first.id)}<button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
     list.appendChild(div);
   });
   // 设置 indeterminate 状态（HTML 属性不会自动反映）
@@ -1254,8 +1261,10 @@ function renderTodayShip(){
       <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
+      ${first.shipCode?`<div class="line"><span class="k">客户编号</span><b style="color:#1f9d55">${escapeHtml(first.shipCode)}</b></div>`:''}
       ${suborderBlocks}
-      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button></div>`;
+      ${noteHtml(first)}
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-copy" style="background:#fff8dc;color:#a05200;border-color:#f0d060" onclick="copyShipCodeGroup(['${ids.join("','")}'])">生成编号文本</button><button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
     list.appendChild(div);
   });
 }
@@ -1308,8 +1317,10 @@ function renderReturnZone(){
       <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
+      ${first.shipCode?`<div class="line"><span class="k">客户编号</span><b style="color:#1f9d55">${escapeHtml(first.shipCode)}</b></div>`:''}
       <div class="items">${itemsHtml}</div>
-      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button><button class="btn-confirm" onclick="openManualTrackingModal(['${ids.join("','")}'])">✏️ 手动填单号</button></div>`;
+      ${noteHtml(first)}
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-copy" style="background:#fff8dc;color:#a05200;border-color:#f0d060" onclick="copyShipCodeGroup(['${ids.join("','")}'])">生成编号文本</button><button class="btn-confirm" onclick="openManualTrackingModal(['${ids.join("','")}'])">✏️ 手动填单号</button><button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
     list.appendChild(div);
   });
 }
@@ -1341,6 +1352,11 @@ function formatShipItem(i){
   const u=i.unit?(' '+i.unit):'';
   return `${i.name||''}${i.qty>1?' ×'+i.qty:''}${u}`;
 }
+// 渲染订单卡片的「备注」行（有备注才显示）
+function noteHtml(o){
+  if(!o.note || !String(o.note).trim()) return '';
+  return `<div class="line"><span class="k">备注</span><span style="color:#b8743f">${escapeHtml(String(o.note).trim())}</span></div>`;
+}
 
 // ===== 订单商品调整：删除 / 换货补货 / 新建手工单 =====
 const EDITABLE_STATUSES=['待确认','待发货','今日可发','待回传'];
@@ -1358,6 +1374,41 @@ function showModal(innerHtml){
   document.body.appendChild(modalEl);
 }
 function closeModal(){ if(modalEl){ modalEl.remove(); modalEl=null; } }
+
+// 编辑订单备注
+function editNote(id){
+  const o=ORDERS.find(x=>x.id===id);
+  if(!o) return;
+  showModal(`
+    <h3>订单备注</h3>
+    <div class="modal-sub">订单 ${o.id} · ${escapeHtml(o.name||'')}</div>
+    <div class="modal-fld"><label>备注内容（生成发货文本时会附在最下方）</label><textarea id="noteText" rows="3" style="width:100%;resize:vertical">${escapeHtml(o.note||'')}</textarea></div>
+    <div class="modal-actions">
+      <button class="btn-modal-cancel" onclick="closeModal()">取消</button>
+      <button class="btn-modal-ok" onclick="__saveNote('${o.id}')">保存</button>
+    </div>
+  `);
+}
+window.__saveNote=async(id)=>{
+  const o=ORDERS.find(x=>x.id===id); if(!o) return;
+  const note=String(document.getElementById('noteText').value||'').trim().slice(0,500);
+  const prev=JSON.parse(JSON.stringify(o));
+  pendingIds.add(id);   // ★关键保护：15s 轮询在飞行途中会把刚保存的备注冲掉（原缺此保护）
+  o.note=note; render();
+  try{
+    const r=await fetch('/api/orders/'+id+'/contact',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.message||d.error||'保存失败');
+    if(d.order){ const idx=ORDERS.findIndex(x=>x.id===id); if(idx>=0) ORDERS[idx]=d.order; }
+    render();
+    closeModal(); toast('备注已保存');
+  }catch(e){
+    Object.assign(o,prev); render();
+    toast('备注保存失败：'+e.message);
+  }finally{
+    setTimeout(()=>{ pendingIds.delete(id); }, 2000);  // 云端确认后再等一小会儿才放开，避免竞态
+  }
+};
 
 // 乐观更新订单商品并同步云端（统一入口：删商品/换货/补货都走这）
 // 2026-09-09 修复：成功后强制 load(true) 从服务端拉权威 ORDERS，
@@ -1845,7 +1896,24 @@ function copyShipGroup(ids){
       text+=formatShipItem(i)+'\n';
     });
   });
+  const notes=group.map(o=>o.note).filter(Boolean);
+  if(notes.length) text+=`\n备注：${notes.join('；')}`;
   navigator.clipboard.writeText(text).then(()=>toast('发货文本已复制，去微信粘贴')).catch(()=>{ window.prompt('复制下面内容：',text); });
+}
+// 编号版发货文本：首行为唯一编号（A1/A2...），方便发货员只把编号贴到快递面单，明细留在手机里核对
+function copyShipCodeGroup(ids){
+  const group=ORDERS.filter(o=>ids.includes(o.id)).sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
+  const first=group[0];
+  const code=first.shipCode || '未分配编号';
+  let text=`${code}\n${first.name} ${first.phone}\n${first.address}\n\n`;
+  group.forEach(o=>{
+    o.items.forEach(i=>{
+      text+=formatShipItem(i)+'\n';
+    });
+  });
+  const notes=group.map(o=>o.note).filter(Boolean);
+  if(notes.length) text+=`\n备注：${notes.join('；')}`;
+  navigator.clipboard.writeText(text).then(()=>toast('编号发货文本已复制：'+code)).catch(()=>{ window.prompt('复制下面内容：',text); });
 }
 // 金额核对：合并填写单号前必须展示每笔子订单金额及合并合计，详见 business_rules.md §2
 // 乐观 UI：点完立即本地全部流转到已发货并跳转，逐笔后台同步；单笔失败自动回滚
