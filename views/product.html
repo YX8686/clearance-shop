@@ -538,9 +538,10 @@ function closeSkuModal(){ document.getElementById('skuModal').classList.remove('
 // 2026-09-09 新增：SKU 卡片渲染需要转义，避免名称里带引号/尖括号时破坏 HTML
 function escapeHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function imgCacheBust(url){
-  if(!url || url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('/assets/')) return url||'/assets/products/default.svg';
-  const sep = url.indexOf('?')>=0 ? '&' : '?';
-  return url + sep + 't=' + Date.now();
+  if(!url) return '/assets/products/default.svg';
+  if(url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('/assets/')) return url;
+  // 2026-09-24：上传文件名已唯一化，无需每次刷新加 Date.now()，避免拖慢网速。
+  return url;
 }
 function renderSkuOptions(p){
   const box = document.getElementById('skuOpts');
