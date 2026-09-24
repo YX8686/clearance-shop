@@ -298,9 +298,16 @@ async function boot(){
   // 订单载入：优先从独立行 order:* 聚合（新方案，并发安全）；若无则回退旧 orders 大数组行并拆分迁移
   try {
     if(USE_SUPABASE){
-      const { data, error } = await sb.from('shop_data').select('key,value').like('key','order:%');
-      if(!error && data && data.length){
-        orders = data.map(r=>r.value).filter(Boolean);
+      // 修复 Supabase 单次查询 1000 行上限：分页拉取全部 order:* 行
+      let _all = []; let _perr = null;
+      for (let _off = 0; ; _off += 1000) {
+        const { data: _pg, error: _e } = await sb.from('shop_data').select('key,value').like('key','order:%').range(_off, _off + 999);
+        if (_e) { _perr = _e; break; }
+        if (_pg && _pg.length) _all.push(..._pg);
+        if (!_pg || _pg.length < 1000) break;
+      }
+      if(!_perr && _all.length){
+        orders = _all.map(r=>r.value).filter(Boolean);
       } else {
         const arr = await loadKV('orders', seedOrders);
         orders = Array.isArray(arr)?arr:[];
@@ -613,8 +620,15 @@ function enrichOrderBundles(o){
 async function refreshOrdersFromCloud(){
   if(!USE_SUPABASE) return orders;
   try {
-    const { data, error } = await sb.from('shop_data').select('key,value').like('key','order:%');
-    if(!error && data) orders = data.map(r=>r.value).filter(Boolean);
+    // 修复 Supabase 单次查询 1000 行上限：分页拉取全部 order:* 行
+    let _all = []; let _perr = null;
+    for (let _off = 0; ; _off += 1000) {
+      const { data: _pg, error: _e } = await sb.from('shop_data').select('key,value').like('key','order:%').range(_off, _off + 999);
+      if (_e) { _perr = _e; break; }
+      if (_pg && _pg.length) _all.push(..._pg);
+      if (!_pg || _pg.length < 1000) break;
+    }
+    if(!_perr && _all.length) orders = _all.map(r=>r.value).filter(Boolean);
   } catch(e){ console.error('[refreshOrdersFromCloud]', e.message); }
   return orders;
 }
