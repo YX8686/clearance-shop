@@ -376,13 +376,14 @@ function queryTracking(no){
 // 活动分类（与商家后台下拉框保持一致；CONFIG.hiddenCategories 中的分类会被隐藏）
 const CATEGORIES = ['全部','特惠单品','明星套装','明星组合','高功效私人定制','特殊'];
 // 2026-09-12 活动波次分组：波次进行中，分类栏只显示本波分组（其余分类全部隐藏）
+// ⚠️ 2026-09-24 关闭：商家反馈买家端应始终显示固定分类，不要因 CONFIG.activeWave 变化而切换
 const WAVES = {
   w1:{title:'第一波', groups:[['w1g1','第1组特惠'],['w1g2','第2组特惠'],['w1g3','第3组特惠']]},
   w2:{title:'第二波', groups:[['w2g1','第二波A组'],['w2g2','第二波B组']]},
   w3:{title:'第三波', groups:[['w3g1','定制专区'],['w3g2','盲盒']]},
   w4:{title:'返场捡漏', groups:[['w4g1','返场爆品'],['ALL','全部返场']]}
 };
-function activeWave(){ return (CONFIG && CONFIG.activeWave && WAVES[CONFIG.activeWave]) ? CONFIG.activeWave : ''; }
+function activeWave(){ return ''; }
 let currentCat = '全部';
 function hiddenCategories(){ return (CONFIG && Array.isArray(CONFIG.hiddenCategories))?CONFIG.hiddenCategories:[]; }
 function isProductHidden(p){
@@ -561,9 +562,11 @@ function closeSkuModal(){ document.getElementById('skuModal').classList.remove('
 // 2026-09-09 新增：SKU 卡片渲染需要转义，避免名称里带引号/尖括号时破坏 HTML
 function escapeHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function imgCacheBust(url){
-  if(!url || url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('/assets/')) return url||'/assets/products/default.svg';
-  const sep = url.indexOf('?')>=0 ? '&' : '?';
-  return url + sep + 't=' + Date.now();
+  if(!url) return '/assets/products/default.svg';
+  if(url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('/assets/')) return url;
+  // 2026-09-24：上传文件名已唯一化（含时间戳+随机码），URL 变化即可破坏缓存；
+  // 不再每次刷新都加 Date.now()，让浏览器/CDN 可以正常缓存，避免网速变慢。
+  return url;
 }
 function renderSkuOptions(){
   const p=curSkuProd; if(!p) return;
