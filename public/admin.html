@@ -2418,11 +2418,12 @@ async function handleSkuBatchUpload(input){
   toast(fail ? `批量上传完成：成功 ${ok} 张，失败 ${fail} 张` : `批量上传完成：${ok} 张已按顺序分配`);
 }
 function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-// 给图片 URL 加时间戳，避免 Supabase Storage / 浏览器因文件名没变而继续显示缓存旧图
+// 给图片 URL 兜底：空 URL 返回默认图；上传文件名已唯一化，无需每次刷新加 Date.now()
 function imgCacheBust(url){
-  if(!url || url.startsWith('data:') || url.startsWith('blob:')) return url||'/assets/products/default.svg';
-  const sep = url.indexOf('?')>=0 ? '&' : '?';
-  return url + sep + 't=' + Date.now();
+  if(!url) return '/assets/products/default.svg';
+  if(url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('/assets/')) return url;
+  // 2026-09-24：不再加 Date.now()，让浏览器/CDN 正常缓存，避免买家端网速变慢。
+  return url;
 }
 function stripTags(s){ return String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').trim(); }
 function clearDesc(){ const t=document.getElementById('pDesc'); t.innerHTML=''; updateDescCount(); try{ t.focus(); }catch(e){} }
