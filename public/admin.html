@@ -1,8 +1,12 @@
 <!DOCTYPE html>
+<!-- BUILD-MARKER: clearance-shop admin 2026-09-10-v4 (单点隐藏兜底 / 5s缓存 / 双force no-cache / subtitle oninput) -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>商家后台</title>
 <link rel="icon" href="/assets/logo.ico">
 <script src="/business_rules.js"></script>
@@ -159,7 +163,8 @@
   .modal-fld{margin:10px 0}
   .modal-fld label{display:block;font-size:12px;color:#7a6f62;margin-bottom:4px}
   .modal-fld input,.modal-fld select{width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #e0d6c8;border-radius:6px;font-size:14px}
-  .modal-edititem{display:flex;align-items:center;gap:6px;padding:6px 8px;background:#faf7f2;border-radius:6px;margin:6px 0;font-size:13px}
+  .modal-edititem{display:flex;align-items:center;gap:6px;padding:6px 8px;background:#faf7f2;border-radius:6px;margin:6px 0;font-size:13px;transition:background 1.2s ease-out}
+  .modal-edititem.manual-just-added{background:#d4f5d9 !important}
   .modal-edititem .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .modal-edititem .pr{color:#7a6f62;font-size:12px;white-space:nowrap}
   .modal-edititem .del{border:none;background:#f3e9e0;color:#c0392b;width:20px;height:20px;border-radius:50%;cursor:pointer;font-size:13px;padding:0}
@@ -223,8 +228,10 @@
   <div class="top"><h1>商家后台</h1><div class="stat" id="stat"></div></div>
   <div class="wrap">
     <details>
-      <summary>⚙️ 店铺设置（店铺名 / 收款码）</summary>
+      <summary>⚙️ 店铺设置（店铺名 / 联系人 / 公告 / 收款码）</summary>
       <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">店铺名</span><input type="text" id="sName"></div>
+      <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">联系人</span><input type="text" id="sContact"></div>
+      <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">公告</span><input type="text" id="sAnn"></div>
       <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">默认收款码</span><input type="file" id="sQr" accept="image/*"><button onclick="uploadQr()">上传</button><img id="sQrPrev" style="display:none"></div>
       <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">微信收款码</span><input type="file" id="sWc" accept="image/*"><button onclick="uploadWechat()">上传</button><img id="sWcPrev" style="display:none"></div>
       <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">支付宝收款码</span><input type="file" id="sAli" accept="image/*"><button onclick="uploadAlipay()">上传</button><img id="sAliPrev" style="display:none"></div>
@@ -234,12 +241,12 @@
       <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">活动开始时间</span><input type="datetime-local" id="sStart" style="flex:1;border:1px solid #e0d6c8;border-radius:8px;padding:9px;font-size:13px;min-width:200px"><span style="font-size:12px;color:#9a8f82">留空则保存后立即倒计时</span></div>
       <div class="setrow"><span style="font-size:13px;color:#7a6f62;width:80px">活动截止时间</span><input type="datetime-local" id="sDeadline" style="flex:1;border:1px solid #e0d6c8;border-radius:8px;padding:9px;font-size:13px;min-width:200px"><span style="font-size:12px;color:#9a8f82">留空则不显示倒计时</span></div>
       <div class="setrow" style="align-items:flex-start">
-        <span style="font-size:13px;color:#7a6f62;width:80px;flex-shrink:0;padding-top:6px">公告文案</span>
+        <span style="font-size:13px;color:#7a6f62;width:80px;flex-shrink:0;padding-top:6px">倒计时后半句</span>
         <div style="flex:1;display:flex;flex-direction:column;gap:8px">
-          <textarea id="sCdPhrases" rows="4" style="flex:1;border:1px solid #e0d6c8;border-radius:8px;padding:9px;font-size:13px;min-width:200px;resize:vertical" placeholder="每行一句公告，按先后顺序自动轮播（显示在买家端顶部滚动公告栏）"></textarea>
+          <textarea id="sCdPhrases" rows="4" style="flex:1;border:1px solid #e0d6c8;border-radius:8px;padding:9px;font-size:13px;min-width:200px;resize:vertical" placeholder="每行一句，按时间先后：第1段显示第1句，第2段显示第2句…"></textarea>
           <div style="display:flex;align-items:center;gap:6px;font-size:13px;color:#5b5147">
             <span>每段时长</span><input type="number" id="sCdSeg" min="1" max="8760" value="12" style="width:64px;border:1px solid #e0d6c8;border-radius:6px;padding:5px;font-size:13px">小时
-            <span style="font-size:12px;color:#9a8f82">（每 N 小时自动换下一句；例：12小时换一句，48小时轮完4句）</span>
+            <span style="font-size:12px;color:#9a8f82">（活动总时长 ÷ 段数 = 自动切换；例：48小时÷4段=12）</span>
           </div>
           <div style="display:flex;align-items:center;gap:6px;font-size:13px;color:#5b5147">
             <span>手动指定</span>
@@ -262,18 +269,18 @@
       <div class="setrow" style="align-items:flex-start">
         <span style="font-size:13px;color:#7a6f62;width:80px;flex-shrink:0;padding-top:6px">活动排期</span>
         <div style="flex:1;display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:13px;color:#5b5147">
-          <div id="waveSelect" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;border:1px solid #e0d6c8;border-radius:6px;padding:5px 10px;background:#fff"><input type="checkbox" value="none" class="wave-cb" onchange="onWaveChange(this)"> 日常</label>
-            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;border:1px solid #e0d6c8;border-radius:6px;padding:5px 10px;background:#fff"><input type="checkbox" value="w1" class="wave-cb"> 第一波</label>
-            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;border:1px solid #e0d6c8;border-radius:6px;padding:5px 10px;background:#fff"><input type="checkbox" value="w2" class="wave-cb"> 第二波</label>
-            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;border:1px solid #e0d6c8;border-radius:6px;padding:5px 10px;background:#fff"><input type="checkbox" value="w3" class="wave-cb"> 第三波</label>
-            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;border:1px solid #e0d6c8;border-radius:6px;padding:5px 10px;background:#fff"><input type="checkbox" value="w4" class="wave-cb" onchange="onWaveChange(this)"> 返场</label>
-          </div>
+          <select id="waveSelect" style="border:1px solid #e0d6c8;border-radius:6px;padding:6px;font-size:13px;min-width:170px">
+            <option value="none">日常（不开波次）</option>
+            <option value="w1">第一波（3组特惠）</option>
+            <option value="w2">第二波（A组 / B组）</option>
+            <option value="w3">第三波（定制 / 盲盒）</option>
+            <option value="w4">返场捡漏</option>
+          </select>
           <input id="waveHours" type="number" min="1" step="1" placeholder="本波时长(小时)" style="border:1px solid #e0d6c8;border-radius:6px;padding:6px;font-size:13px;width:140px">
           <button onclick="applyWave()" style="border:1px solid #b8743f;background:#b8743f;color:#fff;border-radius:6px;padding:7px 14px;font-size:13px;cursor:pointer">应用到买家端</button>
         </div>
       </div>
-      <div style="font-size:12px;color:#9a8f82;padding:0 0 8px 88px">切换波次：选中的波次商品自动上架、其余自动隐藏，买家端分类栏只显示本波分组。可同时选择多个波次（如第二波+第三波），倒计时文案显示第一个选中的波次。填了时长会同步生成倒计时（不填则沿用原倒计时）。</div>
+      <div style="font-size:12px;color:#9a8f82;padding:0 0 8px 88px">切换波次：本波商品自动上架、其余自动隐藏，买家端分类栏只显示本波分组。填了时长会同步生成倒计时（不填则沿用原倒计时）。</div>
       <div class="setrow"><button onclick="saveSettings()">保存设置</button></div>
     </details>
 
@@ -384,19 +391,19 @@
             <option value="特殊">特殊</option>
           </select>
         </div>
-                  <div style="flex:1"><label>活动分组（波次）</label>
-                    <select id="pWaveGroup" style="width:100%;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:14px;background:#fff">
-                      <option value="">不参与活动</option>
-                      <option value="w1g1">第一波 · 第1组特惠</option>
-                      <option value="w1g2">第一波 · 第2组特惠</option>
-                      <option value="w1g3">第一波 · 第3组特惠</option>
-                      <option value="w2g1">第二波 · A组</option>
-                      <option value="w2g2">第二波 · B组</option>
-                      <option value="w3g1">第三波 · 定制专区</option>
-                      <option value="w3g2">第三波 · 盲盒</option>
-                      <option value="w4g1">返场 · 爆品</option>
-                    </select>
-                  </div>
+        <div style="flex:1"><label>活动分组（波次）</label>
+          <select id="pWaveGroup" style="width:100%;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:14px;background:#fff">
+            <option value="">不参与活动</option>
+            <option value="w1g1">第一波 · 第1组特惠</option>
+            <option value="w1g2">第一波 · 第2组特惠</option>
+            <option value="w1g3">第一波 · 第3组特惠</option>
+            <option value="w2g1">第二波 · A组</option>
+            <option value="w2g2">第二波 · B组</option>
+            <option value="w3g1">第三波 · 定制专区</option>
+            <option value="w3g2">第三波 · 盲盒</option>
+            <option value="w4g1">返场 · 爆品</option>
+          </select>
+        </div>
       </div>
       <div class="form-row">
         <label>产品描述（买家看到的完整商品说明：支持图文混排——点「🖼 插图」在光标处插图，也可直接把图片粘贴进来）</label>
@@ -451,8 +458,13 @@
       <div class="form-row">
         <label>SKU / 活动选项（买家可选不同规格）</label>
         <div id="skuList" style="display:flex;flex-direction:column;gap:10px;margin-bottom:10px"></div>
-        <button type="button" onclick="addSkuRow()" style="border:1px solid #b8743f;background:#fff;color:#b8743f;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer">+ 添加 SKU / 活动选项</button>
-        <div style="font-size:12px;color:#9a8f82;margin-top:8px">每个 SKU 可独立设置名称、价格、库存、发货明细。添加后，买家购买时必须先选择规格。</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button type="button" onclick="addSkuRow()" style="border:1px solid #b8743f;background:#fff;color:#b8743f;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer">+ 添加 SKU / 活动选项</button>
+          <!-- 2026-09-09 新增：一次选多张图，按 SKU 顺序批量分配主图（免去逐个上传） -->
+          <button type="button" onclick="uploadSkuImagesBatch()" style="border:1px solid #1f9d55;background:#fff;color:#1f9d55;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer">📷 批量上传主图（按顺序分配）</button>
+          <input type="file" id="skuBatchImgFile" accept="image/*" multiple style="display:none" onchange="handleSkuBatchUpload(this)">
+        </div>
+        <div style="font-size:12px;color:#9a8f82;margin-top:8px">每个 SKU 可独立设置名称、价格、库存、发货明细。添加后，买家购买时必须先选择规格。<br>「批量上传主图」：按住 Ctrl/Shift 一次选多张图，第 1 张给第 1 个 SKU、第 2 张给第 2 个 SKU，依次类推；图少的 SKU 保持原样。留空则用产品主图。</div>
       </div>
       <div class="form-row">
         <label>产品主图</label>
@@ -545,34 +557,52 @@ function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg
 function money(n){ return '¥'+Number(n).toLocaleString('zh-CN'); }
 
 let isLoading=false;
-let loadingTick=null, loadingStart=0;
 function setLoading(v){
   isLoading=v;
   const list=document.getElementById('list');
   if(v){
-    list.innerHTML='<div class="empty" id="loadingTip">⏳ 正在从云端同步订单数据，请稍候… <span id="loadSec">0</span> 秒</div>';
-    loadingStart=Date.now();
-    if(loadingTick) clearInterval(loadingTick);
-    loadingTick=setInterval(()=>{
-      const sec=Math.floor((Date.now()-loadingStart)/1000);
-      const el=document.getElementById('loadSec');
-      if(el) el.textContent=sec;
-    }, 1000);
-  } else {
-    if(loadingTick){ clearInterval(loadingTick); loadingTick=null; }
+    // 2026-09-09 体验优化：第一次冷启动可能要等 30-60s，
+    //   旧版只显示「请稍候…」，用户不知道在不在等、要不要刷新，
+    //   容易被误判「卡了」反复刷新。这里加秒级倒计时 + 友好说明 + 手动刷新按钮。
+    const _startAt=Date.now();
+    list.innerHTML=`
+      <div class="empty" id="loadingTip" style="padding:36px 20px;line-height:1.9;text-align:left;max-width:520px;margin:20px auto">
+        <div style="font-size:16px;color:#5d4f3f">⏳ 正在从云端同步订单数据…</div>
+        <div style="font-size:13px;color:#9a8f82;margin-top:10px">
+          首次打开云端需要「唤醒」，可能要 <b>30-60 秒</b>，请耐心等一下。<br>
+          唤醒后第二次打开会很快。如果一直停留，点下面的「立即刷新」手动重试。
+        </div>
+        <div id="loadingCounter" style="font-size:13px;color:#b8743f;margin-top:12px;font-weight:500">已等待 0 秒</div>
+        <div style="margin-top:14px">
+          <button class="btn-primary" onclick="location.reload()">🔄 立即刷新</button>
+        </div>
+      </div>`;
+    if(window._loadingTick){ clearInterval(window._loadingTick); }
+    const tick=()=>{
+      const el=document.getElementById('loadingCounter');
+      if(!el) return;
+      const sec=Math.floor((Date.now()-_startAt)/1000);
+      el.textContent='已等待 '+sec+' 秒'+(sec>=15?'（云端还在唤醒，再给点时间…）':'');
+    };
+    window._loadingTick=setInterval(tick, 1000);
+    tick();
+  }else{
+    if(window._loadingTick){ clearInterval(window._loadingTick); window._loadingTick=null; }
   }
 }
 let firstLoad=true;
 let loadTimer=null;
-async function load(silent, isRetry){
+async function load(silent){
+  window._lastLoadAt = Date.now(); // 供「切回页面立即刷新」节流判断：距上次拉取多久
   // 第一优先：订单数据（商家最关心），先渲染，不等设置/产品/图库
   // 仅首次打开显示 loading 提示；后续刷新（自动轮询/操作后）静默更新，避免页面闪烁
-  if(firstLoad && !silent && !isRetry){ setLoading(true); }
+  if(firstLoad && !silent){ setLoading(true); }
   // 若上一轮询还没完成，先 abort 掉，避免并发请求堆积
   if(loadTimer){ clearTimeout(loadTimer); loadTimer=null; }
   const _ctrl=new AbortController();
-  const timeoutMs = (firstLoad && !silent) ? 45000 : 25000;
-  loadTimer = setTimeout(()=>{ _ctrl.abort(); loadTimer=null; }, timeoutMs);
+  // 2026-09-09：Render 免费层冷启动可达 30-60s，把超时从 25s 拉到 80s，
+  // 并在首次加载遭遇超时时自动重试一次（极可能是冷启动未结束）
+  loadTimer = setTimeout(()=>{ _ctrl.abort(); loadTimer=null; },80000);
   try{
     const res=await fetch('/api/orders',{signal:_ctrl.signal});
     clearTimeout(loadTimer); loadTimer=null;
@@ -582,36 +612,29 @@ async function load(silent, isRetry){
     ORDERS = o.map(s => pendingIds.has(s.id) ? (ORDERS.find(l=>l.id===s.id) || s) : s);
   }catch(e){
     clearTimeout(loadTimer); loadTimer=null;
-    // 首次加载失败自动重试一次（Supabase 免费层冷启动常抖动）
-    if(firstLoad && !silent && !isRetry){
-      console.log('首次加载失败，2s 后自动重试：', e.message || e);
-      setTimeout(()=>load(silent, true), 2000);
-      return;
+    const isAbort = (e.name==='AbortError' || (e.message||'').includes('aborted'));
+    // 首次加载超时 → 冷启动兜底：自动重试一次（仅一次，避免死循环）
+    if(firstLoad && !silent && isAbort && !window._loadColdRetried){
+      window._loadColdRetried=true;
+      toast('云端正在唤醒，自动重试中…');
+      await new Promise(r=>setTimeout(r,1500));
+      return load(silent);
     }
     // 轮询失败时静默保留旧数据，只有首次加载/用户手动刷新才显示错误
     if(firstLoad && !silent){
       const list=document.getElementById('list');
-      const msg = (e.name==='AbortError' || e.message.includes('aborted')) ? '请求超时，请检查网络或重试' : e.message;
+      const msg = isAbort ? '云端响应较慢（已等待 80 秒）' : e.message;
       list.innerHTML='<div class="empty" style="color:#e74c3c">⚠️ 订单数据加载失败（'+msg+'）<br><br><button class="btn-primary" onclick="load()">重新加载</button></div>';
       setLoading(false);
     }
     firstLoad=false;
-    // fix45（2026-09-21）：订单接口抖动/超时绝不能连累产品数据刷新。
-    // 以前这里直接 return —— /api/orders 一旦慢或失败，loadOthers() 永不执行，
-    // 浏览器内存 PRODUCTS 会一直停在旧值，症状正是「保存成功、再打开还是旧的」。
-    loadOthersSafely();
     return;
   }
   firstLoad=false;
   setLoading(false);
   render();
   // 其余数据并行加载，不阻塞订单显示
-  loadOthersSafely();
-}
-// 安全包装：任一接口失败只告警，不抛未捕获异常，也不影响订单区渲染
-function loadOthersSafely(){
-  try{ return Promise.resolve(loadOthers()).catch(e=>console.warn('loadOthers 失败（保留旧数据）：', (e&&e.message)||e)); }
-  catch(e){ console.warn('loadOthers 异常：', (e&&e.message)||e); }
+  loadOthers();
 }
 function refreshCdManualOptions(sel){
   const ta=document.getElementById('sCdPhrases');
@@ -623,6 +646,38 @@ function refreshCdManualOptions(sel){
   sel0.innerHTML='<option value="-1">自动切换</option>';
   for(let i=1;i<=n;i++){ const o=document.createElement('option'); o.value=String(i-1); o.textContent='第'+i+'句'; if((i-1)===cur) o.selected=true; sel0.appendChild(o); }
 }
+// 隐藏分类：勾选即时落库（防 15s 轮询覆盖、免去「忘记点保存设置」造成错觉）。
+// 仅 POST hiddenCategories 一个字段，不会改动其它配置。
+// 2026-09-10 修正：原实现在「上一次保存还没回来」时直接 return，会把用户后勾的分类
+//   静默丢掉（表现为「只成功隐藏 1 个」）。改为 dirty 排队 + do/while 补跑，一次都不丢。
+let _hiddenSaveTimer = null;
+let _hiddenSaving = false;
+let _hiddenDirty = false;
+function scheduleHiddenCatsSave(){
+  if(_hiddenSaveTimer) clearTimeout(_hiddenSaveTimer);
+  _hiddenSaveTimer = setTimeout(saveHiddenCatsNow, 500);
+}
+async function saveHiddenCatsNow(){
+  _hiddenSaveTimer = null;
+  if(_hiddenSaving){ _hiddenDirty = true; return; } // 排队，绝不丢弃（原来这里是静默 return，会丢单）
+  _hiddenSaving = true;
+  try{
+    do{
+      _hiddenDirty = false;
+      const list = Array.from(document.querySelectorAll('.cat-hide-cb:checked')).map(cb=>cb.value);
+      CONFIG.hiddenCategories = list;
+      let res = null, lastErr = '';
+      for(let i=0;i<2;i++){ // Supabase 免费层偶发抖动，重试 1 次
+        try{ res = await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hiddenCategories:list})}); if(res && res.ok) break; }
+        catch(e){ lastErr = e.message; res = null; }
+        if(i===0) await new Promise(r=>setTimeout(r,600));
+      }
+      if(res && res.ok){ toast(list.length? ('已隐藏 '+list.length+' 个分类（买家端即时生效）') : '已恢复显示全部分类'); }
+      else { toast('隐藏分类保存失败'+(lastErr?('：'+lastErr):'')); }
+    }while(_hiddenDirty); // 请求期间又有新勾选 → 再跑一轮，保证最终态落库
+  }catch(e){ toast('隐藏分类保存失败：'+e.message); }
+  finally{ _hiddenSaving = false; _hiddenDirty = false; }
+}
 async function loadOthers(){
   const [c,p,g]=await Promise.all([
     fetch('/api/config').then(r=>r.json()),
@@ -633,6 +688,8 @@ async function loadOthers(){
   // 店铺设置表单只回填一次：后续 15s 轮询不再覆盖用户正在编辑的内容
   if(!configFormFilled){
     document.getElementById('sName').value=CONFIG.shopName||'';
+    document.getElementById('sContact').value=CONFIG.contactName||'';
+    document.getElementById('sAnn').value=CONFIG.announcement||'';
     document.getElementById('sBankName').value=CONFIG.bankName||'';
     document.getElementById('sBankAccount').value=CONFIG.bankAccount||'';
     document.getElementById('sBankHolder').value=CONFIG.bankHolder||'';
@@ -642,12 +699,19 @@ async function loadOthers(){
     document.getElementById('sCdSeg').value=CONFIG.countdownSegmentHours||12;
     refreshCdManualOptions(CONFIG.countdownManualIndex);
     document.getElementById('sCdPhrases').addEventListener('input', refreshCdManualOptions);
-    const activeWaves=String(CONFIG.activeWave||'none').split(',').map(s=>s.trim()).filter(Boolean);
-    document.querySelectorAll('.wave-cb').forEach(cb=>{ cb.checked=activeWaves.includes(cb.value); });
+
+    // 隐藏分类勾选：只首次回填，之后由用户自由切换并即时保存（不被 15s 轮询覆盖）
+    const initHidden=Array.isArray(CONFIG.hiddenCategories)?CONFIG.hiddenCategories:[];
+    document.querySelectorAll('.cat-hide-cb').forEach(cb=>{ cb.checked=initHidden.includes(cb.value); });
+    document.querySelectorAll('.cat-hide-cb').forEach(cb=>{
+      cb.addEventListener('change', scheduleHiddenCatsSave);
+    });
+    // 2026-09-12：当前活动波次回填
+    const ws=document.getElementById('waveSelect');
+    if(ws) ws.value=CONFIG.activeWave||'none';
+
     configFormFilled=true;
   }
-  const hiddenCats=Array.isArray(CONFIG.hiddenCategories)?CONFIG.hiddenCategories:[];
-  document.querySelectorAll('.cat-hide-cb').forEach(cb=>{ cb.checked=hiddenCats.includes(cb.value); });
 
   // 避免 15s 轮询导致产品列表不断重建、图片重载、页面闪烁
   const modalOpen=document.getElementById('prodModal')?.classList.contains('show');
@@ -837,7 +901,14 @@ function copyBuyerStats(){
   if(navigator.clipboard){ navigator.clipboard.writeText(text).then(()=>toast('统计已复制，可直接粘贴到微信')).catch(()=>window.prompt('长按复制：',text)); }
   else window.prompt('长按复制：',text);
 }
+// 2026-09-09 修复：render() 会执行 list.innerHTML='' 整表重建，浏览器随之把滚动位置归零，
+//   视觉上就是「页面跳一下、看不清」。这里在重建前后保持滚动位置不动。
 function render(){
+  const _sy = window.scrollY || document.documentElement.scrollTop || 0;
+  _renderInner();
+  try{ window.scrollTo(0, _sy); }catch(e){}
+}
+function _renderInner(){
   renderSalesSummary();
   renderBuyerStats();
   const waits=ORDERS.filter(o=>o.status==='待确认').length;
@@ -876,7 +947,6 @@ function render(){
     if(o.status==='已取消') acts=`<button class="btn-restore" onclick="restoreOrder('${o.id}')">核实重新成立，进入待发货</button>`;
     if(o.status==='已发货') acts=`<button class="btn-copy" onclick="copyShip('${o.id}')">复制发货信息</button>`;
     if(editable) acts+=swapBtnHtml(o.id);
-    acts+=`<button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${o.id}')">备注</button>`;
     const div=document.createElement('div'); div.className='card';
     const showPayTime = o.status==='待确认' || o.status==='待发货' || o.status==='待回传' || o.status==='已发货';
     const payLine=showPayTime?`<div class="line"><span class="k">付款时间</span>${fmtTime(o.paidAt)}</div>`:'';
@@ -884,12 +954,11 @@ function render(){
       <div class="h"><span class="oid">${o.id}</span><span class="st ${cls}">${lab}</span></div>
       <div class="line"><span class="k">下单时间</span>${fmtTime(o.createdAt)}</div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(o.name||'')}</div>
-      <div class="line"><span class="k">微信号</span>${wechatHtml(o,[o.id])}</div>
+      <div class="line"><span class="k">微信号</span>${o.wechat?`<b style="color:#b8743f">${escapeHtml(o.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(o.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${o.address}</div>
       ${payLine}
       <div class="items">${items}<div style="border-top:1px dashed #e0d6c8;margin-top:6px;padding-top:6px;font-weight:700">合计 ${money(o.total)}</div></div>
-      ${noteHtml(o)}
       ${o.status==='已发货'?('<div class="line"><span class="k">单号</span><b style="color:#1f9d55">'+o.tracking+'</b></div>'):''}
       <div class="acts">${acts}</div>`;
     list.appendChild(div);
@@ -901,13 +970,13 @@ function render(){
 function renderMergedPending(){
   const list=document.getElementById('list');
   const pending=ORDERS.filter(o=>o.status==='待确认');
-  // 顶部快捷条 + 按电话搜索（参照 renderMergedShip 搜索框样式）
+  // 2026-09-09 新增：顶部快捷条 + 按电话搜索（参照 renderMergedShip 搜索框样式）
   const topBar=document.createElement('div'); topBar.className='allow-pull-top';
   topBar.innerHTML=`
     <span>📋 待处理 <b>${pending.length}</b> 笔</span>
     <span style="display:inline-flex;align-items:center;gap:6px;margin-left:auto">
-      <span style="font-size:12px;color:#7a6f62">搜索：</span>
-      <input type="text" id="pendingPhoneInput" value="${escapeHtml(pendingPhoneFilter)}" placeholder="电话 / 订单号 / 微信号，回车" title="支持按 电话、订单编号、微信号 搜索" style="padding:5px 8px;border:1px solid #e0d6c8;border-radius:6px;font-size:13px;width:190px" onkeydown="if(event.key==='Enter'){event.preventDefault();onPendingPhoneSearch(this.value.trim());}">
+      <span style="font-size:12px;color:#7a6f62">按电话搜：</span>
+      <input type="tel" id="pendingPhoneInput" value="${escapeHtml(pendingPhoneFilter)}" placeholder="输入电话后按回车" style="padding:5px 8px;border:1px solid #e0d6c8;border-radius:6px;font-size:13px;width:150px" onkeydown="if(event.key==='Enter'){event.preventDefault();onPendingPhoneSearch(this.value.trim());}">
       <button type="button" onclick="onPendingPhoneSearch(document.getElementById('pendingPhoneInput').value.trim())" style="padding:5px 10px;border:1px solid #b8743f;background:#fff;color:#b8743f;border-radius:6px;font-size:12px;cursor:pointer">搜索</button>
       ${pendingPhoneFilter?`<button type="button" onclick="onPendingPhoneSearch('')" style="padding:5px 10px;border:1px solid #c0392b;background:#fff;color:#c0392b;border-radius:6px;font-size:12px;cursor:pointer;margin-left:4px">清除</button>`:''}
     </span>
@@ -920,16 +989,13 @@ function renderMergedPending(){
   }
   const filtered=pending.filter(o=>{
     if(!pendingPhoneFilter) return true;
-    // fix42：同一个搜索框，支持「电话 / 订单编号 / 微信号」三种关键词（订单编号忽略大小写）
-    const q=pendingPhoneFilter, ql=q.toLowerCase();
-    return String(o.phone||'').includes(q)
-        || String(o.id||'').toLowerCase().includes(ql)
-        || String(o.wechat||'').includes(q);
+    const ph=String(o.phone||'');
+    return ph.includes(pendingPhoneFilter);
   });
   if(!filtered.length){
     const empty=document.createElement('div');
     empty.className='empty';
-    empty.innerHTML=pendingPhoneFilter?`没有找到包含「${escapeHtml(pendingPhoneFilter)}」的待处理订单（已按 电话 / 订单编号 / 微信号 匹配）。<br><br><span style="font-size:13px;color:#999">请检查输入是否正确；清除搜索可显示全部。</span>`:`暂无订单。`;
+    empty.innerHTML=pendingPhoneFilter?`没有找到电话包含「${escapeHtml(pendingPhoneFilter)}」的待处理订单。<br><br><span style="font-size:13px;color:#999">请检查号码是否输对；清除搜索可显示全部。</span>`:`暂无订单。`;
     list.appendChild(empty);
     return;
   }
@@ -975,50 +1041,14 @@ function renderMergedPending(){
     div.innerHTML=`
       <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-wait">待确认</span></div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
-      <div class="line"><span class="k">微信号</span>${wechatHtml(first,ids)}</div>
+      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       ${progressHtml}
       <div class="items">${orderBlocks}</div>
-      ${noteHtml(first)}
-      <div class="acts" style="flex-wrap:wrap;gap:8px">${swapBtnHtml(first.id)}<button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button><button class="btn-confirm" onclick="confirmPaidGroup(['${ids.join("','")}'])">客户已发截图，确认收款${group.length>1?`（${group.length}笔一起）`:''}</button></div>`;
+      <div class="acts" style="flex-wrap:wrap;gap:8px">${swapBtnHtml(first.id)}<button class="btn-confirm" onclick="confirmPaidGroup(['${ids.join("','")}'])">客户已发截图，确认收款${group.length>1?`（${group.length}笔一起）`:''}</button></div>`;
     list.appendChild(div);
   });
-}
-function onPendingPhoneSearch(v){
-  pendingPhoneFilter=String(v||'').trim();
-  // fix42：搜索前先清空列表再重渲染，否则新结果会「追加」在旧列表下面（出现两条工具条）
-  if(curTab==='待确认'){ const l=document.getElementById('list'); if(l) l.innerHTML=''; renderMergedPending(); }
-}
-// ===== 合并订单 · 子订单逐笔处置（不切换 tab，让用户继续在「待处理」处理其他子订单） =====
-// 点 [✓ 已收]：该笔 status='待发货'，自动从当前「待处理」组消失，剩余子订单合并组自然重组
-// 点 [✕ 未收]：该笔 status='已取消'，自动退库存；剩余子订单合并组自然重组
-async function subConfirmPaid(id){
-  const o=ORDERS.find(x=>x.id===id);
-  if(!o) return;
-  if(o.status!=='待确认'){ toast('该订单已处置：'+o.status); return; }
-  if(!window.confirm(`确认该笔已收款？\n订单 ${id} · ${escapeHtml(o.name||'')} · ${money(o.total)}\n\n（仅标记这一笔，已合并组内其他笔不会变；标完后合并组会自动缩小）`)) return;
-  const prev=JSON.parse(JSON.stringify(o));
-  o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now();
-  ORDERS=ORDERS.map(x=>x.id===id?o:x);
-  // 乐观更新：不切 tab，让用户继续在「待处理」处理其他子订单
-  render();
-  toast('✓ '+id+' 已转入待发货');
-  await syncOrder(id,'/confirm',{},prev);
-}
-function subMarkNotPaid(id){
-  const o=ORDERS.find(x=>x.id===id);
-  if(!o) return;
-  if(o.status!=='待确认'){ toast('该订单已处置：'+o.status); return; }
-  if(pendingIds.has(id)){ toast('操作进行中，请稍候'); return; }
-  if(!window.confirm(`确认「未收到该款项」？\n订单 ${id} · ${escapeHtml(o.name||'')} · ${money(o.total)}\n\n（仅标记这一笔；该笔将标记为已取消并退回库存；合并组内其他笔不会变）`)) return;
-  const prev=JSON.parse(JSON.stringify(o));
-  o.status='已取消'; o.cancelledAt=Date.now();
-  ORDERS=ORDERS.map(x=>x.id===id?o:x);
-  // 乐观更新：不切 tab
-  render();
-  toast('✕ '+id+' 已转入已取消');
-  syncOrder(id,'/cancel',{},prev);
 }
 // 待发货：按 姓名+电话+地址+微信 4项完全一致合并为同一个客户
 // 详见 business_rules.md §1 自动合并规则
@@ -1061,7 +1091,16 @@ function renderMergedShip(){
       const key=BUSINESS_RULES.merge.makeKey(o);
       (groups[key]=groups[key]||[]).push(o);
     });
-  Object.values(groups).forEach(group=>{
+  // 2026-09-09 修复：合并组渲染顺序改为「按组内最早下单时间 createdAt 升序」的显式稳定排序。
+  //   原代码 Object.values(groups).forEach(...) 直接遍历，顺序完全取决于 /api/orders 的返回顺序，
+  //   服务端顺序一旦变化（或某单被 PATCH 更新后位置变动），轮询重新渲染时卡片就会漂移
+  //   —— 正是用户反馈的「取消勾选后，订单从第 1 位跳到第 2 位」。
+  //   createdAt 恒定不变，与勾选状态/网络返回顺序无关 → 顺序绝对稳定，且三个栏目位置一致。
+  Object.values(groups).sort((a,b)=>{
+    const ac=Math.min.apply(null, a.map(o=>o.createdAt||o.paidAt||0));
+    const bc=Math.min.apply(null, b.map(o=>o.createdAt||o.paidAt||0));
+    return ac-bc; // 先下单的排前面
+  }).forEach(group=>{
     group.sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
     const ids=group.map(o=>o.id);
     const first=group[0];
@@ -1094,18 +1133,17 @@ function renderMergedShip(){
     const div=document.createElement('div'); div.className='card merge-card';
     div.innerHTML=`
       <div class="h">
-        <span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}${first.shipCode?` <span class="ship-code" style="background:#b8743f;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;vertical-align:middle">编号 ${first.shipCode}</span>`:''}</span>
+        <span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span>
         <label class="allow-pull-group" onclick="event.stopPropagation()">
           <input type="checkbox" id="gap-${ids.join('-')}" ${groupChecked} ${groupIndeterminate?'data-indeterminate="1"':''} onchange="toggleAllowPullGroup(['${ids.join("','")}'], this.checked)"> 允许发货管家采集
         </label>
       </div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
-      <div class="line"><span class="k">微信号</span>${wechatHtml(first,ids)}</div>
+      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       ${orderBlocks}
-      ${noteHtml(first)}
-      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-copy" style="background:#fff8dc;color:#a05200;border-color:#f0d060" onclick="copyShipCodeGroup(['${ids.join("','")}'])">生成编号文本</button> <button class="btn-ship" onclick="shipGroup(['${ids.join("','")}'])">填写单号发货</button> ${swapBtnHtml(first.id)}<button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-ship" onclick="shipGroup(['${ids.join("','")}'])">填写单号发货</button> ${swapBtnHtml(first.id)}</div>`;
     list.appendChild(div);
   });
   // 设置 indeterminate 状态（HTML 属性不会自动反映）
@@ -1114,6 +1152,10 @@ function renderMergedShip(){
 function onShipPhoneSearch(v){
   shipPhoneFilter=String(v||'').trim();
   if(curTab==='待发货') renderMergedShip();
+}
+function onPendingPhoneSearch(v){
+  pendingPhoneFilter=String(v||'').trim();
+  if(curTab==='待确认') renderMergedPending();
 }
 // 「今日可发订单」栏目：展示已在待发货里勾选「允许发货管家采集」的订单，可一键全部导出到发货管家
 function renderTodayShip(){
@@ -1135,54 +1177,45 @@ function renderTodayShip(){
   }
   const groups={};
   today.forEach(o=>{ const key=BUSINESS_RULES.merge.makeKey(o); (groups[key]=groups[key]||[]).push(o); });
-  Object.values(groups).forEach(group=>{
+  // 2026-09-09 修复：合并组渲染顺序改为「按组内最早下单时间 createdAt 升序」的显式稳定排序。
+  //   原代码 Object.values(groups).forEach(...) 直接遍历，顺序完全取决于 /api/orders 的返回顺序，
+  //   服务端顺序一旦变化（或某单被 PATCH 更新后位置变动），轮询重新渲染时卡片就会漂移
+  //   —— 正是用户反馈的「取消勾选后，订单从第 1 位跳到第 2 位」。
+  //   createdAt 恒定不变，与勾选状态/网络返回顺序无关 → 顺序绝对稳定，且三个栏目位置一致。
+  Object.values(groups).sort((a,b)=>{
+    const ac=Math.min.apply(null, a.map(o=>o.createdAt||o.paidAt||0));
+    const bc=Math.min.apply(null, b.map(o=>o.createdAt||o.paidAt||0));
+    return ac-bc; // 先下单的排前面
+  }).forEach(group=>{
     group.sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
     const ids=group.map(o=>o.id);
     const first=group[0];
-    const itemsHtml=group.map(o=>o.items.map((i,idx)=>{
-      // 优先用订单 items 自带的 bundleItems（最新下单时已复制），兼容历史空数组
-      let bi = i.bundleItems || [];
-      if(!bi.length){
-        const prod = PRODUCTS.find(p=>p.id===i.id);
-        if(prod && Array.isArray(prod.skus) && prod.skus.length){
-          const sku = prod.skus.find(s=>s.name===i.name)
-                   || prod.skus.find(s=>(s.name||'').includes((i.name||'').slice(0,8)))
-                   || prod.skus[0];
-          if(sku && Array.isArray(sku.bundleItems)) bi = sku.bundleItems;
-        }
-      }
-      if(bi.length){
-        // 竖行显示：每个 bundle item 一行"产品名 数量单位"，末尾再写 "× qty"
-        const lines = bi.map(b=>`• ${b.name} ${b.qty}${b.unit||'件'}`).join('<br>');
-        return `<div class="so-item"><span>${renderItemName(i)}</span><span>${renderItemQty(i)}${itemDelBtn(o.id,idx)}</span></div>`+
-               `<div class="bundle-inline" style="white-space:pre-line">${lines}<br>× ${i.qty}</div>`;
-      }
-      // 没有发货明细：回退到产品标题 + ×qty
-      return `<div class="so-item"><span>${renderItemName(i)}</span><span>${renderItemQty(i)}${itemDelBtn(o.id,idx)}</span></div>`;
-    }).join('')).join('');
-    // 手工填单号：取合并组内已有的快递单号（同一包裹共用一条）
-    const groupTracking=(group.find(o=>o.tracking && String(o.tracking).trim())||{}).tracking||'';
+    // 2026-09-09 修复：每笔子订单独立显示下单时间 + 商品明细（跟「待发货」保持一致，
+    // 方便区分购物车合并单、知道哪笔是哪笔）
+    const suborderBlocks=group.map(o=>`
+      <div class="suborder">
+        <div class="so-h">
+          <span>${o.id}<span class="so-paytime">${fmtTime(o.paidAt||o.createdAt)} 下单</span></span>
+        </div>
+        ${o.items.map((i,idx)=>{
+          let h=`<div class="so-item"><span>${renderItemName(i)}</span><span>${renderItemQty(i)}${itemDelBtn(o.id,idx)}</span></div>`;
+          const bi=getBundleItems(i);
+          if(bi && bi.length){
+            h+=`<div class="bundle-inline">实发为：${bi.map(b=>`${b.name} ${b.qty}${b.unit||'件'}${i.qty>1?' ×'+i.qty:''}`).join('、')}</div>`;
+          }
+          return h;
+        }).join('')}
+        <div class="so-total">本单合计 ${money(o.total)}</div>
+      </div>`).join('');
     const div=document.createElement('div'); div.className='card merge-card';
     div.innerHTML=`
-      <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}${first.shipCode?` <span class="ship-code" style="background:#b8743f;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;vertical-align:middle">编号 ${first.shipCode}</span>`:''}</span><span class="st st-ship">今日可发</span></div>
+      <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-ship">今日可发</span></div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
-      <div class="line"><span class="k">微信号</span>${wechatHtml(first,ids)}</div>
+      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
-      <div class="items">${itemsHtml}</div>
-      ${noteHtml(first)}
-      <div class="line" style="align-items:center;gap:8px;flex-wrap:wrap">
-        <span class="k">快递单号</span>
-        <input type="text" id="tk-${first.id}" value="${escapeHtml(groupTracking)}" placeholder="手工填写 / 粘贴快递单号，回车即保存"
-          style="flex:1;min-width:200px;max-width:340px;padding:7px 10px;border:1px solid #e0d6c8;border-radius:6px;font-size:13px"
-          onkeydown="if(event.key==='Enter'){event.preventDefault();saveTrackingGroup(['${ids.join("','")}'], this.value);}">
-        <button type="button" onclick="saveTrackingGroup(['${ids.join("','")}'], (document.getElementById('tk-${first.id}')||{}).value)"
-          style="padding:7px 12px;border:1px solid #1f9d55;background:#fff;color:#1f9d55;border-radius:6px;font-size:13px;cursor:pointer">保存单号</button>
-        <button type="button" onclick="saveTrackingAndShipGroup(['${ids.join("','")}'], (document.getElementById('tk-${first.id}')||{}).value)"
-          style="padding:7px 12px;border:1px solid #b8743f;background:#b8743f;color:#fff;border-radius:6px;font-size:13px;cursor:pointer">保存并发货</button>
-        <span id="tkmsg-${first.id}" style="font-size:12px;color:#9a8f82">${groupTracking?'✓ 已记录（订单仍在今日可发）':'只记单号，不改订单状态、不移走订单'}</span>
-      </div>
-      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-copy" style="background:#fff8dc;color:#a05200;border-color:#f0d060" onclick="copyShipCodeGroup(['${ids.join("','")}'])">生成编号文本</button> <button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
+      ${suborderBlocks}
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button></div>`;
     list.appendChild(div);
   });
 }
@@ -1205,7 +1238,16 @@ function renderReturnZone(){
   }
   const groups={};
   waiting.forEach(o=>{ const key=BUSINESS_RULES.merge.makeKey(o); (groups[key]=groups[key]||[]).push(o); });
-  Object.values(groups).forEach(group=>{
+  // 2026-09-09 修复：合并组渲染顺序改为「按组内最早下单时间 createdAt 升序」的显式稳定排序。
+  //   原代码 Object.values(groups).forEach(...) 直接遍历，顺序完全取决于 /api/orders 的返回顺序，
+  //   服务端顺序一旦变化（或某单被 PATCH 更新后位置变动），轮询重新渲染时卡片就会漂移
+  //   —— 正是用户反馈的「取消勾选后，订单从第 1 位跳到第 2 位」。
+  //   createdAt 恒定不变，与勾选状态/网络返回顺序无关 → 顺序绝对稳定，且三个栏目位置一致。
+  Object.values(groups).sort((a,b)=>{
+    const ac=Math.min.apply(null, a.map(o=>o.createdAt||o.paidAt||0));
+    const bc=Math.min.apply(null, b.map(o=>o.createdAt||o.paidAt||0));
+    return ac-bc; // 先下单的排前面
+  }).forEach(group=>{
     group.sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
     const ids=group.map(o=>o.id);
     const first=group[0];
@@ -1220,101 +1262,17 @@ function renderReturnZone(){
     }).join('')).join('');
     const div=document.createElement('div'); div.className='card merge-card';
     div.innerHTML=`
-      <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}${first.shipCode?` <span class="ship-code" style="background:#b8743f;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;vertical-align:middle">编号 ${first.shipCode}</span>`:''}</span><span class="st st-ship">等待回传</span></div>
+      <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-ship">等待回传</span></div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
-      <div class="line"><span class="k">微信号</span>${wechatHtml(first,ids)}</div>
+      <div class="line"><span class="k">微信号</span>${first.wechat?`<b style="color:#b8743f">${escapeHtml(first.wechat)}</b>`:'<span style="color:#c0392b">（买家未填写）</span>'}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
       <div class="line"><span class="k">地址</span>${first.address}</div>
       <div class="items">${itemsHtml}</div>
-      ${noteHtml(first)}
-      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button> <button class="btn-copy" style="background:#fff8dc;color:#a05200;border-color:#f0d060" onclick="copyShipCodeGroup(['${ids.join("','")}'])">生成编号文本</button> <button class="btn-confirm" onclick="openManualTrackingModal(['${ids.join("','")}'])">✏️ 手动填单号</button> <button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${first.id}')">备注</button></div>`;
+      <div class="acts"><button class="btn-copy" onclick="copyShipGroup(['${ids.join("','")}'])">生成发货文本</button><button class="btn-confirm" onclick="openManualTrackingModal(['${ids.join("','")}'])">✏️ 手动填单号</button></div>`;
     list.appendChild(div);
   });
 }
-// ===== 等待回传区 · 手动填单号（fix55 还原：2026-09-09 上线、后被部署覆盖丢失的功能）=====
-// 单笔：直接走老的 ship(id) 流程（保留 prompt 二次确认风格）
-// 多笔：弹窗让用户勾选子订单 + 填单号，复用 /api/orders/:id/ship
-// 注意：这是「填单号 = 这单发了」的入口，会把订单转成「已发货」并离开等待回传区（与原版一致）。
-function openManualTrackingModal(ids){
-  const orders=(ids||[]).map(id=>ORDERS.find(x=>x.id===id)).filter(o=>o&&o.status==='待回传');
-  if(!orders.length){ toast('没有待回传的订单'); return; }
-  if(orders.length===1){
-    // 单笔走老的 ship()：含金额核对、prompt 二次确认
-    ship(orders[0].id);
-    return;
-  }
-  const customerName = escapeHtml(orders[0].name||'');
-  const subRows = orders.map(o=>`
-    <label class="modal-sub-row">
-      <input type="checkbox" checked data-id="${o.id}">
-      <span class="msr-id">${o.id}</span>
-      <span class="msr-time">下单 ${fmtTime(o.createdAt||o.paidAt)}</span>
-      <span class="msr-total">${money(o.total)}</span>
-    </label>`).join('');
-  const html = `
-    <h3 style="margin:0 0 4px">✏️ 手动填单号</h3>
-    <div style="font-size:12px;color:#9a8f82;margin-bottom:10px">客户：${customerName} · 合并 ${orders.length} 笔</div>
-    <div style="font-size:12px;color:#7a6f62;margin-bottom:4px">要发货的子订单（默认全部）：</div>
-    <div class="modal-sub-list">${subRows}</div>
-    <div style="font-size:12px;color:#7a6f62;margin:8px 0 4px">快递单号：</div>
-    <input type="text" id="mtTracking" placeholder="如 SF1234567890" style="width:100%;padding:8px;border:1px solid #e0d6c8;border-radius:6px;font-size:13px;box-sizing:border-box">
-    <div style="font-size:11px;color:#9a8f82;margin-top:4px">提示：合并组通常一个包裹，勾选的几笔填同一单号</div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
-      <button class="btn btn-modal-cancel" onclick="closeModal()">取消</button>
-      <button class="btn btn-modal-ok" id="mtConfirm">确认发货</button>
-    </div>`;
-  showModal(html);
-  document.getElementById('mtConfirm').onclick = async ()=>{
-    const tr=(document.getElementById('mtTracking').value||'').trim();
-    if(!tr){ toast('请输入快递单号'); return; }
-    if(tr.length<4){ toast('单号太短，请检查'); return; }
-    const checkedIds = Array.from(document.querySelectorAll('.modal-sub-row input:checked')).map(i=>i.dataset.id);
-    if(!checkedIds.length){ toast('请至少勾选一笔订单'); return; }
-    closeModal();
-    await shipMultiTracking(checkedIds, tr);
-  };
-  setTimeout(()=>{ const el=document.getElementById('mtTracking'); if(el) el.focus(); }, 50);
-}
-// 多笔手动填单号：复用 /api/orders/:id/ship（同发货管家回传端点）
-async function shipMultiTracking(ids, tracking){
-  const tr = String(tracking||'').slice(0,60);
-  let okCount=0, failIds=[];
-  for(const id of ids){
-    const o = ORDERS.find(x=>x.id===id);
-    if(!o || o.status!=='待回传') continue;
-    const prev = JSON.parse(JSON.stringify(o));
-    o.status='已发货'; o.tracking=tr; o.shippedAt=Date.now();
-    ORDERS=ORDERS.map(x=>x.id===id?o:x);
-    try{
-      const r = await fetch('/api/orders/'+id+'/ship',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tracking:tr})});
-      if(r && r.ok){ okCount++; } else { failIds.push(id); ORDERS=ORDERS.map(x=>x.id===id?prev:x); }
-    }catch(e){ failIds.push(id); ORDERS=ORDERS.map(x=>x.id===id?prev:x); }
-  }
-  render();
-  if(okCount && !failIds.length) toast(`✓ 已发货 ${okCount} 笔`);
-  else if(okCount && failIds.length) toast(`✓ ${okCount} 笔成功，${failIds.length} 笔失败：${failIds.join(',')}`);
-  else toast('发货失败，请重试');
-  // 单笔发完跳「已发货」；多笔留在「等待回传」（剩余笔继续显示）
-  if(ids.length===1 && okCount){
-    curTab='已发货';
-    document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='已发货'));
-    render();
-  }
-}
 // 获取订单项对应的 bundleItems（发货明细）：优先用订单自带，其次按产品/SKU 反查
-// 渲染订单卡片的「微信号」行：始终提供输入框，可随时手动填写或修改
-function wechatHtml(o, ids){
-  const id=ids[0];
-  const cur=(o.wechat && String(o.wechat).trim()) ? String(o.wechat).trim() : '';
-  const tip = cur ? '' : '<span style="color:#c0392b;margin-right:6px">（买家未填写）</span>';
-  return `${tip}<input id="wechat-${id}" value="${escapeHtml(cur)}" placeholder="手动填写微信号" style="margin-left:0;padding:4px 8px;border:1px solid #e0d6c8;border-radius:6px;font-size:13px;width:130px;vertical-align:middle">
-          <button type="button" onclick="saveWechat(['${ids.join("','")}'])" style="margin-left:4px;padding:4px 10px;border:1px solid #b8743f;background:#fff;color:#b8743f;border-radius:6px;font-size:12px;cursor:pointer;vertical-align:middle">${cur?'修改':'保存'}</button>`;
-}
-// 渲染订单卡片的「备注」行（有备注才显示）
-function noteHtml(o){
-  if(!o.note || !String(o.note).trim()) return '';
-  return `<div class="line"><span class="k">备注</span><span style="color:#b8743f">${escapeHtml(String(o.note).trim())}</span></div>`;
-}
 function getBundleItems(i){
   let bi = i.bundleItems || [];
   if(!bi.length){
@@ -1328,12 +1286,12 @@ function getBundleItems(i){
   }
   return bi;
 }
-// 把订单项渲染成单行发货文本："三重乳 10瓶 ×2"，多条用全角空格分隔
-// 手工加品：直接显示 名称 + 数量 + 单位（不重复 ×qty），末尾打【手工已付】标
+// 把订单项渲染成单行发货文本："三重乳 10瓶"，多条用全角空格分隔
+// 手工加品：直接显示 名称 + 数量 + 单位（不重复 ×qty），末尾不再带【手工已付】（2026-09-09 去掉，发货文本要纯净）
 // 普通商品：有 bundleItems 用展开的明细；没有就显示 "名称 ×数量 [单位]"
 function formatShipItem(i){
   if(i.isManualAdd){
-    return `${i.name||''} ${i.qty||''}${i.unit||''}【手工已付】`;
+    return `${i.name||''} ${i.qty||''}${i.unit||''}`;
   }
   const bi = getBundleItems(i);
   if(bi.length){
@@ -1360,95 +1318,32 @@ function showModal(innerHtml){
 }
 function closeModal(){ if(modalEl){ modalEl.remove(); modalEl=null; } }
 
-// 手动填写/修改订单微信号，保存到云端
-async function saveWechat(ids){
-  ids=Array.isArray(ids)?ids:[ids];
-  const id=ids[0];
-  const input=document.getElementById('wechat-'+id);
-  if(!input) return;
-  const v=input.value.trim().slice(0,50);
-  if(!v){ toast('请填写微信号'); return; }
-  const updates=ids.map(i=>ORDERS.find(o=>o.id===i)).filter(Boolean);
-  const prevMap={}; updates.forEach(o=>{ prevMap[o.id]=JSON.parse(JSON.stringify(o)); o.wechat=v; pendingIds.add(o.id); });
-  render();
-  try{
-    for(const o of updates){
-      const r=await fetch('/api/orders/'+o.id+'/contact',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({wechat:v})});
-      const d=await r.json().catch(()=>({}));
-      if(!r.ok) throw new Error(d.error||'保存失败');
-      if(d.order){ const idx=ORDERS.findIndex(x=>x.id===o.id); if(idx>=0) ORDERS[idx]=d.order; }
-    }
-    toast('微信号已保存');
-  }catch(e){
-    updates.forEach(o=>{ const idx=ORDERS.findIndex(x=>x.id===o.id); if(idx>=0) ORDERS[idx]=prevMap[o.id]; });
-    render();
-    toast('微信号保存失败：'+e.message);
-  }finally{
-    setTimeout(()=>{ updates.forEach(o=>pendingIds.delete(o.id)); }, 2000);
-  }
-}
-
-// 编辑订单备注
-function editNote(id){
-  const o=ORDERS.find(x=>x.id===id);
-  if(!o) return;
-  showModal(`
-    <h3>订单备注</h3>
-    <div class="modal-sub">订单 ${o.id} · ${escapeHtml(o.name||'')}</div>
-    <div class="modal-fld"><label>备注内容（生成发货文本时会附在最下方）</label><textarea id="noteText" rows="3" style="width:100%;resize:vertical">${escapeHtml(o.note||'')}</textarea></div>
-    <div class="modal-actions">
-      <button class="btn-modal-cancel" onclick="closeModal()">取消</button>
-      <button class="btn-modal-ok" onclick="__saveNote('${o.id}')">保存</button>
-    </div>
-  `);
-}
-window.__saveNote=async(id)=>{
-  const o=ORDERS.find(x=>x.id===id); if(!o) return;
-  const note=String(document.getElementById('noteText').value||'').trim().slice(0,500);
-  const prev=JSON.parse(JSON.stringify(o));
-  pendingIds.add(id);   // ★关键保护：15s 轮询在飞行途中会把刚保存的备注冲掉（原缺此保护）
-  o.note=note; render();
-  try{
-    const r=await fetch('/api/orders/'+id+'/contact',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note})});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok) throw new Error(d.message||d.error||'保存失败');
-    if(d.order){ const idx=ORDERS.findIndex(x=>x.id===id); if(idx>=0) ORDERS[idx]=d.order; }
-    render();
-    closeModal(); toast('备注已保存');
-  }catch(e){
-    Object.assign(o,prev); render();
-    toast('备注保存失败：'+e.message);
-  }finally{
-    setTimeout(()=>{ pendingIds.delete(id); }, 2000);  // 云端确认后再等一小会儿才放开，避免竞态
-  }
-};
-
 // 乐观更新订单商品并同步云端（统一入口：删商品/换货/补货都走这）
+// 2026-09-09 修复：成功后强制 load(true) 从服务端拉权威 ORDERS，
+//   避免前端 d.order 与服务端不一致时手工加品看似成功但刷新不见
 async function applyOrderItems(o, newItems, okMsg){
-  pendingIds.add(o.id); // 关键保护：防止 15s 轮询把刚改的商品冲掉
   const prev=JSON.parse(JSON.stringify(o));
-  const updateLocal=(order)=>{
-    const idx=ORDERS.findIndex(x=>x.id===order.id);
-    if(idx>=0) ORDERS[idx]=order; else ORDERS.push(order);
-    Object.assign(o, order); // 保持当前引用也同步
-  };
   o.items=newItems.map(x=>({id:String(x.id||''),skuId:String(x.skuId||''),skuName:String(x.skuName||''),name:String(x.name||''),price:Number(x.price)||0,qty:Math.max(0,Math.floor(Number(x.qty)||0)),unit:String(x.unit||'').slice(0,10),image:String(x.image||''),bundleItems:Array.isArray(x.bundleItems)?x.bundleItems:[],isManualAdd:!!x.isManualAdd})).filter(x=>x.qty>0&&(x.id||x.name));
   o.total=o.items.reduce((s,x)=>s+(x.isManualAdd?0:x.price*x.qty),0);
   if(o.items.length===0){ o.status='已取消'; o.cancelledAt=Date.now(); }
+  // 3 秒保护窗口：setInterval 轮询触发 load(true) 时保留本地版本
+  pendingIds.add(o.id);
   render();
   try{
     const r=await fetch('/api/orders/'+encodeURIComponent(o.id)+'/update-items',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:o.items})});
     const d=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(d.error||'save_failed');
-    updateLocal(d.order || o);
+    Object.assign(o,d.order);
     render();
     toast(okMsg||'已更新订单');
+    // 成功后从服务端拉一次权威 ORDERS，保证前端/云端彻底一致（避免刷新看不到）
+    setTimeout(()=>load(true), 100);
   }catch(e){
-    updateLocal(prev);
+    Object.assign(o,prev);
     render();
     toast('更新失败：'+(e.message||e));
-  }finally{
-    pendingIds.delete(o.id);
+  } finally {
+    setTimeout(()=>pendingIds.delete(o.id), 3000);
   }
 }
 
@@ -1482,17 +1377,33 @@ function parseQtyUnit(v){
   return {qty:Math.max(1, Number(m[1])||1), unit:m[2].trim().slice(0,10)};
 }
 // 手工加品弹窗：在订单上删除原商品后，可手工追加已付款商品（不计入订单金额）
+// 2026-09-09 防丢加固：保存按钮实时显示 tmp 摘要 / 新加项高亮 1.5s / 保存前输入框残留自动加入 tmp
 function openSwapModal(orderId){
   const o=ORDERS.find(x=>x.id===orderId);
   if(!o) return;
   if(!isEditableOrder(o)){ toast('该订单已发货或已取消，不能再调整'); return; }
   let tmp=JSON.parse(JSON.stringify(o.items));
-  const draw=()=>{
-    const rows=tmp.map((it,i)=>`<div class="modal-edititem"><span class="nm">${renderItemName(it)}</span><span class="pr">${renderItemQty(it)}</span><button class="del" onclick="__swapDel(${i})">×</button></div>`).join('')||'<div style="color:#aaa;font-size:12px;padding:4px 0">（暂无商品）</div>';
+  const origSnapshot=JSON.parse(JSON.stringify(o.items)); // 原始快照，用于算"本次新增/删除"
+  // ★ 本次变更：新增手工品数 + 删除原品数（不算手工品删除，因手工品原本可加可不加）
+  const computeDelta=()=>{
+    const newManual=Math.max(0, tmp.filter(x=>x.isManualAdd).length - origSnapshot.filter(x=>x.isManualAdd).length);
+    const origKeySet=new Set(origSnapshot.map(x=>x.id+'#'+x.skuId));
+    const deletedOrig=origSnapshot.filter(x=>!x.isManualAdd && !tmp.some(y=>y.id+'#'+y.skuId===x.id+'#'+x.skuId)).length;
+    return {newManual, deletedOrig};
+  };
+  const saveBtnText=()=>{
+    const d=computeDelta();
+    const parts=[];
+    if(d.newManual>0) parts.push('+'+d.newManual+' 手工品');
+    if(d.deletedOrig>0) parts.push('-'+d.deletedOrig+' 原品');
+    return parts.length?('保存变更（'+parts.join(' / ')+'）'):'保存变更（无变化）';
+  };
+  const draw=(hiIdx)=>{
+    const rows=tmp.map((it,i)=>`<div class="modal-edititem${i===hiIdx?' manual-just-added':''}" data-idx="${i}"><span class="nm">${renderItemName(it)}</span><span class="pr">${renderItemQty(it)}</span><button class="del" onclick="__swapDel(${i})">×</button></div>`).join('')||'<div style="color:#aaa;font-size:12px;padding:4px 0">（暂无商品）</div>';
     showModal(`
       <h3>手工加品</h3>
       <div class="modal-sub">订单 ${orderId} · ${escapeHtml(o.name)} · 可删除原商品，并追加已付款的手工商品</div>
-      <div style="font-size:12px;color:#7a6f62;margin-bottom:6px">当前商品（点 × 删除）：</div>
+      <div style="font-size:12px;color:#7a6f62;margin-bottom:6px">当前商品（点 × 删除，新加项会闪绿色 1.5 秒）：</div>
       ${rows}
       <div class="modal-fld"><label>手工添加（只写名称和数量规格，不计入金额）</label>
         <div class="modal-addrow">
@@ -1503,24 +1414,38 @@ function openSwapModal(orderId){
       </div>
       <div class="modal-actions">
         <button class="btn-modal-cancel" onclick="closeModal()">取消</button>
-        <button class="btn-modal-ok" onclick="__swapSave()">保存</button>
+        <button class="btn-modal-ok" onclick="__swapSave()">${saveBtnText()}</button>
       </div>
     `);
+    // ★ 新加项高亮 1.5s 后自动移除
+    if(hiIdx!==undefined && hiIdx>=0){
+      setTimeout(()=>{ const el=document.querySelector('.modal-edititem[data-idx="'+hiIdx+'"]'); if(el) el.classList.remove('manual-just-added'); }, 1500);
+    }
   };
   window.__swapDel=i=>{ tmp=tmp.filter((_,j)=>j!==i); draw(); };
-  window.__swapAddManual=()=>{ const name=document.getElementById('swapName').value.trim(); const q=parseQtyUnit(document.getElementById('swapQty2').value); if(!name){ toast('请填写商品名称'); return; } tmp.push({id:'',skuId:'',skuName:'',name,price:0,qty:q.qty,unit:q.unit,isManualAdd:true,image:'',bundleItems:[]}); document.getElementById('swapName').value=''; document.getElementById('swapQty2').value=''; draw(); };
+  window.__swapAddManual=()=>{
+    const name=document.getElementById('swapName').value.trim();
+    const q=parseQtyUnit(document.getElementById('swapQty2').value);
+    if(!name){ toast('请填写商品名称'); return; }
+    tmp.push({id:'',skuId:'',skuName:'',name,price:0,qty:q.qty,unit:q.unit,isManualAdd:true,image:'',bundleItems:[]});
+    document.getElementById('swapName').value='';
+    document.getElementById('swapQty2').value='';
+    draw(tmp.length-1); // ★ 传入新加项索引触发高亮
+  };
+  // ★ 兜底：保存前若输入框还有残留，自动加入 tmp 再保存
+  // 防止"用户填了名称和数量但没点'添加'按钮，直接点了'保存'"导致加品丢失
   window.__swapSave=async()=>{
-    // 兜底：用户填了名称但没点「添加」就按保存 —— 自动把它加进清单，避免「显示成功但其实没加上」
-    const leftName=(document.getElementById('swapName')?.value||'').trim();
-    const leftQty=(document.getElementById('swapQty2')?.value||'').trim();
-    if(leftName){
-      const q=parseQtyUnit(leftQty);
-      tmp.push({id:'',skuId:'',skuName:'',name:leftName,price:0,qty:q.qty,unit:q.unit,isManualAdd:true,image:'',bundleItems:[]});
-      closeModal();
-      await applyOrderItems(o,tmp,`已更新订单 ${orderId}（已自动加入你刚填的「${leftName} ${q.qty}${q.unit||'件'}」）`);
-      return;
+    const leftoverName=(document.getElementById('swapName')?.value||'').trim();
+    const leftoverQty=document.getElementById('swapQty2')?.value||'';
+    if(leftoverName){
+      const q=parseQtyUnit(leftoverQty);
+      tmp.push({id:'',skuId:'',skuName:'',name:leftoverName,price:0,qty:q.qty,unit:q.unit,isManualAdd:true,image:'',bundleItems:[]});
+      toast(`已自动添加输入框里的「${leftoverName} ${q.qty}${q.unit}」（你刚没点"添加"按钮，已替你加入保存）`);
     }
-    closeModal(); await applyOrderItems(o,tmp,`已更新订单 ${orderId}`);
+    closeModal();
+    const d=computeDelta();
+    const tip=`已更新订单 ${orderId}${d.newManual?`（+${d.newManual} 手工品）`:''}${d.deletedOrig?`（-${d.deletedOrig} 原品）`:''}`;
+    await applyOrderItems(o, tmp, tip);
   };
   draw();
 }
@@ -1588,7 +1513,6 @@ function openManualModal(){
 function toExportOrder(o){
   return {
     id:o.id, name:o.name, phone:o.phone, address:o.address, wechat:o.wechat||'',
-    shipCode:o.shipCode||'',   // 发货编号（A3/B4…），发货管家按编号匹配回传单号
     createdAt:o.createdAt||o.paidAt||null,   // 下单时间（毫秒时间戳），供发货管家显示「9/8 晚上 7:28」
     items:(o.items||[]).map(i=>{
       const bi = getBundleItems(i);
@@ -1604,24 +1528,14 @@ async function exportTodayOrders(){
   const list=ORDERS.filter(o=>o.status==='今日可发');
   if(!list.length){ toast('没有已允许待发货的订单'); return; }
   if(!window.confirm(`确认把 ${list.length} 单「今日可发」订单导出到发货管家「今日配货单」，并同时下载一份商城发货单？\n（导出后这些订单会从「今日可发」移入「等待回传区」；下载的打单文件转给快递员即可）`)) return;
-  // fix53：★先把发货单下载下来，再同步发货管家★
-  // 旧版顺序是反的：先 POST 导出（要读/写云库），本机网络或代理一抖动就整段失败，
-  // 下载被一起拖死 —— 柒木看到的现象就是「点下载发货单，单子下不来」，一张都没拿到
-  // （server.log 里 [loadKV:mall_sessions] 云端第1/2次调用失败: timeout 就是这个按钮留下的）。
-  // 商城发货单是纯前端本地生成的，跟网络毫无关系，必须先落袋为安；导出失败只提示，不影响已下载的单子。
-  let sheetOk=false;
-  try{ downloadShipSheet(list); sheetOk=true; }
-  catch(e){ console.error('[docx]',e); }
   try{
     const r=await fetch('/api/mall-today-export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:new Date().toISOString().slice(0,10), orders:list.map(toExportOrder)})});
     const d=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(d.message||('HTTP '+r.status));
-    toast(`${sheetOk?'发货单已下载；':''}已把 ${d.count} 单同步到发货管家「今日配货单」，并移入「等待回传区」`);
+    toast(`已导出 ${d.count} 单到发货管家「今日配货单」，已移入「等待回传区」`);
+    downloadShipSheet(list);   // 导出成功即下载可读的商城发货单（转快递员打单）
     load();                    // 拉取云端最新状态：今日可发清空、进入等待回传区
-  }catch(e){
-    console.error('[mall-export]',e);
-    toast(`${sheetOk?'发货单已下载 ✓，':'发货单下载异常，'}同步发货管家失败：${e.message}｜订单没有变动，网络恢复后再点一次即可`);
-  }
+  }catch(e){ toast('导出失败：'+e.message); console.error('[mall-export]',e); }
 }
 /* ---------- 真·Word(.docx) 生成：纯前端零依赖（ZIP store 打包 + OOXML） ----------
    背景：旧版导出的 .doc 其实是「HTML 改名成 .doc」的伪 Word，Word/WPS 能容错打开，
@@ -1692,7 +1606,8 @@ function _buildDocx(paras){
 // 发货单正文行（Word 版与图片版共用）：★硬性规则★ 先按合并规则分组
 // （姓名+电话+地址+微信 四项完全一致 = 同一客户，缺一不可），
 // 每个客户只出一个发货块 = 最终合并发货单；多笔时逐笔标注下单时间作为区分。
-// 手工加品：直接显示 名称+数量+单位+【手工已付】；真实无 bundleItems 时也带上 unit
+// 手工加品：直接显示 名称+数量+单位；真实无 bundleItems 时也带上 unit
+// row.kind 用于下载图片版时上色：title=标题 / name=姓名电话 / address=地址 / product=产品行 / aux=辅助信息
 function shipSheetRows(list){
   const rows=[];
   const groups={};
@@ -1700,32 +1615,25 @@ function shipSheetRows(list){
   const groupArr=Object.values(groups).map(g=>g.slice().sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)));
   groupArr.forEach((group,idx)=>{
     const first=group[0];
-    const codes=[...new Set(group.map(o=>o.shipCode).filter(Boolean))];
-    // fix53：主编号只显示「组内第一笔」的编号，与后台卡片上的「编号 XXX」保持完全一致。
-    // 旧版把整组编号用「/」拼起来（徐清单：卡片是 A54，发货单却印成 A54/E43），柒木对着卡片一看就以为编号错了，
-    // 发货员也容易看混。每笔各自的编号仍在下方逐笔明细行里标注（· 编号 A54 / · 编号 E43），信息不丢。
-    const mainCode = first.shipCode || codes[0] || '';
-    rows.push({t:`【第 ${idx+1} 单】${group.length>1?`（合并 ${group.length} 笔 · ${first.name||''}）`:`订单号：${first.id||''}`}`, b:true});
-    // 发货编号：单独一行、左对齐、大字号，位于收件人姓名上方；只显示编号本身（如 A1、A2）
-    if(mainCode) rows.push({t:mainCode, big:true});
-    rows.push({t:`${first.name||''} ${first.phone||''}`.replace(/\s+/g,' ').trim()});
-    rows.push({t:first.address||''});
-    rows.push({t:''});
+    rows.push({t:`【第 ${idx+1} 单】${group.length>1?`（合并 ${group.length} 笔 · ${first.name||''}）`:`　订单号：${first.id||''}`}`, b:true, kind:'title'});
+    rows.push({t:`${first.name||''} ${first.phone||''}`.replace(/\s+/g,' ').trim(), kind:'name'});
+    rows.push({t:first.address||'', kind:'address'});
+    rows.push({t:'', kind:'blank'});
     group.forEach((o,gi)=>{
-      if(group.length>1) rows.push({t:`— 第 ${gi+1} 笔 · 下单 ${fmtTime(o.createdAt)}（${o.id||''}${o.shipCode?' · 编号 '+o.shipCode:''}）—`, sz:20, color:'777777', indent:1});
+      if(group.length>1) rows.push({t:`— 第 ${gi+1} 笔 · 下单 ${fmtTime(o.createdAt)}（${o.id||''}）—`, sz:20, color:'777777', indent:1, kind:'aux'});
       const lines=[];
       (o.items||[]).forEach(i=>{
         if(i.isManualAdd){
-          lines.push(`${i.name||''} ${i.qty||''}${i.unit||''}【手工已付】`);
+          lines.push(`${i.name||''} ${i.qty||''}${i.unit||''}`);
           return;
         }
         const bi=getBundleItems(i);
         if(bi.length){ bi.forEach(b=>lines.push(`${b.name||''} ${b.qty||''}${b.unit||''}${i.qty>1?' ×'+i.qty:''}`)); }
         else lines.push(`${i.name||''}${i.qty>1?' ×'+i.qty:''}${i.unit?' '+i.unit:''}`);
       });
-      lines.forEach(l=>rows.push({t:l, indent:1}));
+      lines.forEach(l=>rows.push({t:l, indent:1, kind:'product'}));
     });
-    rows.push({t:''});
+    rows.push({t:'', kind:'blank'});
   });
   return rows;
 }
@@ -1738,7 +1646,7 @@ function downloadShipSheet(ordersParam){
     {t:'不初商城 · 发货单', b:true, sz:44, align:'center'},
     {t:dateStr+'　共 '+list.length+' 单', sz:20, align:'center', color:'777777'},
     {t:'', sz:12}
-  ].concat(shipSheetRows(list).map(r=>({t:r.t, b:(r.b||r.big), sz:r.big?48:(r.b?26:(r.sz||24)), indent:r.indent?360:0, color:r.color})));
+  ].concat(shipSheetRows(list).map(r=>({t:r.t, b:r.b, sz:r.b?26:(r.sz||24), indent:r.indent?360:0, color:r.color})));
   let blob;
   try{ blob=_buildDocx(paras); }
   catch(e){ console.error('[docx]',e); toast('Word 生成失败，已自动改用图片版'); downloadShipSheetImage(list); return; }
@@ -1749,30 +1657,49 @@ function downloadShipSheet(ordersParam){
   toast(`已生成 ${list.length} 单的商城发货单（Word，微信可直接打开），正在下载`);
 }
 // 兜底：图片版发货单（微信 100% 能打开的长图，适合直接发给快递员看）
+// 2026-09-09 改版：宽 720 的竖图（手机能全屏看清），姓名/电话/地址/产品 红字，
+// 辅助信息（如「— 第 X 笔」）黑字
 function downloadShipSheetImage(ordersParam){
   const list = (Array.isArray(ordersParam) && ordersParam.length) ? ordersParam : ORDERS.filter(o=>o.status==='今日可发');
   if(!list.length){ toast('没有可导出的订单'); return; }
   const dateStr=new Date().toISOString().slice(0,10);
-  const W=900, PAD=48;
+  const W=720, PAD=40;     // 竖图：宽 720，手机点开能撑满屏幕
   let SCALE=2;
   const cvs=document.createElement('canvas');
   let ctx=cvs.getContext('2d');
   const FONT=(px,bold)=>`${bold?'bold ':''}${px}px "Microsoft YaHei","PingFang SC",SimSun,sans-serif`;
+  // 红字色：姓名/电话/地址/产品行（发货核心信息，醒眼）
+  // 黑字：标题/辅助信息（"第 X 笔"等）
+  const COLOR_BY_KIND = {
+    name:'#c0392b',
+    address:'#c0392b',
+    product:'#c0392b',
+    title:'#222',
+    aux:'#555',
+    blank:undefined
+  };
   const items=[
     {t:'不初商城 · 发货单', size:30, bold:true, align:'center', gap:12},
     {t:dateStr+'　共 '+list.length+' 单', size:15, align:'center', color:'#777', gap:26}
-  ].concat(shipSheetRows(list).map(r=>({t:r.t, size:r.big?30:(r.b?18:(r.sz?14:16)), bold:!!(r.b||r.big), indent:r.indent?26:0, gap:r.t?4:12, color:r.color?'#'+r.color:undefined})));
+  ].concat(shipSheetRows(list).map(r=>{
+    const size = r.b ? 18 : (r.sz ? 14 : 16);
+    const bold = !!r.b;
+    const indent = r.indent ? 26 : 0;
+    // 优先用 shipSheetRows 的 kind 决定颜色；旧字段 r.color 仅兜底
+    const color = COLOR_BY_KIND[r.kind] !== undefined ? COLOR_BY_KIND[r.kind] : (r.color ? '#'+r.color : undefined);
+    return {t:r.t, size, bold, indent, gap:r.t?4:12, color};
+  }));
   const maxW=W-PAD*2, lines=[];
   items.forEach(it=>{
     ctx.font=FONT(it.size,it.bold);
     const indent=it.indent||0, txt=String(it.t||'');
-    if(!txt){ lines.push({t:'', size:it.size, bold:it.bold, indent, align:it.align, gap:it.gap}); return; }
+    if(!txt){ lines.push({t:'', size:it.size, bold:it.bold, indent, align:it.align, gap:it.gap, color:it.color}); return; }
     let cur='';
     for(const ch of txt){
-      if(ctx.measureText(cur+ch).width > maxW-indent && cur){ lines.push({t:cur,size:it.size,bold:it.bold,indent,align:it.align,gap:0}); cur=ch; }
+      if(ctx.measureText(cur+ch).width > maxW-indent && cur){ lines.push({t:cur,size:it.size,bold:it.bold,indent,align:it.align,gap:0,color:it.color}); cur=ch; }
       else cur+=ch;
     }
-    lines.push({t:cur, size:it.size, bold:it.bold, indent, align:it.align, gap:it.gap});
+    lines.push({t:cur, size:it.size, bold:it.bold, indent, align:it.align, gap:it.gap, color:it.color});
   });
   let H=PAD;
   lines.forEach(l=>{ H += Math.round(l.size*1.55) + (l.gap||0); });
@@ -1800,18 +1727,19 @@ function downloadShipSheetImage(ordersParam){
   },'image/png');
 }
 // 勾选确认：单笔待发货订单允许/禁止发货管家采集
+// 2026-09-09 修复：把 id 加入 pendingIds 直到 fetch 完成才解除（不再固定 3s），
+//   避免「等过一会儿系统自动跳动页面、勾选状态错乱」症状（Render 冷启动时同步可能 >3s）
 async function toggleAllowPull(id, allow){
   const o=ORDERS.find(x=>x.id===id);
-  if(o){
-    o.allowPull=allow; o.allowPullAt=allow?Date.now():null;
-    render();
-  }
+  if(o){ o.allowPull=allow; o.allowPullAt=allow?Date.now():null; pendingIds.add(id); render(); }
   try{
     const r=await fetch('/api/orders/'+encodeURIComponent(id)+'/allow-pull',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({allowPull:allow})});
     if(!r.ok) throw new Error('HTTP '+r.status);
   }catch(e){
     toast('同步失败，请重试'); console.error('[allow-pull]',e);
-    if(o){ o.allowPull=!allow; o.allowPullAt=o.allowPull?Date.now():null; render(); }
+    if(o){ o.allowPull=!allow; o.allowPullAt=o.allowPull?Date.now():null; pendingIds.add(id); render(); }
+  }finally{
+    pendingIds.delete(id); // fetch 完成（成功或失败）才解除保护
   }
 }
 // 勾选确认：组合内全部订单批量设置
@@ -1819,23 +1747,32 @@ function toggleAllowPullGroup(ids, allow){
   ids.forEach(id=>toggleAllowPull(id, allow));
 }
 // 顶部快捷：一键全部允许（仅对待发货）。点完后自己去单独取消"今天不能发"的那些
+// 2026-09-09 修复：每笔 fetch 完成（成功或失败）才解除 pendingIds 保护，
+//   避免 Render 冷启动时同步 >3s 导致 30s 轮询把刚勾选的又冲掉
 async function batchAllowPull(){
   const pending=ORDERS.filter(o=>o.status==='待发货');
   if(!pending.length){ toast('当前没有待发货订单'); return; }
   if(!window.confirm(`确认把当前 ${pending.length} 单待发货全部允许被发货管家采集？\n（之后你可以单独点击不需要的那几单取消勾选）`)) return;
   const allow=true;
-  // 乐观更新
-  pending.forEach(o=>{ o.allowPull=allow; o.allowPullAt=allow?Date.now():null; });
+  // 乐观更新：只勾选当前未勾选的，尊重用户此前已手动取消的（消除竞态）
+  pending.forEach(o=>{ if(!o.allowPull){ o.allowPull=allow; o.allowPullAt=Date.now(); } pendingIds.add(o.id); });
   render();
-  try{
-    const r=await fetch('/api/orders/batch-allow-pull',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({allow})});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok) throw new Error(d.message||('HTTP '+r.status));
-    toast(`已全部允许 ${d.count} 单，去单独取消今天不能发的那几单`);
-  }catch(e){
-    toast('同步失败：'+e.message);
-    pending.forEach(o=>{ o.allowPull=!allow; o.allowPullAt=o.allowPull?Date.now():null; });
+  const toSave=pending.filter(o=>o.allowPull===true);
+  const failed=[];
+  await Promise.all(toSave.map(async o=>{
+    try{
+      const r=await fetch('/api/orders/'+encodeURIComponent(o.id)+'/allow-pull',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({allowPull:true})});
+      if(!r.ok) failed.push(o.id);
+    }catch(e){ failed.push(o.id); }
+    finally{ pendingIds.delete(o.id); } // fetch 完成才解除保护，不再固定 3s
+  }));
+  if(failed.length){
+    // 仅回滚失败的，保留成功的
+    failed.forEach(id=>{ const o=ORDERS.find(x=>x.id===id); if(o){ o.allowPull=false; o.allowPullAt=null; } });
     render();
+    toast(`已允许 ${toSave.length-failed.length} 单，${failed.length} 单同步失败已自动取消`);
+  }else{
+    toast(`已允许 ${toSave.length} 单，可单独取消今天不能发的那几单`);
   }
 }
 // 「同意进入今日可发」：把勾选了「允许发货管家采集」的待发货订单，一次性移入独立的「今日可发」状态，
@@ -1867,24 +1804,7 @@ function copyShipGroup(ids){
       text+=formatShipItem(i)+'\n';
     });
   });
-  const notes=group.map(o=>o.note).filter(Boolean);
-  if(notes.length) text+=`\n备注：${notes.join('；')}`;
   navigator.clipboard.writeText(text).then(()=>toast('发货文本已复制，去微信粘贴')).catch(()=>{ window.prompt('复制下面内容：',text); });
-}
-// 编号版发货文本：首行为唯一编号（A1/A2...），方便发货员只把编号贴到快递面单，明细留在手机里核对
-function copyShipCodeGroup(ids){
-  const group=ORDERS.filter(o=>ids.includes(o.id)).sort((a,b)=>(a.paidAt||0)-(b.paidAt||0));
-  const first=group[0];
-  const code=first.shipCode || '未分配编号';
-  let text=`${code}\n${first.name} ${first.phone}\n${first.address}\n\n`;
-  group.forEach(o=>{
-    o.items.forEach(i=>{
-      text+=formatShipItem(i)+'\n';
-    });
-  });
-  const notes=group.map(o=>o.note).filter(Boolean);
-  if(notes.length) text+=`\n备注：${notes.join('；')}`;
-  navigator.clipboard.writeText(text).then(()=>toast('编号发货文本已复制：'+code)).catch(()=>{ window.prompt('复制下面内容：',text); });
 }
 // 金额核对：合并填写单号前必须展示每笔子订单金额及合并合计，详见 business_rules.md §2
 // 乐观 UI：点完立即本地全部流转到已发货并跳转，逐笔后台同步；单笔失败自动回滚
@@ -1924,71 +1844,6 @@ async function shipGroup(ids){
     if(r && r.ok){ const d=await r.json().catch(()=>({})); if(d.order){ ORDERS=ORDERS.map(x=>x.id===id?d.order:x); } pendingIds.delete(id); }
   }
   render();
-}
-// 「今日可发」手工填写快递单号（fix54）
-// 只把 tracking 字段写进这些订单：★不改变订单状态、不移动订单、不动金额/明细/编号★
-// （与「填写单号发货」的区别：那个会把订单转成「已发货」；这里填完订单仍留在「今日可发」，
-//   方便在发货单交快递员之前先把单号手工记下来。）
-async function saveTrackingGroup(ids, val){
-  const tr=String(val==null?'':val).trim().slice(0,60);
-  const msgId='tkmsg-'+ids[0];
-  const setMsg=(t,c)=>{ const m=document.getElementById(msgId); if(m){ m.textContent=t; m.style.color=c||'#9a8f82'; } };
-  setMsg('保存中…','#b8743f');
-  const prevMap={};
-  ids.forEach(id=>{ const o=ORDERS.find(x=>x.id===id); if(o){ prevMap[id]=JSON.parse(JSON.stringify(o)); o.tracking=tr; } });
-  render(); // 乐观显示，稍后由服务端返回值覆盖
-  let failMsg='';
-  for(const id of ids){
-    try{
-      const r=await fetch('/api/orders/'+id+'/tracking',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tracking:tr})});
-      const d=await r.json().catch(()=>({}));
-      if(!r.ok || !d.ok) throw new Error(d.message||('HTTP '+r.status));
-      if(d.order){ const idx=ORDERS.findIndex(x=>x.id===id); if(idx>=0) ORDERS[idx]=d.order; }
-    }catch(e){ failMsg=e.message||'网络错误'; }
-  }
-  if(failMsg){
-    Object.keys(prevMap).forEach(id=>{ const o=ORDERS.find(x=>x.id===id); if(o) o.tracking=prevMap[id].tracking; });
-    render();
-    setMsg('保存失败：'+failMsg,'#c0392b');
-    toast('单号没保存上：'+failMsg);
-    return;
-  }
-  render();
-  setMsg(tr?'✓ 已记录（订单仍在今日可发）':'已清空单号','#1f9d55');
-  toast(tr?('已记录单号 '+tr):'已清空单号');
-}
-// 「今日可发」保存单号 + 直接标记「已发货」（fix56）
-// 与 saveTrackingGroup 的唯一区别：这个会把订单真正转入「已发货」栏目（商家明确要求）。
-// ★只动被点这一张卡片对应的订单★（status/tracking/shippedAt 三个字段）；
-// 其他订单一律不碰、不重排、不跳转栏目（商家要求「订单位置不要乱动」）。
-// 服务端接口二次把关：单号为空/订单已取消一律拒绝；已发货则幂等返回不重写。
-async function saveTrackingAndShipGroup(ids, val){
-  const tr=String(val==null?'':val).trim().slice(0,60);
-  const msgId='tkmsg-'+ids[0];
-  const setMsg=(t,c)=>{ const m=document.getElementById(msgId); if(m){ m.textContent=t; m.style.color=c||'#9a8f82'; } };
-  if(!tr){ setMsg('请先填写快递单号','#c0392b'); toast('请先填写快递单号，再点「保存并发货」'); return; }
-  const first=ORDERS.find(x=>x.id===ids[0]);
-  const who=(first&&first.name)?first.name:'';
-  if(!window.confirm(`确认把这张卡上的 ${ids.length} 笔订单标记为「已发货」？\n\n收件人：${who}\n快递单号：${tr}\n\n这些订单会从「今日可发」移入「已发货」栏目。\n★其他订单一律不动★`)) return;
-  setMsg('发货中…','#b8743f');
-  let okCount=0; const failIds=[];
-  for(const id of ids){
-    try{
-      const r=await fetch('/api/orders/'+id+'/tracking-and-ship',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tracking:tr})});
-      const d=await r.json().catch(()=>({}));
-      if(!r.ok || !d.ok) throw new Error(d.message||('HTTP '+r.status));
-      if(d.order){ const idx=ORDERS.findIndex(x=>x.id===id); if(idx>=0) ORDERS[idx]=d.order; }
-      okCount++;
-    }catch(e){ failIds.push(id); }
-  }
-  render();
-  if(failIds.length){
-    setMsg(`已发货 ${okCount} 笔，${failIds.length} 笔失败`,'#c0392b');
-    toast(`✓ ${okCount} 笔已发货；${failIds.length} 笔失败：${failIds.join('、')}（稍后自动刷新会同步真实状态）`);
-  }else{
-    setMsg('✓ 已发货','#1f9d55');
-    toast(`✓ ${okCount} 笔已发货，已移入「已发货」栏目`);
-  }
 }
 function switchTab(btn){ document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('on')); btn.classList.add('on'); curTab=btn.dataset.s; render(); }
 
@@ -2044,6 +1899,36 @@ function markNotPaidGroup(ids){
   render();
   toast('已标记未收到该款项，'+orders.length+' 笔转入已取消');
 }
+// ===== 合并订单 · 子订单逐笔处置（不切换 tab，让用户继续在「待处理」处理其他子订单） =====
+// 点 [✓ 已收]：该笔 status='待发货'，自动从当前「待处理」组消失，剩余子订单合并组自然重组
+// 点 [✕ 未收]：该笔 status='已取消'，自动退库存；剩余子订单合并组自然重组
+async function subConfirmPaid(id){
+  const o=ORDERS.find(x=>x.id===id);
+  if(!o) return;
+  if(o.status!=='待确认'){ toast('该订单已处置：'+o.status); return; }
+  if(!window.confirm(`确认该笔已收款？\n订单 ${id} · ${escapeHtml(o.name||'')} · ${money(o.total)}\n\n（仅标记这一笔，已合并组内其他笔不会变；标完后合并组会自动缩小）`)) return;
+  const prev=JSON.parse(JSON.stringify(o));
+  o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now();
+  ORDERS=ORDERS.map(x=>x.id===id?o:x);
+  // 乐观更新：不切 tab，让用户继续在「待处理」处理其他子订单
+  render();
+  toast('✓ '+id+' 已转入待发货');
+  await syncOrder(id,'/confirm',{},prev);
+}
+function subMarkNotPaid(id){
+  const o=ORDERS.find(x=>x.id===id);
+  if(!o) return;
+  if(o.status!=='待确认'){ toast('该订单已处置：'+o.status); return; }
+  if(pendingIds.has(id)){ toast('操作进行中，请稍候'); return; }
+  if(!window.confirm(`确认「未收到该款项」？\n订单 ${id} · ${escapeHtml(o.name||'')} · ${money(o.total)}\n\n（仅标记这一笔；该笔将标记为已取消并退回库存；合并组内其他笔不会变）`)) return;
+  const prev=JSON.parse(JSON.stringify(o));
+  o.status='已取消'; o.cancelledAt=Date.now();
+  ORDERS=ORDERS.map(x=>x.id===id?o:x);
+  // 乐观更新：不切 tab
+  render();
+  toast('✕ '+id+' 已转入已取消');
+  syncOrder(id,'/cancel',{},prev);
+}
 // 商家后台：待确认订单标记「未收到该款项」→ 已取消（退回库存）
 // 乐观 UI：点完立即本地流转到已取消，云端同步在后台跑；失败自动回滚
 function markNotPaid(id){
@@ -2074,25 +1959,44 @@ function restoreOrder(id){
   toast('已重新成立，订单转入待发货');
   syncOrder(id, '/restore', {}, prev);
 }
-// 通用后台同步：成功用服务端返回订单覆盖，失败回滚到 prev（含一次可选重试）
+// 通用后台同步：成功用服务端返回订单覆盖
+// 失败（网络/HTTP）不再盲回滚到 prev（2026-09-09 修复「显示失败但实际已生效」自相矛盾），
+// 而是 load(true) 从云端拉权威状态对账：server 处理了 → 界面显示已处理；没处理 → 显示原状态
+// 2026-09-09 加 50s AbortController 防 Render 冷启动导致 fetch 永久挂起
 async function syncOrder(id, action, body, prev){
   pendingIds.add(id);
-  let r, tried=0;
-  while(tried<2){
-    try { r = await fetch('/api/orders/'+id+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
-    catch(e){ r=null; }
-    if(r && r.ok) break;
-    let tip='云端同步失败';
-    if(r){ try{ const d=await r.json(); if(d.message) tip+=': '+d.message; }catch(e){} }
-    if(r && r.status>=500 && tried===0 && window.confirm(tip+'\n\n云端同步可能失败，是否立即重试？')){ tried++; continue; }
+  const _sc=new AbortController();
+  const _scTimer=setTimeout(()=>_sc.abort(),50000);
+  let r;
+  try{
+    r = await fetch('/api/orders/'+id+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:_sc.signal});
+  }catch(e){ r=null; }
+  clearTimeout(_scTimer);
+  if(r && r.ok){
+    const d=await r.json().catch(()=>({}));
+    if(d.order){ ORDERS=ORDERS.map(x=>x.id===id?d.order:x); render(); }
     pendingIds.delete(id);
-    ORDERS=ORDERS.map(x=>x.id===id?prev:x); render();
-    toast(tip);
     return;
   }
-  const d=await r.json().catch(()=>({}));
-  if(d.order){ ORDERS=ORDERS.map(x=>x.id===id?d.order:x); render(); }
+  let tip='云端同步未确认';
+  if(r){ try{ const d=await r.json(); if(d.message) tip+=': '+d.message; }catch(e){} }
+  // HTTP 5xx 弹窗问用户是否重试（用户确认则新一次 fetch 不带旧 signal）
+  let retry=false;
+  if(r && r.status>=500){ retry = window.confirm(tip+'\n\n云端同步可能失败，是否立即重试？'); }
+  if(retry){
+    try{
+      const r2=await fetch('/api/orders/'+id+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(r2 && r2.ok){
+        const d=await r2.json().catch(()=>({}));
+        if(d.order){ ORDERS=ORDERS.map(x=>x.id===id?d.order:x); render(); }
+        pendingIds.delete(id);
+        return;
+      }
+    }catch(e){}
+  }
   pendingIds.delete(id);
+  toast(tip+'，已重新同步云端状态');
+  load(true); // 从云端拉权威状态对账（不盲回滚到 prev）
 }
 function copyShip(id){
   const o=ORDERS.find(x=>x.id===id);
@@ -2102,11 +2006,79 @@ function copyShip(id){
   } else {
     text=`${o.name} ${o.phone}\n${o.address}\n\n${o.items.map(i=>i.name+' ×'+i.qty).join('\n')}`;
   }
-  if(o.note && String(o.note).trim()) text+=`\n\n备注：${String(o.note).trim()}`;
   navigator.clipboard.writeText(text).then(()=>toast('发货文本已复制，去微信粘贴')).catch(()=>{ window.prompt('复制下面内容：',text); });
 }
 // 金额核对：填写单号前必须展示金额明细，详见 business_rules.md §2
 // 乐观 UI：点完立即本地流转到已发货并跳转，云端同步在后台跑；失败自动回滚
+// ===== 等待回传区 · 手动填单号弹窗 =====
+// 单笔：直接走老的 ship(id) 流程（保留 prompt 二次确认风格）
+// 多笔：弹窗让用户勾选子订单 + 填单号，复用 /api/orders/:id/ship
+function openManualTrackingModal(ids){
+  const orders=(ids||[]).map(id=>ORDERS.find(x=>x.id===id)).filter(o=>o&&o.status==='待回传');
+  if(!orders.length){ toast('没有待回传的订单'); return; }
+  if(orders.length===1){
+    // 单笔走老的 ship()：含金额核对、prompt 二次确认
+    ship(orders[0].id);
+    return;
+  }
+  const customerName = escapeHtml(orders[0].name||'');
+  const subRows = orders.map(o=>`
+    <label class="modal-sub-row">
+      <input type="checkbox" checked data-id="${o.id}">
+      <span class="msr-id">${o.id}</span>
+      <span class="msr-time">下单 ${fmtTime(o.createdAt||o.paidAt)}</span>
+      <span class="msr-total">${money(o.total)}</span>
+    </label>`).join('');
+  const html = `
+    <h3 style="margin:0 0 4px">✏️ 手动填单号</h3>
+    <div style="font-size:12px;color:#9a8f82;margin-bottom:10px">客户：${customerName} · 合并 ${orders.length} 笔</div>
+    <div style="font-size:12px;color:#7a6f62;margin-bottom:4px">要发货的子订单（默认全部）：</div>
+    <div class="modal-sub-list">${subRows}</div>
+    <div style="font-size:12px;color:#7a6f62;margin:8px 0 4px">快递单号：</div>
+    <input type="text" id="mtTracking" placeholder="如 SF1234567890" style="width:100%;padding:8px;border:1px solid #e0d6c8;border-radius:6px;font-size:13px;box-sizing:border-box">
+    <div style="font-size:11px;color:#9a8f82;margin-top:4px">提示：合并组通常一个包裹，勾选的几笔填同一单号</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="btn btn-modal-cancel" onclick="closeModal()">取消</button>
+      <button class="btn btn-modal-ok" id="mtConfirm">确认发货</button>
+    </div>`;
+  showModal(html);
+  document.getElementById('mtConfirm').onclick = async ()=>{
+    const tr=(document.getElementById('mtTracking').value||'').trim();
+    if(!tr){ toast('请输入快递单号'); return; }
+    if(tr.length<4){ toast('单号太短，请检查'); return; }
+    const checkedIds = Array.from(document.querySelectorAll('.modal-sub-row input:checked')).map(i=>i.dataset.id);
+    if(!checkedIds.length){ toast('请至少勾选一笔订单'); return; }
+    closeModal();
+    await shipMultiTracking(checkedIds, tr);
+  };
+  setTimeout(()=>{ const el=document.getElementById('mtTracking'); if(el) el.focus(); }, 50);
+}
+// 多笔手动填单号：复用 /api/orders/:id/ship（同发货管家回传端点）
+async function shipMultiTracking(ids, tracking){
+  const tr = String(tracking||'').slice(0,60);
+  let okCount=0, failIds=[];
+  for(const id of ids){
+    const o = ORDERS.find(x=>x.id===id);
+    if(!o || o.status!=='待回传') continue;
+    const prev = JSON.parse(JSON.stringify(o));
+    o.status='已发货'; o.tracking=tr; o.shippedAt=Date.now();
+    ORDERS=ORDERS.map(x=>x.id===id?o:x);
+    try{
+      const r = await fetch('/api/orders/'+id+'/ship',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tracking:tr})});
+      if(r && r.ok){ okCount++; } else { failIds.push(id); ORDERS=ORDERS.map(x=>x.id===id?prev:x); }
+    }catch(e){ failIds.push(id); ORDERS=ORDERS.map(x=>x.id===id?prev:x); }
+  }
+  render();
+  if(okCount && !failIds.length) toast(`✓ 已发货 ${okCount} 笔`);
+  else if(okCount && failIds.length) toast(`✓ ${okCount} 笔成功，${failIds.length} 笔失败：${failIds.join(',')}`);
+  else toast('发货失败，请重试');
+  // 单笔发完跳「已发货」；多笔留在「等待回传」（剩余笔继续显示）
+  if(ids.length===1 && okCount){
+    curTab='已发货';
+    document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.s==='已发货'));
+    render();
+  }
+}
 async function ship(id){
   const o=ORDERS.find(x=>x.id===id);
   if(!o) return;
@@ -2135,49 +2107,26 @@ function readFileToPrev(inputId, imgId){
 function uploadQr(){ readFileToPrev('sQr','sQrPrev'); }
 function uploadWechat(){ readFileToPrev('sWc','sWcPrev'); }
 function uploadAlipay(){ readFileToPrev('sAli','sAliPrev'); }
-function onWaveChange(el){
-  const all = document.querySelectorAll('.wave-cb');
-  if(el.checked && (el.value==='none' || el.value==='w4')){
-    // 「日常」或「返场」是独立模式：选中后取消其他波次
-    all.forEach(cb=>{ if(cb!==el) cb.checked=false; });
-  } else if(el.checked){
-    // 选普通波次时，取消日常/返场
-    all.forEach(cb=>{ if(cb.value==='none' || cb.value==='w4') cb.checked=false; });
-  }
-}
 async function applyWave(){
-  const cbs=Array.from(document.querySelectorAll('.wave-cb:checked'));
-  const waves=cbs.map(cb=>cb.value);
+  const sel=document.getElementById('waveSelect');
+  const wave=(sel&&sel.value)||'none';
   const hours=(document.getElementById('waveHours')||{}).value||'';
-  if(!waves.length){ toast('请至少选择一个波次'); return; }
-  const labelMap={'none':'日常','w1':'第一波','w2':'第二波','w3':'第三波','w4':'返场捡漏'};
-  const label=waves.map(v=>labelMap[v]||v).join(' + ');
+  const label=(sel&&sel.selectedOptions&&sel.selectedOptions[0])?sel.selectedOptions[0].text:wave;
   if(!confirm('确认把买家端切换到「'+label+'」？\n本波商品将自动上架，其余商品自动隐藏。')) return;
-  const btn=document.querySelector('button[onclick="applyWave()"]');
-  const oldTxt=btn?btn.textContent:'';
-  if(btn){ btn.disabled=true; btn.textContent='正在切换…'; }
-  toast('正在切换，请稍候…');
-  let lastErr='', ok=false, shownN=0, hidN=0;
-  for(let i=0;i<2 && !ok;i++){
-    const ctl=new AbortController();
-    const timer=setTimeout(()=>ctl.abort(), 45000);
-    try{
-      const r=await fetch('/api/admin/apply-wave',{method:'POST',headers:{'Content-Type':'application/json','Cache-Control':'no-cache'},cache:'no-store',body:JSON.stringify({waves,hours}),signal:ctl.signal});
-      const d=await r.json().catch(()=>({}));
-      clearTimeout(timer);
-      if(r.ok && d.ok){ ok=true; shownN=d.shown; hidN=d.hidden; break; }
-      lastErr=(d&&d.error)||('HTTP '+r.status);
-    }catch(e){ clearTimeout(timer); lastErr=(e&&e.name==='AbortError')?'云端数据库连不上（本机网络/代理问题），换个时间再试或改用线上后台':((e&&e.message)||e); }
-    if(i===0){ toast('首次未成功，正在自动重试…'); await new Promise(r=>setTimeout(r,800)); }
-  }
-  if(btn){ btn.disabled=false; btn.textContent=oldTxt||'应用到买家端'; }
-  if(ok){ toast('已切换：「'+label+'」上架 '+shownN+' 款、隐藏 '+hidN+' 款'); load(); }
-  else { toast('切换失败：'+lastErr); }
+  try{
+    const r=await fetch('/api/admin/apply-wave',{method:'POST',headers:{'Content-Type':'application/json','Cache-Control':'no-cache'},cache:'no-store',body:JSON.stringify({wave,hours})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok||!d.ok){ toast('切换失败：'+(d.error||r.status)); return; }
+    toast('已切换：本波上架 '+d.shown+' 款，隐藏 '+d.hidden+' 款');
+    load();
+  }catch(e){ toast('切换失败：'+e.message); }
 }
 async function saveSettings(){
   const hiddenCats=Array.from(document.querySelectorAll('.cat-hide-cb:checked')).map(cb=>cb.value);
   const body={
     shopName:document.getElementById('sName').value,
+    contactName:document.getElementById('sContact').value,
+    announcement:document.getElementById('sAnn').value,
     bankName:document.getElementById('sBankName').value,
     bankAccount:document.getElementById('sBankAccount').value,
     bankHolder:document.getElementById('sBankHolder').value,
@@ -2209,47 +2158,24 @@ async function saveSettings(){
 }
 
 // ---------- 产品管理 ----------
-// fix51（2026-09-22）：后台主图不再让浏览器直连 supabase.co，统一改走**同源** /img/ 代理
-// （本地=localhost:4301，云端=buchu-shop.onrender.com）。原因：直连 supabase.co 在国内网络上
-// 时通时不通，一断整个后台 39 张主图就集体退化成「暂无图片」占位图。
-// ⚠️ 只影响「显示地址」，绝不改数据：PRODUCTS[].image / #pMainImg.value 仍是原始绝对地址，
-//    保存时写回库里的还是原值，不会把 /img/ 这种相对路径写进数据库。
-function adminThumbUrl(u,w,h,q){
-  let s=String(u==null?'':u).trim();
-  if(!s) return '';
-  if(/^(data:|blob:)/.test(s)) return s;
-  const m=s.match(/\/storage\/v1\/object\/public\/(.+)$/);
-  if(m) s='/img/'+m[1];
-  if(s.indexOf('/img/')!==0) return s;
-  const sep=s.indexOf('?')>=0?'&':'?';
-  let qy='w='+w;
-  if(h&&Number(h)>0) qy+='&h='+h;
-  qy+='&q='+(q||70);
-  return s+sep+qy;
-}
-// 主图加载失败的两级兜底：① 同源代理不通 → 退回浏览器直连原图（两条路总有一条能通）；② 都不行 → 占位图。
-function adminImgFallback(img){
-  const fb=img.getAttribute('data-fb')||'';
-  if(fb && img.dataset.fbTried!=='1'){ img.dataset.fbTried='1'; img.src=fb; return; }
-  img.onerror=null;
-  img.src='/assets/products/default.svg';
-  img.classList.add('loaded');
-}
 function renderPM(){
   const wrap=document.getElementById('pmWrap');
+  // 2026-09-10：15s 轮询若数据有变会重绘列表，重建 DOM 会把用户刚勾的多个产品全清掉
+  //   （正好是「大面积批量隐藏」的场景）。重绘前先把已勾 id 存下来，重绘后原样恢复。
+  const prevSel=new Set(Array.from(document.querySelectorAll('.pm-sel:checked')).map(cb=>cb.value));
   const itemsHtml=PRODUCTS.map((p,idx)=>`
     <div class="pm-card" draggable="true" data-id="${p.id}" data-idx="${idx}">
       <label class="pm-check" onclick="event.stopPropagation()" ondragstart="event.stopPropagation();return false" onmousedown="event.stopPropagation()">
-        <input type="checkbox" class="pm-sel" value="${p.id}" onchange="updateBatchDelete()" onclick="event.stopPropagation()">
+        <input type="checkbox" class="pm-sel" value="${p.id}" ${prevSel.has(p.id)?'checked':''} onchange="updateBatchDelete()" onclick="event.stopPropagation()">
       </label>
-      <img class="img" src="${escapeHtml(adminThumbUrl(p.image,400,500,70)||'/assets/products/default.svg')}" data-fb="${escapeHtml(p.image||'')}" ${idx>=6?'loading="lazy"':''} decoding="async" onload="this.classList.add('loaded')" onerror="adminImgFallback(this)">
+      <img class="img" src="${imgCacheBust(p.image||'/assets/products/default.svg')}" ${idx>=6?'loading="lazy"':''} decoding="async" onload="this.classList.add('loaded')" onerror="this.src='/assets/products/default.svg';this.classList.add('loaded')">
       <div class="name">${p.name||'未命名'}</div>
       <div class="price">${money(p.price||0)} <span style="color:#bbb;text-decoration:line-through;font-size:12px">${p.originalPrice?money(p.originalPrice):''}</span></div>
       <div class="sub">${stripTags(p.subtitle||p.desc||'无副标题')}</div>
       <div class="pm-acts">
         <button class="edit" onclick="editProduct('${p.id}')">编辑</button>
-        <button class="hide ${p.hidden?'on':''}" onclick="toggleHidden('${p.id}',this)">${p.hidden?'上架':'隐藏'}</button>
-        <button class="sold ${p.forceSoldOut?'on':''}" onclick="toggleForceSoldOut('${p.id}',this)">${p.forceSoldOut?'在售':'售罄'}</button>
+        <button class="hide ${p.hidden?'on':''}" onclick="toggleHidden('${p.id}')">${p.hidden?'上架':'隐藏'}</button>
+        <button class="sold ${p.forceSoldOut?'on':''}" onclick="toggleForceSoldOut('${p.id}')">${p.forceSoldOut?'在售':'售罄'}</button>
       </div>
     </div>
   `).join('');
@@ -2266,6 +2192,7 @@ function renderPM(){
     <div class="pm-grid" id="pmGrid">${itemsHtml}</div>
   `;
   bindPMDrag();
+  updateBatchDelete(); // 恢复勾选后同步刷新「隐藏/删除选中产品 (N)」计数与可用态
 }
 function bindPMDrag(){
   const grid=document.getElementById('pmGrid'); if(!grid) return;
@@ -2287,69 +2214,30 @@ function bindPMDrag(){
     });
   });
 }
-// 商家后台：卡片上的「上架/隐藏」与「售罄/在售」开关。
-// fix52（2026-09-22）：柒木反馈「点上架点不动，过一会儿弹出失败」——
-//   原来这两个按钮点下去**没有任何即时反馈**，服务端要等云端写入超时（最坏 80 秒）才回错误，
-//   体感就是"卡住了"。现在：点了立刻变「保存中…」+ 立刻提示，45 秒硬超时兜底，
-//   失败时把原因说清楚（是网络/代理写不进云端，而不是"按钮坏了"）。
-async function adminToggle(path, btn, okMsg){
-  const oldTxt = btn ? btn.textContent : '';
-  if(btn){ btn.disabled = true; btn.textContent = '保存中…'; }
-  toast('正在保存，请稍候…（一般 1~3 秒）');
-  const ctl = new AbortController();
-  const timer = setTimeout(()=>ctl.abort(), 45000);
-  try{
-    const res = await fetch(path, {method:'POST', signal:ctl.signal, cache:'no-store'});
-    const data = await res.json().catch(()=>({}));
-    clearTimeout(timer);
-    if(res.ok && data.ok){
-      toast(okMsg(data));
-      await load(); renderPM();
-      return true;
-    }
-    toast('切换失败：'+((data && (data.message||data.error)) || ('HTTP '+res.status)));
-  }catch(e){
-    clearTimeout(timer);
-    const aborted = e && e.name==='AbortError';
-    toast('切换失败：'+(aborted
-      ? '云端一直没回应（本机网络/代理不稳）。请稍后重试；急着用可以直接用手机上的线上后台改。'
-      : ('网络异常（'+((e&&e.message)||e)+'），请稍后重试')));
-  }finally{
-    if(btn){ btn.disabled = false; btn.textContent = oldTxt; }
-  }
-  return false;
-}
 // 商家后台：产品列表卡片上一键切换「强制售罄」开关（不打开弹窗）
-async function toggleForceSoldOut(id, btn){
-  await adminToggle('/api/products/'+id+'/toggle-force-sold-out', btn,
-    d=>d.forceSoldOut?'🚫 已强制售罄，前台不可购买':'📦 已恢复正常销售');
+async function toggleForceSoldOut(id){
+  const res = await fetch('/api/products/'+id+'/toggle-force-sold-out',{method:'POST'});
+  const data = await res.json();
+  if(res.ok && data.ok){
+    toast(data.forceSoldOut?'🚫 已强制售罄，前台不可购买':'📦 已恢复正常销售');
+    await load(); renderPM();
+  } else {
+    toast('切换失败：'+(data.message||data.error||''));
+  }
 }
-async function toggleHidden(id, btn){
-  await adminToggle('/api/products/'+id+'/toggle-hidden', btn,
-    d=>d.hidden?'🙈 已隐藏，买家端不可见':'👁 已上架，买家端可见');
+async function toggleHidden(id){
+  const res = await fetch('/api/products/'+id+'/toggle-hidden',{method:'POST'});
+  const data = await res.json();
+  if(res.ok && data.ok){
+    toast(data.hidden?'🙈 已隐藏，买家端不可见':'👁 已上架，买家端可见');
+    await load(); renderPM();
+  } else {
+    toast('切换失败：'+(data.message||data.error||''));
+  }
 }
 
 function newProduct(){ editingProdId=null; openProdModal({}); }
-// fix46（2026-09-21）：点「编辑」时先向服务器拉取该产品的云端真值，再填弹窗。
-// 原来只读页面内存 PRODUCTS —— 内存一旦陈旧（手机端走云端后台、旧标签页、别处刚改过），
-// 就会出现「保存成功、打开还是旧值」。现在无论页面多旧，弹窗里一定是库里的最新内容。
-async function editProduct(id){
-  editingProdId=id;
-  let p = PRODUCTS.find(x=>x.id===id) || {};
-  try{
-    const r = await fetch('/api/products/'+encodeURIComponent(id), {cache:'no-store'});
-    if(r.ok){
-      const d = await r.json();
-      const fresh = d && (d.product || (d.id ? d : null));
-      if(fresh && fresh.id){
-        p = fresh;
-        const _i = PRODUCTS.findIndex(x=>x.id===fresh.id);
-        if(_i>=0) PRODUCTS[_i]=Object.assign({},PRODUCTS[_i],fresh); else PRODUCTS.push(fresh);
-      }
-    }
-  }catch(e){ console.warn('编辑前拉取最新产品失败，改用本地缓存：', e); }
-  openProdModal(p);
-}
+function editProduct(id){ editingProdId=id; openProdModal(PRODUCTS.find(p=>p.id===id)||{}); }
 function openProdModal(p){
   document.getElementById('prodModalTitle').textContent=editingProdId?'编辑产品':'新增产品';
   document.getElementById('pName').value=p.name||'';
@@ -2369,6 +2257,8 @@ function openProdModal(p){
     id: s.id||generateSkuId(),
     name: s.name||'',
     price: s.price!=null?s.price:'',
+    // 2026-09-11 加：商家可填的"单片/单件参考价"，买家端红字均价优先按这个显示
+    perPrice: s.perPrice!=null?s.perPrice:'',
     stock: s.stock!=null?s.stock:'',
     image: s.image||'',           // 集合链接：每个 SKU 可有自己一张主图
     // 2026-09-10 加：SKU 副标题（客户端橘色小注解），不填保持空
@@ -2376,7 +2266,7 @@ function openProdModal(p){
     bundleItems: Array.isArray(s.bundleItems)?s.bundleItems:[]
   }));
   document.getElementById('pMainImg').value=p.image||'';
-  document.getElementById('pMainImgPreview').src=adminThumbUrl(p.image,400,500,75)||'/assets/products/default.svg';
+  document.getElementById('pMainImgPreview').src=imgCacheBust(p.image||'/assets/products/default.svg');
   renderDetailImgs(p.detailImages||[]);
   renderSkuList();
   document.getElementById('prodModal').classList.add('show');
@@ -2388,11 +2278,11 @@ function openProdModal(p){
 function closeProdModal(){ document.getElementById('prodModal').classList.remove('show'); }
 
 function renderDetailImgs(urls){
-  selectedGalUrls=urls.slice();   // ⚠️ 保存用的仍是原始地址，这里只改「显示地址」
+  selectedGalUrls=urls.slice();
   const box=document.getElementById('pDetailImgs');
   box.innerHTML=urls.map((u,i)=>`
     <div class="dimg">
-      <img src="${escapeHtml(adminThumbUrl(u,600,600,75)||'')}" data-fb="${escapeHtml(u||'')}" onerror="if(this.dataset.fb&&this.dataset.fbTried!=='1'){this.dataset.fbTried='1';this.src=this.dataset.fb;}else{this.style.display='none'}">
+      <img src="${u}" onerror="this.style.display='none'">
       <button class="rm" onclick="removeDetailImg(${i})">×</button>
     </div>
   `).join('');
@@ -2420,6 +2310,9 @@ function flushSkuBundleTextareas(){
     const idx=Number(row.dataset.idx);
     const ta=row.querySelector('textarea.sku-bundle-text');
     if(ta && editingSkus[idx]) editingSkus[idx].bundleItems=parseBundleText(ta.value);
+    // 2026-09-10：副标题同样不能再只靠 onchange（失焦才触发）。
+    //   用户填完直接点「保存」时 onchange 可能还没跑，导致副标题存不进去。
+    //   这里与发货明细一样，保存前从 DOM 直接抓一次当前值。
     const si=row.querySelector('input.sku-subtitle-input');
     if(si && editingSkus[idx]) editingSkus[idx].subtitle=String(si.value||'').trim().slice(0,80);
   });
@@ -2441,11 +2334,12 @@ function renderSkuList(){
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <input type="text" placeholder="SKU名称，如：1瓶" value="${escapeHtml(s.name)}" onchange="updateSku(${idx},'name',this.value)" style="flex:1;min-width:120px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px">
         <input type="number" placeholder="价格" value="${s.price!==''?s.price:''}" onchange="updateSku(${idx},'price',this.value)" style="width:90px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px">
+        <input type="number" placeholder="单件均价" value="${s.perPrice!==''?s.perPrice:''}" onchange="updateSku(${idx},'perPrice',this.value)" title="填了才会在客户端红色显示「仅 ¥X/片」；不填不显示" style="width:90px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px;background:#fff8f0">
         <input type="number" placeholder="库存" value="${s.stock!==''?s.stock:''}" onchange="updateSku(${idx},'stock',this.value)" style="width:80px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:13px">
         <button type="button" onclick="removeSkuRow(${idx})" style="border:none;background:#e74c3c;color:#fff;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer">删除</button>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <img id="skuImgPrev${idx}" src="${escapeHtml(adminThumbUrl(s.image,120,120,70)||'/assets/products/default.svg')}" data-fb="${escapeHtml(s.image||'')}" onerror="adminImgFallback(this)" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid #e0d6c8;background:#fff;flex:none;cursor:pointer" onclick="pickSkuImage(${idx})" title="点击从图库选择该SKU主图">
+        <img id="skuImgPrev${idx}" src="${escapeHtml(imgCacheBust(s.image||'/assets/products/default.svg'))}" onerror="this.src='/assets/products/default.svg'" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid #e0d6c8;background:#fff;flex:none;cursor:pointer" onclick="pickSkuImage(${idx})" title="点击从图库选择该SKU主图">
         <button type="button" onclick="uploadSkuImage(${idx})" style="border:1px solid #e0d6c8;background:#fff;border-radius:8px;padding:7px 10px;font-size:12px;cursor:pointer;white-space:nowrap">📷 上传主图</button>
         <input type="text" placeholder="SKU 独立主图（留空则用产品主图）" value="${escapeHtml(s.image||'')}" onchange="updateSku(${idx},'image',this.value)" style="flex:1;min-width:150px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:12px">
         <span id="skuImgStatus${idx}" style="font-size:12px;color:#b8743f;white-space:nowrap"></span>
@@ -2467,17 +2361,10 @@ async function handleSkuImageUpload(input, idx){
     if(!currentGalFolder) currentGalFolder='默认图库';
     const f=files[0];
     const b64=await fileToBase64(f, true);
-    const ac=new AbortController(); const to=setTimeout(()=>ac.abort(), 60000);
-    let res, data;
-    try{
-      res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name}),signal:ac.signal});
-      const txt=await res.text();
-      try{ data=JSON.parse(txt); }catch(_){ data={error:(txt||'').slice(0,120)||('HTTP '+res.status)}; }
-    }catch(e2){
-      throw new Error(e2 && e2.name==='AbortError' ? '上传超时（服务器响应慢），请重试' : ('网络错误：'+(e2&&e2.message||e2)));
-    }finally{ clearTimeout(to); }
-    if(!res.ok) throw new Error(data.message||data.error||('服务器错误 '+res.status));
-    if(data.error) throw new Error(data.message||data.error);
+    const res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name})});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||('服务器错误 '+res.status));
+    if(data.error) throw new Error(data.error);
     if(!data.url) throw new Error('服务器未返回图片地址');
     updateSku(idx,'image',data.url);
     renderSkuList();
@@ -2493,7 +2380,50 @@ async function handleSkuImageUpload(input, idx){
   }
 }
 function pickSkuImage(idx){ galPickSkuIdx=idx; openGalPicker('sku'); }
+
+// ---- 2026-09-09 新增：批量上传 SKU 主图 ----
+// 场景：多 SKU 产品（如 5瓶/10瓶/20瓶）逐个点「上传主图」太慢。
+// 用法：按住 Ctrl/Shift 一次选中多张图，第1张给第1个SKU、第2张给第2个SKU，依次类推。
+function uploadSkuImagesBatch(){
+  if(!editingSkus || !editingSkus.length){ toast('请先添加至少一个 SKU'); return; }
+  const el=document.getElementById('skuBatchImgFile'); if(el) el.click();
+}
+async function handleSkuBatchUpload(input){
+  const files=Array.from(input.files||[]);
+  input.value=''; // 先清空，避免同样的一批文件再次触发
+  if(!files.length) return;
+  if(!editingSkus || !editingSkus.length){ toast('请先添加至少一个 SKU'); return; }
+  const use=files.slice(0, editingSkus.length);
+  const preview=use.slice(0,4).map((f,i)=>`第${i+1}张 → ${(editingSkus[i].name||('SKU'+(i+1)))}`).join('\n');
+  const more=use.length>4 ? `\n…共 ${use.length} 张` : '';
+  if(!window.confirm(`将按如下顺序分配 SKU 主图：\n\n${preview}${more}\n\n确定继续？（已配图的 SKU 会被覆盖）`)) return;
+  if(!currentGalFolder && GALLERY.length) currentGalFolder=GALLERY[0].name;
+  if(!currentGalFolder) currentGalFolder='默认图库';
+  let ok=0, fail=0;
+  toast(`开始上传 ${use.length} 张图…`);
+  for(let i=0;i<use.length;i++){
+    try{
+      const b64=await fileToBase64(use[i], true);
+      const res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:use[i].name})});
+      const data=await res.json();
+      if(!res.ok) throw new Error(data.error||('服务器错误 '+res.status));
+      if(data.error) throw new Error(data.error);
+      if(!data.url) throw new Error('服务器未返回图片地址');
+      updateSku(i,'image',data.url);
+      ok++;
+    }catch(err){ console.error('batch sku image upload error', err); fail++; }
+  }
+  renderSkuList();
+  try{ await refreshGallery(); }catch(e){}
+  toast(fail ? `批量上传完成：成功 ${ok} 张，失败 ${fail} 张` : `批量上传完成：${ok} 张已按顺序分配`);
+}
 function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+// 给图片 URL 加时间戳，避免 Supabase Storage / 浏览器因文件名没变而继续显示缓存旧图
+function imgCacheBust(url){
+  if(!url || url.startsWith('data:') || url.startsWith('blob:')) return url||'/assets/products/default.svg';
+  const sep = url.indexOf('?')>=0 ? '&' : '?';
+  return url + sep + 't=' + Date.now();
+}
 function stripTags(s){ return String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').trim(); }
 function clearDesc(){ const t=document.getElementById('pDesc'); t.innerHTML=''; updateDescCount(); try{ t.focus(); }catch(e){} }
 // 彻底清除 Word/网页复制带来的脏东西：
@@ -2744,17 +2674,10 @@ async function uploadDescImage(file){
   if(!currentGalFolder && GALLERY.length) currentGalFolder=GALLERY[0].name;
   if(!currentGalFolder) currentGalFolder='默认图库';
   const b64=await fileToBase64(file, true);
-  const ac=new AbortController(); const to=setTimeout(()=>ac.abort(), 60000);
-  let res, data;
-  try{
-    res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:file.name}),signal:ac.signal});
-    const txt=await res.text();
-    try{ data=JSON.parse(txt); }catch(_){ data={error:(txt||'').slice(0,120)||('HTTP '+res.status)}; }
-  }catch(e2){
-    throw new Error(e2 && e2.name==='AbortError' ? '上传超时（服务器响应慢），请重试' : ('网络错误：'+(e2&&e2.message||e2)));
-  }finally{ clearTimeout(to); }
-  if(!res.ok) throw new Error(data.message||data.error||('服务器错误 '+res.status));
-  if(data.error) throw new Error(data.message||data.error);
+  const res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:file.name})});
+  const data=await res.json();
+  if(!res.ok) throw new Error(data.error||('服务器错误 '+res.status));
+  if(data.error) throw new Error(data.error);
   if(!data.url) throw new Error('服务器未返回图片地址');
   return data.url;
 }
@@ -3158,22 +3081,26 @@ function importWordDoc(input){
   reader.onerror=()=>toast('文件读取失败，请重试');
   if(name.endsWith('.docx')) reader.readAsArrayBuffer(file); else reader.readAsText(file,'UTF-8');
 }
-function addSkuRow(){ editingSkus.push({id:generateSkuId(),name:'',price:'',stock:'',image:'',subtitle:'',bundleItems:[]}); renderSkuList(); }
+function addSkuRow(){ editingSkus.push({id:generateSkuId(),name:'',price:'',perPrice:'',stock:'',image:'',subtitle:'',bundleItems:[]}); renderSkuList(); }
 function removeSkuRow(idx){ editingSkus.splice(idx,1); renderSkuList(); }
 function updateSku(idx, field, value){
   const s=editingSkus[idx];
   if(field==='name') s.name=value.trim();
   if(field==='price') s.price=value===''?'':Math.max(0,Number(value)||0);
+  // 2026-09-11 加：单片/单件参考价（买家端红字"仅 ¥X/片"优先按这个显示）
+  if(field==='perPrice') s.perPrice=value===''?'':Math.max(0,Number(value)||0);
   if(field==='stock') s.stock=value===''?'':Math.max(0,Math.floor(Number(value)||0));
   if(field==='image') s.image=String(value||'').trim();
-  if(field==='bundle') s.bundleItems=parseBundleText(value);
   if(field==='subtitle') s.subtitle=String(value||'').trim().slice(0,80);
+  if(field==='bundle') s.bundleItems=parseBundleText(value);
 }
 function collectSkus(){
   return editingSkus.filter(s=>String(s.name).trim()).map(s=>({
     id: s.id,
     name: String(s.name).trim(),
     price: s.price===''?0:Number(s.price),
+    // 2026-09-11 加：商家填写的单片/单件参考价
+    perPrice: s.perPrice===''?0:Number(s.perPrice),
     stock: s.stock===''?0:Number(s.stock),
     image: String(s.image||'').trim(),   // 集合链接：SKU 独立主图
     subtitle: String(s.subtitle||'').trim().slice(0,80),  // 2026-09-10 加：客户端橘色小注解
@@ -3243,23 +3170,7 @@ async function saveProduct(){
       } else {
         toast('产品已保存（共 '+ savedText.length +' 字）' + (data.cached ? '（幂等：已跳过重复写入）' : ''));
       }
-      // 乐观本地更新：把服务端返回的保存结果立即写入内存缓存并重绘产品列表。
-      // 否则「保存成功后马上再打开」时，load()/loadOthers() 还没跑完（要等前面的 /api/orders），
-      // 而 editProduct() 读取的仍是旧 PRODUCTS，就会看到「跟原来一模一样」的旧值。
-      try{
-        const sp = data.product;
-        if(sp && sp.id){
-          const _i = PRODUCTS.findIndex(x=>x.id===sp.id);
-          if(_i>=0) PRODUCTS[_i]=Object.assign({},PRODUCTS[_i],sp);
-          else PRODUCTS.push(sp);
-        }
-      }catch(_e){}
-      closeProdModal();
-      try{ renderPM(); window.pmRendered=true; }catch(_e){}
-      // fix45：保存成功后立刻单独回源同步一次产品列表（不等 /api/orders），
-      // 保证「内存 PRODUCTS == 服务端」——这是「保存后马上重开弹窗看到旧值」的最后一道保险。
-      loadOthersSafely();
-      load(); return;
+      closeProdModal(); load(); return;
     }
     // 业务错误
     throw new Error(data.message || '保存失败');
@@ -3283,18 +3194,19 @@ async function deleteProduct(id){
 }
 function updateBatchDelete(){
   const ids=Array.from(document.querySelectorAll('.pm-sel:checked')).map(cb=>cb.value);
-  const btn=document.getElementById('pmBatchDel');
-  const all=document.getElementById('pmSelectAll');
-  if(btn){ btn.textContent='删除选中产品 ('+ids.length+')'; btn.disabled=ids.length===0; }
+  const delBtn=document.getElementById('pmBatchDel');
   const hideBtn=document.getElementById('pmBatchHide');
+  const all=document.getElementById('pmSelectAll');
+  if(delBtn){ delBtn.textContent='删除选中产品 ('+ids.length+')'; delBtn.disabled=ids.length===0; }
   if(hideBtn){
     // 智能标签：全已隐藏→「上架选中」，否则→「隐藏选中」；混合态显示「切换」
-    const selected=ids.map(id=>PRODUCTS.find(p=>p.id===id)).filter(Boolean);
-    const hiddenCount=selected.filter(p=>p.hidden).length;
+    const selected = ids.map(id=>(PRODUCTS.find(p=>p.id===id)||{})).filter(Boolean);
+    const hiddenCount = selected.filter(p=>p.hidden).length;
     let label='隐藏选中产品 ('+ids.length+')';
-    if(ids.length>0 && hiddenCount===selected.length) label='上架选中产品 ('+ids.length+')';
+    if(ids.length>0 && hiddenCount===ids.length) label='上架选中产品 ('+ids.length+')';
     else if(ids.length>0 && hiddenCount>0 && hiddenCount<ids.length) label='切换隐藏 ('+ids.length+')';
-    hideBtn.textContent=label; hideBtn.disabled=ids.length===0;
+    hideBtn.textContent=label;
+    hideBtn.disabled=ids.length===0;
   }
   if(all){ all.checked=PRODUCTS.length>0 && ids.length===PRODUCTS.length; }
 }
@@ -3316,7 +3228,6 @@ async function batchDelete(){
   toast('已删除 '+ok+' / '+ids.length+' 个产品'); load();
 }
 // 一键批量隐藏 / 上架勾选产品。智能判定目标值：全已隐藏则恢复，否则统一隐藏。
-// 保存后服务端会清买家端页面缓存，买家端立即同步（详情页变"商品不存在"、首页不显示）。
 async function batchHide(){
   const ids=Array.from(document.querySelectorAll('.pm-sel:checked')).map(cb=>cb.value).filter(Boolean);
   if(!ids.length){ toast('请先勾选要操作的产品'); return; }
@@ -3324,6 +3235,7 @@ async function batchHide(){
   const targetHidden = !(selected.length>0 && selected.every(p=>p.hidden));
   if(!window.confirm('将'+(targetHidden?'隐藏':'上架')+'以下 '+ids.length+' 个产品？\n\n'+selected.map(p=>p.name||p.id).join('\n'))) return;
   let res;
+  // 加 ?_ts 时间戳防止任何中间代理/浏览器按 URL 缓存响应
   const _ts = Date.now();
   try{
     res = await fetch('/api/products/batch-hidden?_ts='+_ts,{
@@ -3333,7 +3245,7 @@ async function batchHide(){
       body:JSON.stringify({ids, hidden:targetHidden})
     });
   }catch(e){ toast('批量操作失败：'+e.message); return; }
-  // 404 兜底：自动 fallback 到「逐个 toggle-hidden」
+  // 404 兜底：自动 fallback 到「逐个 toggle-hidden」——即使新接口被任何中间层拦了也能干活
   if(res && res.status===404){
     let ok2=0; for(const pid of ids){
       const cur=PRODUCTS.find(p=>p.id===pid);
@@ -3397,7 +3309,7 @@ function confirmGalPicker(){
   if(pickerMode==='main'){
     const url=selectedGalUrls[0]||'';
     document.getElementById('pMainImg').value=url;
-    document.getElementById('pMainImgPreview').src=url||'/assets/products/default.svg';
+    document.getElementById('pMainImgPreview').src=imgCacheBust(url||'/assets/products/default.svg');
   } else if(pickerMode==='sku'){
     const url=selectedGalUrls[0]||'';
     if(galPickSkuIdx>=0 && editingSkus[galPickSkuIdx]) editingSkus[galPickSkuIdx].image=url;
@@ -3419,19 +3331,11 @@ async function uploadToGal(input){
   const files=Array.from(input.files); if(!files.length) return;
   if(!currentGalFolder && GALLERY.length) currentGalFolder=GALLERY[0].name;
   if(!currentGalFolder){ toast('先创建一个文件夹'); return; }
-  let ok=0, fail=0;
   for(const f of files){
     const b64=await fileToBase64(f, true);
-    const ac=new AbortController(); const to=setTimeout(()=>ac.abort(), 60000);
-    try{
-      const res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name}),signal:ac.signal});
-      const txt=await res.text(); let data={}; try{ data=JSON.parse(txt); }catch(_){}
-      if(res.ok && data.url) ok++; else fail++;
-    }catch(e){ fail++; }
-    finally{ clearTimeout(to); }
+    await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name})});
   }
-  toast(fail ? ('上传结束：成功 '+ok+' 张，失败 '+fail+' 张（可再试一次）') : ('上传完成 '+ok+' 张（图片已自动压缩）'));
-  input.value=''; await refreshGallery(); renderGal();
+  toast('上传完成（图片已自动压缩）'); input.value=''; await refreshGallery(); renderGal();
 }
 function uploadDirect(target){
   document.getElementById(target==='main'?'pMainImgFile':'pDetailImgFile').click();
@@ -3450,22 +3354,15 @@ async function handleDirectUpload(input,target){
     const urls=[];
     for(const f of files){
       const b64=await fileToBase64(f, true);
-      const ac=new AbortController(); const to=setTimeout(()=>ac.abort(), 60000);
-      let res, data;
-      try{
-        res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name}),signal:ac.signal});
-        const txt=await res.text();
-        try{ data=JSON.parse(txt); }catch(_){ data={error:(txt||'').slice(0,120)||('HTTP '+res.status)}; }
-      }catch(e2){
-        throw new Error(e2 && e2.name==='AbortError' ? '上传超时（服务器响应慢），请重试；若图片很大请先压缩' : ('网络错误：'+(e2&&e2.message||e2)));
-      }finally{ clearTimeout(to); }
-      if(!res.ok) throw new Error(data.message||data.error||('服务器错误 '+res.status));
-      if(data.error) throw new Error(data.message||data.error);
+      const res=await fetch('/api/gallery/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:currentGalFolder, base64:b64, fileName:f.name})});
+      const data=await res.json();
+      if(!res.ok) throw new Error(data.error||('服务器错误 '+res.status));
+      if(data.error) throw new Error(data.error);
       if(data.url) urls.push(data.url);
     }
     if(target==='main' && urls[0]){
       document.getElementById('pMainImg').value=urls[0];
-      document.getElementById('pMainImgPreview').src=urls[0];
+      document.getElementById('pMainImgPreview').src=imgCacheBust(urls[0]);
       if(statusEl) statusEl.textContent='上传成功';
     } else if(target==='detail'){
       selectedGalUrls=selectedGalUrls.concat(urls);
@@ -3516,35 +3413,20 @@ async function compressImage(file, opts={}){
 
 load();
 // 15s 轮询：失败时静默重试，不在页面上弹大红报错
+// 2026-09-09 从 30s 改回 15s：发货管家回传单号后，商家后台要尽快反映「已发货」，
+//   30s 太慢（用户反馈：回传完点开后台还停在「等待回传区」，必须手动刷新才看到）。
 setInterval(()=>load(true), 15000);
-
-// ===== 切回后台自动刷新（用户确认要做的第 4 项功能）=====
-// 切去微信 / 最小化再切回来时，立刻静默刷新一遍；
-// 若这段时间新增了「待确认」订单，弹绿色提示「🔄 已自动刷新 · 发现 N 笔新订单」。
-let _pendingBaseline = -1;      // 切走前记录的待确认笔数；-1 = 尚未记录
-let _lastAutoRefresh = 0;       // 防抖：focus 与 visibilitychange 可能同时触发
-const _pageLoadTs = Date.now();
-function _pendingWaitCount(){ return ORDERS.filter(o=>o.status==='待确认').length; }
-async function _autoRefreshOnReturn(){
-  const now = Date.now();
-  if(now - _lastAutoRefresh < 2000) return;       // 2 秒内不重复触发
-  if(now - _pageLoadTs < 3000) return;            // 首次打开 3 秒内不抢刷
-  _lastAutoRefresh = now;
-  const before = _pendingBaseline >= 0 ? _pendingBaseline : _pendingWaitCount();
-  try{ await load(true); }catch(e){ return; }     // 静默刷新（无 loading 提示）
-  const after = _pendingWaitCount();
-  const diff = after - before;
-  if(diff > 0) toast('🔄 已自动刷新 · 发现 '+diff+' 笔新订单');
-  _pendingBaseline = after;
+// 2026-09-09 新增：切回本窗口 / 页面重新可见时，立即静默拉取一次。
+//   典型场景 = 在发货管家回传完单号 → 切回商家后台，应该立刻看到「已发货」，而不是干等下一次轮询。
+//   节流 5s：避免频繁切窗造成请求风暴；轮询刚拉完的 5s 内也不会重复拉。
+function refreshOnFocus(){
+  const now=Date.now();
+  if(now-(window._lastLoadAt||0) < 5000) return;
+  window._lastLoadAt=now;
+  load(true);
 }
-document.addEventListener('visibilitychange', ()=>{
-  if(document.visibilityState === 'hidden'){
-    _pendingBaseline = _pendingWaitCount();        // 切走瞬间记录基线
-  }else{
-    _autoRefreshOnReturn();
-  }
-});
-window.addEventListener('focus', ()=>{ _autoRefreshOnReturn(); });
+window.addEventListener('focus', refreshOnFocus);
+document.addEventListener('visibilitychange', function(){ if(!document.hidden) refreshOnFocus(); });
 </script>
 </body>
 </html>
