@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>{{SHOP_NAME}}</title>
 <meta property="og:title" content="{{OG_TITLE}}">
 <meta property="og:description" content="{{OG_DESC}}">
@@ -39,7 +42,7 @@
   .cdbar .num{font-size:17px;color:#f0e6d8;font-weight:900;margin:0 1px;font-variant-numeric:tabular-nums;display:inline-block;letter-spacing:.5px}
   .cdbar .num.tick{animation:cdtick 1s infinite}
   @keyframes cdtick{0%{transform:scale(1)}50%{transform:scale(1.07)}100%{transform:scale(1)}}
-  .cdbar .sep{color:#e8d9b0;font-weight:900;margin:0 1px;font-size:15px}
+  .cdbar .cd-ttl{color:#e8d9b0;font-size:11px;letter-spacing:1px;font-weight:500;background:rgba(255,255,255,.08);padding:3px 9px;border-radius:12px;white-space:nowrap}
   .cdbar.end{background:linear-gradient(135deg,#6b6b6b,#888);border-top-color:#999;border-bottom-color:#999;justify-content:center}
   .cdbar.end .num{color:#fff}
 
@@ -95,23 +98,29 @@
   .sku-head .stock{font-size:12px;color:#9a8f82;margin-top:4px}
   .sku-section{margin-bottom:18px}
   .sku-sec-title{font-size:13px;color:#3a322b;font-weight:600;margin-bottom:10px}
-  /* 2026-09-13 恢复 2026-09-09 版式：SKU 一横排大卡片（左图 + 右文），副标题无框纯文字 */
+  /* 2026-09-09 改版：SKU 选项由「纯文字胶囊」升级为「大图+名称+价格+库存」单列卡片；
+     一个 SKU 独占一横排，图片放大到 88px，手机上客户看得清 */
   .sku-opts{display:flex;flex-direction:column;gap:10px}
   .sku-opt{border:1.5px solid #e0d6c8;background:#fff;border-radius:12px;padding:10px;display:flex;gap:12px;align-items:center;cursor:pointer;transition:all .15s}
   .sku-opt.on{border-color:#b8743f;background:#fff7ef}
   .sku-opt.off{border-color:#f0ece4;background:#faf8f4;cursor:not-allowed;opacity:.6}
   .sku-opt .sk-img{width:88px;height:88px;object-fit:cover;border-radius:10px;background:#f0ece4;flex:none}
-  .sku-opt .sk-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
+  .sku-opt .sk-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
   .sku-opt .sk-name{font-size:14px;font-weight:600;color:#3a322b;line-height:1.4}
   .sku-opt.on .sk-name{color:#b8743f;font-weight:700}
-  .sku-opt .sk-subtitle{font-size:11px;color:#8a6a4f;font-style:italic;line-height:1.45;word-break:break-word}
-  .sku-opt.on .sk-subtitle{color:#6f533c}
-  .sku-opt.off .sk-subtitle{opacity:.55}
-  .sku-opt .sk-meta{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .sku-opt .sk-meta{display:flex;justify-content:space-between;align-items:baseline}
   .sku-opt .sk-price{font-size:16px;font-weight:700;color:#c0392b}
   .sku-opt.on .sk-price{color:#b8743f}
-  .sku-opt .sk-stock{font-size:12px;color:#9a8f82;white-space:nowrap}
+  .sku-opt .sk-stock{font-size:12px;color:#9a8f82}
   .sku-opt.off .sk-stock{color:#c0392b;font-weight:600}
+  /* 2026-09-09 22:30 加：SKU 卡片显示「产品内容」（来自 bundleItems），让 A4组合/B2组合 这类编号名直接看得懂包含什么 */
+  .sku-opt .sk-bundle{font-size:12px;color:#7a6f62;line-height:1.55;margin-top:2px}
+  .sku-opt .sk-bundle .b-plus{color:#c0a989;margin:0 5px;font-weight:500}
+  .sku-opt.off .sk-bundle{color:#bbb}
+  /* 2026-09-10 修：SKU 副标题改淡雅无背景斜体（按用户提供的目标图 image#2） */
+  .sku-opt .sk-subtitle{display:block;background:none !important;border:none !important;color:#8a6a4f !important;font-style:italic !important;font-weight:400 !important;font-size:12px !important;line-height:1.55;margin-top:5px !important;padding:0 !important;max-width:100%;word-break:break-word;box-sizing:border-box}
+  .sku-opt.on .sk-subtitle{color:#6f533c !important}
+  .sku-opt.off .sk-subtitle{opacity:.55}
   .sku-qty-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
   .qty-box{display:flex;align-items:center;border:1px solid #e0d6c8;border-radius:8px;overflow:hidden}
   .qty-box button{width:34px;height:34px;border:none;background:#faf7f2;font-size:18px;color:#5b5147;cursor:pointer}
@@ -211,9 +220,9 @@
     </div>
   </div>
 
-  <!-- 活动倒计时条（波次名 + 剩余 时:分:秒） -->
+  <!-- 活动倒计时条（深棕底 + 三段跳秒） -->
   <div class="cdbar" id="cdbar" style="display:none">
-    <span class="dot"></span><div class="cd-main"><span id="cdLabel">距活动结束仅剩</span><span class="num" id="cdH">--</span><span class="sep">:</span><span class="num" id="cdM">--</span><span class="sep">:</span><span class="num tick" id="cdS">--</span></div>
+    <span class="dot"></span><div class="cd-main"><span>距活动结束仅剩</span><span class="num" id="cdH">--</span><span>小时</span><span class="num" id="cdM">--</span><span>分</span><span class="num tick" id="cdS">--</span><span>秒</span></div><div class="cd-ttl" id="cdTtl">抢完提前截止</div>
   </div>
 
   <!-- 活动分类导航 -->
@@ -251,7 +260,7 @@
         </div>
       </div>
       <div class="sku-bundle" id="skuBundleBox" style="display:none">
-        <div class="sku-sec-title">该选项实际包含</div>
+        <div class="sku-sec-title">产品内容</div>
         <div id="skuBundleList"></div>
       </div>
       <div class="sku-foot">
@@ -337,22 +346,6 @@ try { cart = JSON.parse(localStorage.getItem('cart')||'{}'); } catch(e){ cart={}
 const $ = s=>document.querySelector(s);
 function money(n){ return '¥'+Number(n).toLocaleString('zh-CN'); }
 function stripTags(s){ return String(s||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').trim(); }
-function convertFontToSpan(html){ return String(html||'').replace(/<font\b[^>]*color=["']?([^"'>]+)["']?[^>]*>([\s\S]*?)<\/font>/gi, '<span style="color:$1">$2</span>').replace(/<font\b[^>]*>([\s\S]*?)<\/font>/gi, '$1'); }
-function escapeHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-// 缩略图 URL：把产品主图（/img/... 代理地址或 Supabase 直链）追加 ?w=&h=&q=，
-// 交由图片代理走 Supabase 转换端点下发小图（约 1/8 体积）。本地占位图原样返回。
-function thumbUrl(u, w, h, q){
-  if(!u) return u;
-  let s = u;
-  const m = String(s).match(/\/storage\/v1\/object\/public\/(.+)$/);
-  if(m) s = '/img/' + m[1];
-  if(s.indexOf('/img/')!==0) return s;
-  const sep = s.indexOf('?')>=0 ? '&' : '?';
-  let qry = 'w='+w;
-  if(h && Number(h)>0) qry += '&h='+h;
-  qry += '&q='+(q||70);
-  return s + sep + qry;
-}
 
 function copyText(text, msg){
   if(navigator.clipboard){
@@ -384,54 +377,16 @@ function queryTracking(no){
 const CATEGORIES = ['全部','特惠单品','明星套装','明星组合','高功效私人定制','特殊'];
 // 2026-09-12 活动波次分组：波次进行中，分类栏只显示本波分组（其余分类全部隐藏）
 const WAVES = {
-  w1:{name:'第一波', dur:'48h', groups:[['全部','全部'],['w1g1','第1组特惠'],['w1g2','第2组特惠'],['w1g3','第3组特惠']]},
-  w2:{name:'第二波', dur:'48h', groups:null},
-  w3:{name:'第三波', dur:'', groups:null},
-  w4:{name:'最终返场 · 捡漏 · 爆品', dur:'48h', cats:['特惠单品','明星套装','明星组合','高功效私人定制','特殊']}
+  w1:{title:'第一波', groups:[['w1g1','第1组特惠'],['w1g2','第2组特惠'],['w1g3','第3组特惠']]},
+  w2:{title:'第二波', groups:[['w2g1','第二波A组'],['w2g2','第二波B组']]},
+  w3:{title:'第三波', groups:[['w3g1','定制专区'],['w3g2','盲盒']]},
+  w4:{title:'返场捡漏', groups:[['w4g1','返场爆品'],['ALL','全部返场']]}
 };
-// 多波同时上架时的组合分类栏（目前仅支持 w2+w3）
-// 交互与「返场」一致：不设「全部」按钮，默认不过滤（currentCat='' 显示本波全部）；
-// 点某个分类筛选，再点同一个分类取消筛选回到全部。
-const WAVE_COMBOS = {
-  'w2,w3':{
-    cats:['特惠单品','明星套装','明星组合','高功效私人定制'],
-    map:{'特惠单品':'特惠单品','明星套装':'明星套装','明星组合':'明星组合','高功效私人定制':'高功效私人定制'}
-  }
-};
-// 波次直链：URL ?wave=w2 / ?wave=w2,w3 / ?wave=none 可固定显示某一波，不受全局排期影响（用于分享"第二波链接/第三波链接"）
-const URL_WAVE = (function(){
-  try{
-    const m = new URLSearchParams(location.search).get('wave');
-    if(!m) return null;
-    const arr = m.split(',').map(s=>s.trim()).filter(Boolean).filter(s=>WAVES[s]||s==='none');
-    return arr.length ? arr : null;
-  }catch(e){ return null; }
-})();
-const URL_WAVE_PREFIX = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'' };
-function activeWaves(){ if(URL_WAVE) return URL_WAVE; return (CONFIG && CONFIG.activeWave) ? String(CONFIG.activeWave).split(',').map(s=>s.trim()).filter(s=>WAVES[s]) : []; }
-function activeCombo(){
-  const waves=activeWaves();
-  if(waves.length<2) return null;
-  const key=waves.slice().sort().join(',');
-  return WAVE_COMBOS[key]||null;
-}
-function activeWave(){ const arr=activeWaves(); return arr[0]||''; }
-function waveName(){ const w=activeWave(); return w?WAVES[w].name:''; }
-function waveDur(){ const w=activeWave(); if(!w) return ''; const c=(CONFIG&&CONFIG.waveDur)?String(CONFIG.waveDur).trim():''; return c||WAVES[w].dur||''; }
-function waveLabel(){ const w=activeWave(); if(!w) return ''; return WAVES[w].name + waveDur(); }
+function activeWave(){ return (CONFIG && CONFIG.activeWave && WAVES[CONFIG.activeWave]) ? CONFIG.activeWave : ''; }
 let currentCat = '全部';
 function hiddenCategories(){ return (CONFIG && Array.isArray(CONFIG.hiddenCategories))?CONFIG.hiddenCategories:[]; }
 function isProductHidden(p){
   if(!p) return true;
-  // 波次直链模式：按 URL 波次显示，忽略全局 p.hidden（让"第二波链接"永远能看到第二波商品）
-  if(URL_WAVE){
-    if(URL_WAVE.includes('none')) return false;
-    const prefixes = URL_WAVE.map(w=>URL_WAVE_PREFIX[w]).filter(Boolean);
-    if(prefixes.some(pr=>!pr)) return false; // 含 w4（空 prefix）→ 全部显示
-    const g = String(p.waveGroup||'').trim();
-    if(!g) return true;
-    return !prefixes.some(pr=>g.indexOf(pr)===0);
-  }
   if(p.hidden) return true;
   const cat = String(p.category||'').trim();
   return cat && hiddenCategories().includes(cat);
@@ -439,47 +394,11 @@ function isProductHidden(p){
 
 function renderCats(){
   const box = $('#catinner'); box.innerHTML = '';
-  const bar = document.getElementById('catbar');
-  const waves = activeWaves();
-  const combo = activeCombo();
-  // 多波组合：显示组合专用分类按钮（目前 w2+w3）。
-  // 与「返场」同交互：无「全部」按钮，默认不过滤；再点已选分类 = 取消筛选。
-  if(combo){
-    if(bar) bar.style.display='';
-    const cats = combo.cats;
-    if(currentCat && cats.indexOf(currentCat)<0) currentCat='';
-    cats.forEach(c=>{
-      const btn = document.createElement('button');
-      btn.className = 'cattab ' + (c===currentCat?'on':'');
-      btn.textContent = c;
-      btn.onclick = ()=>{ currentCat = (currentCat===c) ? '' : c; renderCats(); renderGrid(); };
-      box.appendChild(btn);
-    });
-    return;
-  }
-  // 返场：按活动分类筛选（5 个分类，不含「全部」）。默认不选 → 显示全部产品；
-  // 点某个分类筛选，再点同一个分类可取消筛选回到全部。
-  const hasCats = waves.some(w=>WAVES[w].cats);
-  if(hasCats){
-    if(bar) bar.style.display='';
-    const cats = WAVES[waves.find(w=>WAVES[w].cats)].cats;
-    if(currentCat && cats.indexOf(currentCat)<0) currentCat='';
-    cats.forEach(c=>{
-      const btn = document.createElement('button');
-      btn.className = 'cattab ' + (c===currentCat?'on':'');
-      btn.textContent = c;
-      btn.onclick = ()=>{ currentCat = (currentCat===c) ? '' : c; renderCats(); renderGrid(); };
-      box.appendChild(btn);
-    });
-    return;
-  }
-  // 第一波：全部 + 本波分组
-  const hasGroups = waves.some(w=>WAVES[w].groups);
-  if(hasGroups){
-    if(bar) bar.style.display='';
-    const groups = WAVES[waves.find(w=>WAVES[w].groups)].groups;
-    if(currentCat!=='全部' && !groups.some(g=>g[0]===currentCat)) currentCat='全部';
-    groups.forEach(g=>{
+  const w = activeWave();
+  if(w){
+    const conf = WAVES[w];
+    if(!conf.groups.some(g=>g[0]===currentCat)) currentCat = conf.groups[0][0];
+    conf.groups.forEach(g=>{
       const btn = document.createElement('button');
       btn.className = 'cattab ' + (g[0]===currentCat?'on':'');
       btn.textContent = g[1];
@@ -488,14 +407,6 @@ function renderCats(){
     });
     return;
   }
-  // 第二波 / 第三波单波：整条分类栏不显示
-  if(waves.length){
-    if(bar) bar.style.display='none';
-    currentCat = '全部';
-    return;
-  }
-  if(bar) bar.style.display='';
-  if(!currentCat || CATEGORIES.indexOf(currentCat)<0) currentCat='全部';
   const hideSet = new Set(hiddenCategories());
   CATEGORIES.filter(c=>c==='全部' || !hideSet.has(c)).forEach(c=>{
     const btn = document.createElement('button');
@@ -559,22 +470,10 @@ function productTierTag(p){
 function renderGrid(){
   const g = $('#grid'); g.innerHTML='';
   const visible = PRODUCTS.filter(p=>!isProductHidden(p));
-  const waves = activeWaves();
-  const combo = activeCombo();
-  let list;
-  if(combo){
-    // 与返场一致：currentCat='' 表示不过滤，显示本波全部
-    list = currentCat ? visible.filter(p=>String(p.category||'').trim()===combo.map[currentCat]) : visible;
-  } else if(waves.some(w=>WAVES[w].cats)){
-    list = currentCat ? visible.filter(p=>String(p.category||'').trim()===currentCat) : visible;
-  } else if(waves.some(w=>WAVES[w].groups)){
-    list = (currentCat==='全部') ? visible : visible.filter(p=>String(p.waveGroup||'').trim()===currentCat);
-  } else if(waves.length){
-    list = visible;
-  } else {
-    list = (currentCat==='全部') ? visible : visible.filter(p=>String(p.category||'').trim()===currentCat);
-  }
-  list.forEach((p, idx)=>{
+  const w = activeWave();
+  const list = w ? (currentCat==='ALL' ? visible : visible.filter(p=>String(p.waveGroup||'').trim()===currentCat))
+                 : (currentCat==='全部' ? visible : visible.filter(p=>String(p.category||'').trim()===currentCat));
+  list.forEach(p=>{
     const div=document.createElement('div'); div.className='card';
     const orig = (p.originalPrice && p.originalPrice>p.price) ? '<span class="orig">'+money(p.originalPrice)+'</span>' : '';
     const hasSkus = Array.isArray(p.skus) && p.skus.length>0;
@@ -583,18 +482,15 @@ function renderGrid(){
     const unitLabel = hasSkus ? '<small>/起</small>' : '';
     const tierTag = hasSkus ? productTierTag(p) : '';
     const soldOut = isSoldOut(p);
-    // 缩略图：首屏前 6 张高优先级 + 立即加载，其余懒加载；onerror 自动回退原图，绝不裂图
-    const ph = p.image || '/assets/product-placeholder.svg';
-    const thumb = thumbUrl(ph, 400, 500, 70);
-    const loadAttr = idx<6 ? 'loading="eager" fetchpriority="high"' : 'loading="lazy"';
+    // 售罄：主图蒙半透明黑 + 居中斜向右上「已售罄」印章；未售罄保持原图可点进详情
     const imgHtml = soldOut
       ? `<div class="imgwrap" onclick="goProduct('${p.id}')">
-           <img class="img" src="${thumb}" ${loadAttr} decoding="async" onerror="this.onerror=null;this.src=this.src.split('?')[0]">
+           <img class="img" src="${imgCacheBust(p.image||'/assets/product-placeholder.svg')}" loading="lazy" decoding="async">
            <div class="soldout-veil"></div>
            <div class="soldout-stamp">已售罄</div>
          </div>`
       : `<div class="imgwrap" onclick="goProduct('${p.id}')">
-           <img class="img" src="${thumb}" ${loadAttr} decoding="async" onerror="this.onerror=null;this.src=this.src.split('?')[0]">
+           <img class="img" src="${imgCacheBust(p.image||'/assets/product-placeholder.svg')}" loading="lazy" decoding="async">
          </div>`;
     const btnHtml = soldOut
       ? `<button class="add" disabled>已售罄</button>`
@@ -610,9 +506,9 @@ function renderGrid(){
     div.querySelector('.desc').textContent = stripTags(p.desc||'');
     g.appendChild(div);
   });
-  if(!list.length) g.innerHTML='<p style="grid-column:1/-1;text-align:center;color:#bbb;padding:30px 0">'+((!currentCat||currentCat==='全部')?'暂未上架商品':'该分类下暂无商品')+'</p>';
+  if(!list.length) g.innerHTML='<p style="grid-column:1/-1;text-align:center;color:#bbb;padding:30px 0">'+(currentCat==='全部'?'暂未上架商品':'该分类下暂无商品')+'</p>';
 }
-function goProduct(id){ location.href='/product/'+id + (URL_WAVE ? '?wave='+URL_WAVE.join(',') : ''); }
+function goProduct(id){ location.href='/product/'+id; }
 
 function cartCount(){ return Object.values(cart).reduce((a,b)=>a+b,0); }
 function cartTotal(){ return Object.entries(cart).reduce((s,[id,q])=>{ const info=getCartInfo(id); return s+(info.price*q); },0); }
@@ -652,7 +548,7 @@ function openSkuModal(pid){
   // 默认选中第一个有货的规格；全部售罄则停在第一个（按钮置灰）
   const firstOk = skus.find(s=>{ const st=skuStockOf(p,s); return st==null || st>0; });
   curSkuId = (firstOk || skus[0]).id; curSkuQty=1;
-  document.getElementById('skuImg').src = thumbUrl(p.image||'/assets/product-placeholder.svg', 200, 200, 70);
+  document.getElementById('skuImg').src = imgCacheBust(p.image||'/assets/product-placeholder.svg');
   document.getElementById('skuPicked').textContent = '请选择型号';
   const minPrice = Math.min(...skus.map(s=>Number(s.price||p.price||0)));
   document.getElementById('skuPrice').innerHTML = money(minPrice)+'<small>/起</small>';
@@ -662,18 +558,33 @@ function openSkuModal(pid){
   document.getElementById('skuModal').classList.add('show');
 }
 function closeSkuModal(){ document.getElementById('skuModal').classList.remove('show'); }
+// 2026-09-09 新增：SKU 卡片渲染需要转义，避免名称里带引号/尖括号时破坏 HTML
+function escapeHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function imgCacheBust(url){
+  if(!url || url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('/assets/')) return url||'/assets/products/default.svg';
+  const sep = url.indexOf('?')>=0 ? '&' : '?';
+  return url + sep + 't=' + Date.now();
+}
 function renderSkuOptions(){
   const p=curSkuProd; if(!p) return;
   const box=document.getElementById('skuOpts');
   box.innerHTML = p.skus.map(s=>{
     const st = skuStockOf(p, s);
     const off = st!=null && st<=0; // 该规格售罄，不可选
-    const imgSrc = escapeHtml(thumbUrl(s.image||p.image||'/assets/products/default.svg', 200, 200, 70));
+    // 2026-09-09 22:30 加：SKU 卡片内置产品内容（来自 bundleItems），让 A4组合 这类编号名直接看得懂
+    const bi = (Array.isArray(s.bundleItems)&&s.bundleItems.length)?s.bundleItems:(p.bundleItems||[]);
+    const bundleHtml = bi.length
+      ? '<div class="sk-bundle">' + bi.map(b=>{
+          const qtyTxt = (b.qty&&b.qty>1) ? (b.qty+'× ') : '';
+          return qtyTxt + escapeHtml(b.name||'');
+        }).join('<span class="b-plus">+</span>') + '</div>'
+      : '';
     return `<div class="sku-opt ${s.id===curSkuId?'on':''} ${off?'off':''}" ${off?'':`onclick="selectSku('${s.id}')"`}>
-      <img class="sk-img" src="${imgSrc}" onerror="this.src='/assets/products/default.svg'" alt="">
+      <img class="sk-img" src="${escapeHtml(imgCacheBust(s.image||p.image||'/assets/products/default.svg'))}" onerror="this.src='/assets/products/default.svg'" alt="">
       <div class="sk-body">
-        <div class="sk-name">${convertFontToSpan(s.name||'')}</div>
-        ${s.subtitle?'<div class="sk-subtitle">'+convertFontToSpan(s.subtitle)+'</div>':''}
+        <div class="sk-name">${escapeHtml(s.name||'')}</div>
+        ${s.subtitle?'<div class="v3-sub" data-v3sub="1" style="all:initial;display:block!important;background:none!important;border:none!important;color:#8a6a4f!important;font-style:italic!important;font-weight:400!important;font-size:12px!important;line-height:1.55!important;margin:5px 0 0!important;padding:0!important;max-width:100%;word-break:break-word;box-sizing:border-box">'+escapeHtml(s.subtitle)+'</div>':''}
+        ${bundleHtml}
         <div class="sk-meta">
           <span class="sk-price">${money(s.price!=null&&s.price!==''?s.price:(p.price||0))}</span>
           <span class="sk-stock">${off?'已售罄':(st!=null?('余 '+st+' 件'):'')}</span>
@@ -762,7 +673,7 @@ function renderCart(){
       }
       const row=document.createElement('div'); row.className='item';
       row.innerHTML=`
-        <img src="${thumbUrl(info.image||'/assets/product-placeholder.svg',120,150,70)}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src=this.src.split('?')[0]">
+        <img src="${imgCacheBust(info.image||'/assets/product-placeholder.svg')}" loading="lazy" decoding="async">
         <div class="info"><div class="n" style="line-height:1.5">${titleHtml}${detailHtml}</div><div class="p" style="margin-top:4px">${money(info.price)}</div></div>
         <div class="stepper"><button onclick="changeQty('${id}',-1)">−</button><span>${cart[id]}</span><button onclick="changeQty('${id}',1)">+</button></div>`;
       box.appendChild(row);
@@ -820,7 +731,7 @@ function showPendingModal(){
     const itemLines = o.items.map(it=>{
       const img = it.image || (PRODUCTS.find(p=>p.id===it.id)||{}).image || '/assets/logo.png';
       return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed #f0ece4">
-        <img src="${thumbUrl(img,120,150,70)}" style="width:40px;height:40px;border-radius:6px;object-fit:cover;background:#eee" onerror="this.src='/assets/logo.png'">
+        <img src="${imgCacheBust(img)}" style="width:40px;height:40px;border-radius:6px;object-fit:cover;background:#eee" onerror="this.src='/assets/logo.png'">
         <div style="flex:1;min-width:0;font-size:13px">
           <div style="font-weight:600;color:#3a322b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${it.name}</div>
           <div style="font-size:12px;color:#9a8f82">${money(it.price)} × ${it.qty}</div>
@@ -867,9 +778,7 @@ function markPaidAndGo(){
     });
 }
 
-let _orderSubmitting = false;   // fix41：防连点/重复提交（2026-09-18 有买家一次点击被连发 29 单）
 function submitOrder(){
-  if(_orderSubmitting) return;
   const name=$('#cName').value.trim(), phone=$('#cPhone').value.trim(), addr=$('#cAddr').value.trim(), wechat=$('#cWechat').value.trim();
   if(!name||!phone||!addr){ alert('请填写完整收货信息'); return; }
   const items=Object.entries(cart).map(([id,q])=>{
@@ -877,17 +786,14 @@ function submitOrder(){
     return {id:pid, skuId:skuId||undefined, qty:q};
   });
   if(!items.length){ alert('购物车为空'); return; }
-  _orderSubmitting = true;
-  const btn=document.querySelector('.submit');
-  if(btn){ btn.disabled=true; btn.textContent='提交中…'; }
-  const reset=()=>{ _orderSubmitting=false; if(btn){ btn.disabled=false; btn.textContent='提交订单'; } };
   fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,phone,address:addr,wechat,items})})
     .then(r=>r.json()).then(d=>{
-      if(d.id){ saveBuyer(); addPending(d.id); cart={}; saveCart(); closeCheckout(); location.href='/order/'+d.id; return; }
-      reset();
-      const msg = d.message || d.error || '未知错误';
-      alert('下单失败：'+msg+'\n\n如提示"数据目录不可写"或"operation not permitted"，请关闭当前黑窗口，双击桌面图标「不初限时狂欢商城」重新启动服务。');
-    }).catch(e=>{ reset(); alert('网络错误：'+e.message+'\n\n请检查是否已双击桌面图标启动商城服务。'); });
+      if(d.id){ saveBuyer(); addPending(d.id); cart={}; saveCart(); closeCheckout(); location.href='/order/'+d.id; }
+      else {
+        const msg = d.message || d.error || '未知错误';
+        alert('下单失败：'+msg+'\n\n如提示"数据目录不可写"或"operation not permitted"，请关闭当前黑窗口，双击桌面图标「不初限时狂欢商城」重新启动服务。');
+      }
+    }).catch(e=>alert('网络错误：'+e.message+'\n\n请检查是否已双击桌面图标启动商城服务。'));
 }
 
 function openLookupModal(){ $('#lookupModal').classList.add('show'); }
@@ -974,9 +880,9 @@ function lookupOrder(){
 }
 function closeResult(){ $('#resultModal').classList.remove('show'); }
 
-// 活动倒计时：显示「第一波48h · 剩余 47:12:30」；归零显示「第一波 已结束」
+// 活动倒计时（Style B 修改版）：剩 >1 小时显「小时」，最后 1 小时显「分钟」，归零显「活动已结束」
 function startCountdown(){
-  const bar=$('#cdbar'), hEl=$('#cdH'), mEl=$('#cdM'), sEl=$('#cdS'), lbEl=$('#cdLabel');
+  const bar=$('#cdbar'), hEl=$('#cdH'), mEl=$('#cdM'), sEl=$('#cdS'), ttlEl=$('#cdTtl');
   const dl=(CONFIG&&CONFIG.activityDeadline)||'';
   if(!dl){ bar.style.display='none'; return; }
   const target=new Date(dl);
@@ -984,12 +890,23 @@ function startCountdown(){
   // 活动开始时间：未到开始时间则隐藏红条，到点才显示
   const st=(CONFIG&&CONFIG.activityStart)||'';
   if(st){ const startTime=new Date(st); if(!isNaN(startTime.getTime()) && Date.now()<startTime.getTime()){ bar.style.display='none'; return; } }
-  const label=waveLabel();
-  if(lbEl) lbEl.textContent = label ? (label+' · 剩余') : '距活动结束仅剩';
+  // 倒计时后半句：按活动时间分段自动切换，或后台手动指定
+  function currentPhrase(){
+    const phrases=(CONFIG&&Array.isArray(CONFIG.countdownPhrases))?CONFIG.countdownPhrases.filter(s=>s&&String(s).trim()):[];
+    if(!phrases.length) return null;
+    const manual=(CONFIG&&typeof CONFIG.countdownManualIndex==='number')?CONFIG.countdownManualIndex:-1;
+    if(manual>=0 && manual<phrases.length) return phrases[manual];
+    const startMs = st ? new Date(st).getTime() : Date.now();
+    const segH = (CONFIG&&typeof CONFIG.countdownSegmentHours==='number'&&CONFIG.countdownSegmentHours>0)?CONFIG.countdownSegmentHours:12;
+    let elapsed = Date.now()-startMs; if(elapsed<0) elapsed=0;
+    let idx = Math.floor(elapsed/(segH*3600*1000));
+    if(idx<0) idx=0; if(idx>=phrases.length) idx=phrases.length-1;
+    return phrases[idx];
+  }
   function pad(n){return n<10?'0'+n:n}
   function tick(){
     const diff=target.getTime()-Date.now();
-    if(diff<=0){ bar.style.display='flex'; bar.classList.add('end'); bar.innerHTML='<span class="dot"></span><span>'+(label?label+' 已结束':'本次活动已全部结束')+'</span>'; return; }
+    if(diff<=0){ bar.style.display='flex'; bar.classList.add('end'); bar.innerHTML='<span class="dot"></span><span>本次活动已全部结束</span>'; return; }
     const totalSec=Math.floor(diff/1000);
     const hrs=Math.floor(totalSec/3600);
     const mins=Math.floor((totalSec%3600)/60);
@@ -998,45 +915,14 @@ function startCountdown(){
     hEl.textContent=pad(hrs);
     mEl.textContent=pad(mins);
     sEl.textContent=pad(secs);
+    const ph=currentPhrase(); if(ph!=null && ttlEl) ttlEl.textContent=ph;
     setTimeout(tick,1000);
   }
   tick();
 }
 
-// 公告滚动条文案：按「公告文案」分段自动切换（默认每 12 小时一句），支持后台手动指定。
-// 计算规则与 countdownSegmentHours / countdownManualIndex 一致。
-function initNotify(){
-  const el=document.getElementById('notifyText'); if(!el) return;
-  const phrases=(CONFIG&&Array.isArray(CONFIG.countdownPhrases))?CONFIG.countdownPhrases.filter(s=>s&&String(s).trim()):[];
-  if(!phrases.length) return;
-  const manual=(CONFIG&&typeof CONFIG.countdownManualIndex==='number')?CONFIG.countdownManualIndex:-1;
-  let txt=null;
-  if(manual>=0 && manual<phrases.length) txt=phrases[manual];
-  else{
-    // 滚动条时间基线：优先用 activityStart；若缺失/无效，则从 waveEndsAt - waveDur 反推当前波次开始时间
-    let base = NaN;
-    const st=(CONFIG&&CONFIG.activityStart)||'';
-    if(st){ base=new Date(st).getTime(); if(isNaN(base)) base=NaN; }
-    if(isNaN(base)){
-      const endsAt=(CONFIG&&CONFIG.waveEndsAt)?Number(CONFIG.waveEndsAt):NaN;
-      const durStr=(CONFIG&&CONFIG.waveDur)||'';
-      const durH=parseInt(durStr,10);
-      if(Number.isFinite(endsAt) && Number.isFinite(durH) && durH>0){
-        base = endsAt - Math.round(durH*3600*1000);
-      }
-    }
-    if(isNaN(base)){ const d=new Date(); d.setHours(0,0,0,0); base=d.getTime(); }
-    const segH=(CONFIG&&typeof CONFIG.countdownSegmentHours==='number'&&CONFIG.countdownSegmentHours>0)?CONFIG.countdownSegmentHours:12;
-    let elapsed=Date.now()-base; if(elapsed<0) elapsed=0;
-    let idx=Math.floor(elapsed/(segH*3600*1000));
-    if(idx<0) idx=0; if(idx>=phrases.length) idx=phrases.length-1;
-    txt=phrases[idx];
-  }
-  if(txt) el.textContent = txt + '　　' + txt + '　　' + txt;
-}
-
-renderCats(); renderGrid(); updateBadge(); checkPendingOrders(); startCountdown(); initNotify();
-setInterval(initNotify, 60000);
+renderCats(); renderGrid(); updateBadge(); checkPendingOrders(); startCountdown(); /* v3-sub 兜底 */
+(function(){function fix(){document.querySelectorAll('[data-v3sub="1"]').forEach(function(el){el.style.cssText='all:initial;display:block!important;background:none!important;border:none!important;color:#8a6a4f!important;font-style:italic!important;font-weight:400!important;font-size:12px!important;line-height:1.55!important;margin:5px 0 0!important;padding:0!important;'});}fix();document.addEventListener('DOMContentLoaded',fix);setTimeout(fix,100);setTimeout(fix,500);})();
 </script>
 </body>
 </html>
