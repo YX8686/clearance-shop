@@ -2413,17 +2413,29 @@ function parseBundleText(text){
     return { name:m[1].trim(), qty:Number(m[2]), unit:(m[3]||'件').trim() || '件' };
   }).filter(Boolean);
 }
-// 保存前强制从 DOM 读取当前 textarea 内容，避免用户没触发 onchange 就点保存
+// 保存前强制从 DOM 读取当前所有 SKU 字段，避免用户没触发 onchange 就点保存导致数据丢失
 function flushSkuBundleTextareas(){
   document.querySelectorAll('#skuList .sku-row').forEach(row=>{
     const idx=Number(row.dataset.idx);
+    const s=editingSkus[idx]; if(!s) return;
+    // 名称/价格/单件均价/库存/图片：用户可能直接点保存，onchange 来不及触发
+    const nameInp=row.querySelector('input[type="text"][placeholder*="SKU名称"]');
+    if(nameInp) s.name=nameInp.value.trim();
+    const priceInp=row.querySelector('input[type="number"][placeholder="价格"]');
+    if(priceInp) s.price=priceInp.value===''?'':Math.max(0,Number(priceInp.value)||0);
+    const perPriceInp=row.querySelector('input[type="number"][placeholder="单件均价"]');
+    if(perPriceInp) s.perPrice=perPriceInp.value===''?'':Math.max(0,Number(perPriceInp.value)||0);
+    const stockInp=row.querySelector('input[type="number"][placeholder="库存"]');
+    if(stockInp) s.stock=stockInp.value===''?'':Math.max(0,Math.floor(Number(stockInp.value)||0));
+    const imageInp=row.querySelector('input[type="text"][placeholder*="SKU 独立主图"]');
+    if(imageInp) s.image=String(imageInp.value||'').trim();
     const ta=row.querySelector('textarea.sku-bundle-text');
-    if(ta && editingSkus[idx]) editingSkus[idx].bundleItems=parseBundleText(ta.value);
+    if(ta) s.bundleItems=parseBundleText(ta.value);
     // 2026-09-10：副标题同样不能再只靠 onchange（失焦才触发）。
     //   用户填完直接点「保存」时 onchange 可能还没跑，导致副标题存不进去。
     //   这里与发货明细一样，保存前从 DOM 直接抓一次当前值。
     const si=row.querySelector('input.sku-subtitle-input');
-    if(si && editingSkus[idx]) editingSkus[idx].subtitle=String(si.value||'').trim().slice(0,80);
+    if(si) s.subtitle=String(si.value||'').trim().slice(0,80);
   });
 }
 
