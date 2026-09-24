@@ -562,9 +562,11 @@ async function getProducts(){
   if(productReadCache.ts > 0 && productReadCache.value && now - productReadCache.ts < PRODUCT_READ_TTL_MS && !productReadCache.failed) return productReadCache.value;
   const promise = (async()=>{
     try{
-      const list = await loadProductsFromRows(products);
-      productReadCache = { ts: Date.now(), value: list, promise: null, failed: false };
-      return list;
+      // 关键修复：缓存过期时直接 syncProducts，把云端最新库存写回全局 products。
+      // 之前只刷新 productReadCache.value，全局 products 仍是旧值，导致下单校验用旧库存拒单。
+      await syncProducts();
+      productReadCache = { ts: Date.now(), value: products, promise: null, failed: false };
+      return products;
     }catch(e){
       console.error('[getProducts] 读云端失败，使用内存副本：', e.message);
       productReadCache = { ts: Date.now(), value: products, promise: null, failed: true };
@@ -836,6 +838,9 @@ const server = http.createServer(async (req, res)=>{
       // 创建订单
       if(method==='POST' && pathname==='/api/orders'){
         let body; try { body = JSON.parse(await readBody(req)); } catch(e){ res.writeHead(400); res.end('bad json'); return; }
+        // 关键修复：本地后台改库存写入 Supabase 后，线上 Render 内存可能仍是旧值。
+        // 下单前强制 syncProducts，确保基于云端最新库存校验，避免改完库存仍报售罄。
+        await syncProducts();
         const items = (body.items||[]).filter(it=> it && it.id && Number(it.qty)>0);
         if(!items.length){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'empty'})); return; }
         if(!body.name || !body.phone || !body.address){
