@@ -318,6 +318,14 @@ async function boot(){
   booted = true;
   console.log('[Data] 模式=' + (USE_SUPABASE ? 'Supabase云端' : '本地文件') +
     '，产品数=' + products.length + '，订单数=' + orders.length);
+  // 为历史待发货订单补发编号（异步，不阻塞启动）
+  setTimeout(()=>{
+    const need = orders.filter(o=>['待发货','今日可发','待回传'].includes(o.status) && !o.shipCode);
+    if(need.length){
+      need.forEach(o=>{ ensureShipCode(o); saveOrderRow(o); });
+      console.log('[shipCode] 已为', need.length, '笔历史待发货订单补编号');
+    }
+  }, 0);
 }
 
 // 本地模式：启动时校验数据目录是否可写（防止沙箱/权限问题导致下单失败）
@@ -407,6 +415,26 @@ async function saveOrderRowSync(order){
 process.on('beforeExit', ()=>{ _flushOrderQueue(); flushDirtyProducts().catch(()=>{}); });
 function saveOrders(){ return withLock(()=> saveKV('orders', orders)); } // 仅作整批备份残留，下单/状态变更已改用 saveOrderRow
 function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config, 5)); }
+
+// ===== 发货编号：A1-A100, B1-B100, ... 顺序分配，持久化在订单上 =====
+const SHIP_CODE_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const SHIP_CODE_MAX_NUM = 100;
+function getUsedShipCodes(){ return new Set(orders.map(o=>o.shipCode).filter(Boolean)); }
+function nextShipCode(){
+  const used = getUsedShipCodes();
+  for(const letter of SHIP_CODE_LETTERS){
+    for(let n=1; n<=SHIP_CODE_MAX_NUM; n++){
+      const code = letter + n;
+      if(!used.has(code)) return code;
+    }
+  }
+  return null; // 2600 个编号用尽
+}
+function ensureShipCode(order){
+  if(!order || order.shipCode) return order && order.shipCode;
+  order.shipCode = nextShipCode();
+  return order.shipCode;
+}
 
 // ===== 产品存储加固：每个产品独立存储为 shop_data 的一行（key=product:<id>）=====
 // 旧方案：所有产品塞进 shop_data 的单行(key='products')，产品描述长、数量多后，
@@ -919,7 +947,7 @@ const server = http.createServer(async (req, res)=>{
           const o = orders.find(o=>o.id===mConfirm[1]);
           if(!o){ res.writeHead(404); res.end('no'); return; }
           if(o.status==='待付款' || o.status==='待确认'){
-            o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); await saveOrderRowSync(o);
+            o.status='待发货'; o.confirmedAt=Date.now(); if(!o.paidAt) o.paidAt=Date.now(); ensureShipCode(o); await saveOrderRowSync(o);
           }
           res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
         });
@@ -1106,6 +1134,7 @@ const server = http.createServer(async (req, res)=>{
         const prevRestoredAt = o.restoredAt;
         const prevRestoredCount = o.restoredCount;
         o.status='待发货';
+        ensureShipCode(o); // 恢复进入待发货时补编号
         o.restoredAt=Date.now();
         o.restoredCount=(o.restoredCount||0)+1;
         try {
@@ -1132,6 +1161,25 @@ const server = http.createServer(async (req, res)=>{
         }
         if(stockRededucted) saveProductsDebounced();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        });
+      }
+      // ---------- 修改订单联系信息 / 备注（微信号、备注等） ----------
+      const mContact = pathname.match(/^\/api\/orders\/([\w-]+)\/contact$/);
+      if(method==='POST' && mContact){
+        return withOrderLock(mContact[1], async ()=>{
+          await refreshOrdersFromCloud(); // 写前复核云端
+          const o = orders.find(o=>o.id===mContact[1]);
+          if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
+          let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+          const prev = { wechat:o.wechat, note:o.note };
+          if(body.wechat!=null) o.wechat = String(body.wechat).trim().slice(0,50);
+          if(body.note!=null) o.note = String(body.note).trim().slice(0,500);
+          try { await saveOrderRowSync(o); }
+          catch(e){
+            o.wechat = prev.wechat; o.note = prev.note;
+            res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'save_failed', message:e.message})); return;
+          }
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
         });
       }
       // ---------- 修改订单商品（删除某几项 / 换货补货追加）：重算 total，被删商品恢复库存 ----------
@@ -1222,6 +1270,7 @@ const server = http.createServer(async (req, res)=>{
           isManual:true,
           createdAt:Date.now(), paidAt:Date.now(), confirmedAt:Date.now(), shippedAt:null
         };
+        if(order.status==='待发货' || order.status==='今日可发') ensureShipCode(order); // 手工直接进发货队列也自动编号
         saveOrderRow(order);
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, id, order})); return;
       }
