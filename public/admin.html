@@ -1123,6 +1123,7 @@ function renderMergedShip(){
   topBar.innerHTML=`
     <span>🟢 已允许 <b style="color:${allowedCount?'':'#888'}">${allowedCount}</b>/${pending.length} 单可被发货管家采集</span>
     <button onclick="batchAllowPull()">✅ 一键全部允许（再单独取消不发的那几单）</button>
+    <button onclick="batchDisallowPull()" style="margin-left:8px">🚫 一键全部取消（清空勾选，重新自己选）</button>
     <button onclick="moveToToday()" style="margin-left:8px">🚀 同意进入今日可发</button>
     <button onclick="openManualModal()" style="margin-left:8px">➕ 新建手工订单</button>
     <span style="font-size:12px;color:#9a8f82">勾选「允许发货管家采集」后点此，订单即从「待发货」移入「今日可发」</span>
@@ -1923,6 +1924,31 @@ async function batchAllowPull(){
     toast(`已允许 ${toSave.length-failed.length} 单，${failed.length} 单同步失败已自动取消`);
   }else{
     toast(`已允许 ${toSave.length} 单，可单独取消今天不能发的那几单`);
+  }
+}
+// 顶部快捷：一键全部取消（仅对待发货）。把当前所有已勾选「允许发货管家采集」的勾全部清掉，
+// 供用户重新自己勾选。只清 allowPull 标记，订单状态/数据一律不动，也不会移入已取消。
+async function batchDisallowPull(){
+  const targets=ORDERS.filter(o=>o.status==='待发货' && o.allowPull);
+  if(!targets.length){ toast('当前没有已勾选的待发货订单，无需取消'); return; }
+  if(!window.confirm(`确认把当前 ${targets.length} 单已勾选「允许发货管家采集」的待发货订单全部取消勾选？\n（只是清空勾选标记，订单不会被取消/删除，之后您可以重新自己勾选）`)) return;
+  // 乐观更新：先全部清勾，失败的单再回滚
+  targets.forEach(o=>{ o.allowPull=false; o.allowPullAt=null; pendingIds.add(o.id); });
+  render();
+  const failed=[];
+  await Promise.all(targets.map(async o=>{
+    try{
+      const r=await fetch('/api/orders/'+encodeURIComponent(o.id)+'/allow-pull',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({allowPull:false})});
+      if(!r.ok) failed.push(o.id);
+    }catch(e){ failed.push(o.id); }
+    finally{ pendingIds.delete(o.id); }
+  }));
+  if(failed.length){
+    failed.forEach(id=>{ const o=ORDERS.find(x=>x.id===id); if(o){ o.allowPull=true; o.allowPullAt=Date.now(); } });
+    render();
+    toast(`已取消 ${targets.length-failed.length} 单，${failed.length} 单同步失败已保留勾选，请重试`);
+  }else{
+    toast(`已全部取消 ${targets.length} 单的勾选，订单仍在「待发货」，可重新自己勾选`);
   }
 }
 // 「同意进入今日可发」：把勾选了「允许发货管家采集」的待发货订单，一次性移入独立的「今日可发」状态，
