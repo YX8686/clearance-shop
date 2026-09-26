@@ -301,7 +301,7 @@
           <div id="saleToday" style="font-size:18px;font-weight:700;color:#b8743f;margin-top:4px">¥0</div>
         </div>
         <div style="flex:1;min-width:140px;background:#faf7f2;border-radius:8px;padding:10px;text-align:center">
-          <div style="font-size:12px;color:#9a8f82">近7天销售</div>
+          <div style="font-size:12px;color:#9a8f82">近<select id="saleRangeSel" onchange="renderSalesSummary()" style="border:none;background:transparent;font-size:12px;font-weight:700;color:#b8743f;outline:none;cursor:pointer;padding:0"><option value="7">7</option><option value="15">15</option><option value="30">30</option></select>天销售</div>
           <div id="sale7days" style="font-size:18px;font-weight:700;color:#b8743f;margin-top:4px">¥0</div>
         </div>
       </div>
@@ -793,13 +793,16 @@ function startOfDay(offsetDays=0){
 }
 function renderSalesSummary(){
   const todayStart=startOfDay(0);
-  const days7Start=startOfDay(-6);
   // 统计已成交订单：待确认、待发货、已发货均视为已付款成交；不包含待付款/已取消
   const paidOrders=ORDERS.filter(o=>o.status!=='待付款' && o.status!=='已取消');
   const todayTotal=paidOrders.filter(o=>o.createdAt>=todayStart).reduce((s,o)=>s+(Number(o.total)||0),0);
-  const days7Total=paidOrders.filter(o=>o.createdAt>=days7Start).reduce((s,o)=>s+(Number(o.total)||0),0);
+  // 近N天销售：按上方下拉（7/15/30）计算，含今天共N天；纯只读统计，不改任何订单数据
+  const sel=document.getElementById('saleRangeSel');
+  const rangeDays=sel?(Number(sel.value)||7):7;
+  const rangeStart=startOfDay(-(rangeDays-1));
+  const rangeTotal=paidOrders.filter(o=>o.createdAt>=rangeStart).reduce((s,o)=>s+(Number(o.total)||0),0);
   const t=document.getElementById('saleToday'); if(t) t.textContent=money(todayTotal);
-  const s7=document.getElementById('sale7days'); if(s7) s7.textContent=money(days7Total);
+  const s7=document.getElementById('sale7days'); if(s7) s7.textContent=money(rangeTotal);
 }
 function clearSalesCache(){
   // 仅重置前端统计展示，不会删除或修改任何订单数据
