@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台构建版本号——每次改了 admin.html 行为/UI 就手动 +1。
 // admin.html 加载时拿这个值和"自己被服务时的嵌入版本"对比，不一致就强制刷一次，
 // 彻底根除"用户卡在旧缓存里导致功能失效"的问题（不再让用户手动清缓存/隐身）。
-const ADMIN_BUILD = 'fix2-2026-09-10-1328';
+const ADMIN_BUILD = 'fix3-2026-09-26-1150';
 
 // ===== 嵌入发货管家（2026-09-09）：把 ship-cloud 的 handler 作为子路由转发 =====
 // 共用 4100 端口、共用 Supabase 数据源；线上访问路径不变（直接访问商城域名的原 ship-cloud 路径即可）
@@ -1577,6 +1577,63 @@ const server = http.createServer(async (req, res)=>{
         // 操作产品配置触发表，让买家端 / 与详情页缓存失效
         clearHtmlCache();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, updated, hidden})); return;
+      }
+
+      // 商家后台：一键切换活动波次。自动上架本波商品、隐藏非本波商品，并把买家端分类栏切成该波分组。
+      // 2026-09-26 恢复：此接口在旧版 server.js（_deployrepo 快照 1820-1871 行）中存在，
+      //   重构时被静默抹掉导致后台「应用到买家端」报 切换失败：not found（404）。
+      //   按旧实现原样移植，仅把 syncProductsFromCloud() 换成当前版本的 syncProducts()。
+      // 2026-09-13 升级：支持同时选择多个波次（如第二波+第三波同时上）。
+      if(method==='POST' && pathname==='/api/admin/apply-wave'){
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+        // 支持 {waves:['w2','w3']} 或向后兼容 {wave:'w2'}
+        let waves = Array.isArray(body.waves) ? body.waves.map(String).map(s=>s.trim()).filter(Boolean) : [];
+        if(!waves.length && body.wave!=null) waves = [String(body.wave||'none').trim()];
+        const WAVE_PREFIX = { w1:'w1g', w2:'w2g', w3:'w3g', w4:'' };
+        // none / 空 = 全部显示
+        const wantsNone = waves.includes('none') || waves.length===0;
+        const activePrefixes = wantsNone ? [] : waves.map(w=>WAVE_PREFIX[w]).filter((p,i,arr)=>p!=null && arr.indexOf(p)===i);
+        const hasAllPrefix = activePrefixes.some(p=>!p); // 含 w4（返场捡漏）或空 prefix 时全部显示
+        const h=Number(body.hours);
+        let shown=0, hid=0, lastErr=null;
+        // 幂等重试 3 次：products 与 config 必须都写成功，否则会出现
+        // 「产品已按本波切换、但 activeWave 还是上一波」→ 买家端产品对、倒计时文案错。
+        for(let attempt=0; attempt<3; attempt++){
+          try{
+            await syncProducts();
+            shown=0; hid=0;
+            await withLock(async()=>{
+              for(const p of products){
+                const g=String(p.waveGroup||'').trim();
+                let wantHidden;
+                if(wantsNone || hasAllPrefix) wantHidden=false;
+                else if(!g) wantHidden=true;
+                else wantHidden = !activePrefixes.some(pre=>g.indexOf(pre)===0);
+                if(!!p.hidden!==wantHidden){ p.hidden=wantHidden; markProductDirty(p.id); }
+                if(wantHidden) hid++; else shown++;
+              }
+              await flushDirtyProducts();
+            });
+            config.activeWave = wantsNone ? 'none' : waves.join(',');
+            if(wantsNone) config.waveDur = '';
+            // 公告滚动条按「当前波次开始时间」轮播，必须与活动倒计时同步。
+            config.activityStart = new Date().toISOString();
+            if(Number.isFinite(h)&&h>0){
+              config.waveEndsAt = Date.now()+Math.round(h*3600*1000);
+              config.activityDeadline = new Date(config.waveEndsAt).toISOString();
+              config.waveDur = Math.round(h)+'h';
+            }
+            await saveConfig();
+            clearHtmlCache();
+            res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, wave:config.activeWave, shown, hidden:hid, attempt:attempt+1})); return;
+          }catch(e){
+            lastErr=e;
+            console.error('[apply-wave] 第'+(attempt+1)+'次失败:', e && e.message);
+            if(attempt<2) await new Promise(r=>setTimeout(r,700));
+          }
+        }
+        clearHtmlCache();
+        res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, error:'切换失败（已自动重试3次，产品与波次均未改动）：'+((lastErr&&lastErr.message)||lastErr)})); return;
       }
 
       res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return;
