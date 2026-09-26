@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台构建版本号——每次改了 admin.html 行为/UI 就手动 +1。
 // admin.html 加载时拿这个值和"自己被服务时的嵌入版本"对比，不一致就强制刷一次，
 // 彻底根除"用户卡在旧缓存里导致功能失效"的问题（不再让用户手动清缓存/隐身）。
-const ADMIN_BUILD = 'fix6-2026-09-26-1403-batch-disallow';
+const ADMIN_BUILD = 'fix7-2026-09-26-1438-today-return';
 
 // ===== 嵌入发货管家（2026-09-09）：把 ship-cloud 的 handler 作为子路由转发 =====
 // 共用 4100 端口、共用 Supabase 数据源；线上访问路径不变（直接访问商城域名的原 ship-cloud 路径即可）
@@ -1040,6 +1040,23 @@ const server = http.createServer(async (req, res)=>{
         targets.forEach(o => { o.status='今日可发'; o.allowPull=true; o.allowPullAt=now; o.todayAt=now; });
         await Promise.all(targets.map(o => saveOrderRowSync(o).catch(e=>console.error('[today-accept]', o.id, e.message))));
         if(!USE_SUPABASE) await saveKV('orders', orders).catch(e=>console.error('[today-accept disk]', e.message));
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, count:targets.length})); return;
+      }
+      // 「退回上一步」：把「今日可发」订单退回「待发货」。只改状态并清 todayAt，
+      // 保留 allowPull 勾选标记（用户可自行取消），其余数据一律不动。
+      // 安全设计：不传 ids（=全量退回）时必须带 {confirm:true}，否则干跑只统计不写入。
+      const mTodayReturn = pathname.match(/^\/api\/orders\/today-return$/);
+      if(method==='POST' && mTodayReturn){
+        await refreshOrdersFromCloud(); // 写前复核云端，避免用过期内存副本
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+        const ids = Array.isArray(body.ids) ? body.ids : null;
+        const targets = orders.filter(o => o.status==='今日可发' && (!ids || ids.includes(o.id)));
+        if(!ids && !body.confirm){
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, dryRun:true, willReturn:targets.length})); return;
+        }
+        targets.forEach(o => { o.status='待发货'; o.todayAt=null; });
+        await Promise.all(targets.map(o => saveOrderRowSync(o).catch(e=>console.error('[today-return]', o.id, e.message))));
+        if(!USE_SUPABASE) await saveKV('orders', orders).catch(e=>console.error('[today-return disk]', e.message));
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, count:targets.length})); return;
       }
       // 商家后台「今日可发订单」→ 全部导出：把当前允许采集的待发货订单形成一个「商城本次汇总单」，

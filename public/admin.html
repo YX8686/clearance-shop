@@ -1227,7 +1227,8 @@ function renderTodayShip(){
     <span>📦 今日可发 <b style="color:${today.length?'#1f9d55':'#888'}">${today.length}</b> 单
       <span style="color:#9a8f82;font-weight:400">（从「待发货」勾选「允许发货管家采集」后点「同意进入今日可发」即进入此处；点「全部导出」后订单会移入「等待回传区」，不会重复）</span></span>
     <button onclick="exportTodayOrders()">📋 下载发货单</button>
-    <button onclick="downloadShipSheetImage()" style="border-color:#1f9d55;color:#1f9d55">🖼 下载图片版发货单（微信可直接看）</button>`
+    <button onclick="downloadShipSheetImage()" style="border-color:#1f9d55;color:#1f9d55">🖼 下载图片版发货单（微信可直接看）</button>
+    <button onclick="todayReturnOrders()" style="margin-left:8px;border-color:#a05200;color:#a05200">↩️ 退回上一步（退回待发货）</button>`
     + orderSearchBarHtml('kw-today', todayFilter, 'onTodaySearch');
   list.appendChild(topBar);
   if(!today.length){
@@ -1950,6 +1951,21 @@ async function batchDisallowPull(){
   }else{
     toast(`已全部取消 ${targets.length} 单的勾选，订单仍在「待发货」，可重新自己勾选`);
   }
+}
+// 「退回上一步」：把「今日可发」全部订单退回「待发货」。只改状态、清 todayAt，
+// 保留 allowPull 勾选标记（可自行取消或用「一键全部取消」清空），其余数据一律不动。
+async function todayReturnOrders(){
+  const today=ORDERS.filter(o=>o.status==='今日可发');
+  if(!today.length){ toast('当前没有「今日可发」订单，无需退回'); return; }
+  if(!window.confirm(`确认把当前 ${today.length} 单从「今日可发」退回「待发货」？\n（订单数据不会丢失，也不会进「已取消」；退回后可重新勾选再进入今日可发）`)) return;
+  try{
+    const r=await fetch('/api/orders/today-return',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.message||('HTTP '+r.status));
+    today.forEach(o=>{ o.status='待发货'; o.todayAt=null; });
+    toast(`已把 ${d.count} 单退回「待发货」，可重新勾选`);
+    load(); // 重新拉取云端权威状态（停留在当前栏目）
+  }catch(e){ toast('退回失败：'+e.message); console.error('[today-return]',e); }
 }
 // 「同意进入今日可发」：把勾选了「允许发货管家采集」的待发货订单，一次性移入独立的「今日可发」状态，
 // 从「待发货」移出——同一订单不会同时出现在两个栏目（互斥）。
