@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台构建版本号——每次改了 admin.html 行为/UI 就手动 +1。
 // admin.html 加载时拿这个值和"自己被服务时的嵌入版本"对比，不一致就强制刷一次，
 // 彻底根除"用户卡在旧缓存里导致功能失效"的问题（不再让用户手动清缓存/隐身）。
-const ADMIN_BUILD = 'fix7-2026-09-26-1438-today-return';
+const ADMIN_BUILD = 'fix8-2026-09-26-1506-orders-cache';
 
 // ===== 嵌入发货管家（2026-09-09）：把 ship-cloud 的 handler 作为子路由转发 =====
 // 共用 4100 端口、共用 Supabase 数据源；线上访问路径不变（直接访问商城域名的原 ship-cloud 路径即可）
@@ -275,6 +275,8 @@ const DEFAULT_CONFIG = {
 let products = [];
 let config = DEFAULT_CONFIG;
 let orders = [];
+let _ordersReadCacheTs = 0;          // 后台 GET /api/orders 读取缓存戳（避免每 15s 轮询都全表拉云端）
+const ORDERS_READ_CACHE_MS = 8000;   // 8s 内重复读取不重复全表拉云端；轮询间隔 15s 仍会按时刷新；进程内写入即时生效
 let booted = false;
 let bootPromise = null;
 
@@ -830,9 +832,11 @@ const server = http.createServer(async (req, res)=>{
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(out)); return;
       }
       if(method==='GET' && pathname==='/api/orders'){
-        // 关键：让 /api/orders 始终反映云端最新状态（外部进程如 buchu-ship-cloud
-        // 也会写 order:<id> 单行，仅靠内存副本会看不到）
-        await refreshOrdersFromCloud();
+        // 读取缓存：8s 内重复读取不重复全表拉云端（后台每 15s 轮询会自然触发刷新；
+        // 进程内写入 saveOrderRowSync 即时更新内存，及时返回；外部进程如 buchu-ship-cloud
+        // 的写入最迟 8s 内可见，与轮询节奏一致，不丢单）
+        const _now = Date.now();
+        if(_now - _ordersReadCacheTs >= ORDERS_READ_CACHE_MS){ await refreshOrdersFromCloud(); _ordersReadCacheTs = _now; }
         const list = await getOrders();
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(list.map(enrichOrderBundles))); return;
       }
