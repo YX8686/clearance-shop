@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台构建版本号——每次改了 admin.html 行为/UI 就手动 +1。
 // admin.html 加载时拿这个值和"自己被服务时的嵌入版本"对比，不一致就强制刷一次，
 // 彻底根除"用户卡在旧缓存里导致功能失效"的问题（不再让用户手动清缓存/隐身）。
-const ADMIN_BUILD = 'fix4-2026-09-26-1240-todayship-btn';
+const ADMIN_BUILD = 'fix5-2026-09-26-1305-purge-cancelled';
 
 // ===== 嵌入发货管家（2026-09-09）：把 ship-cloud 的 handler 作为子路由转发 =====
 // 共用 4100 端口、共用 Supabase 数据源；线上访问路径不变（直接访问商城域名的原 ship-cloud 路径即可）
@@ -1634,6 +1634,88 @@ const server = http.createServer(async (req, res)=>{
         }
         clearHtmlCache();
         res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, error:'切换失败（已自动重试3次，产品与波次均未改动）：'+((lastErr&&lastErr.message)||lastErr)})); return;
+      }
+
+      // ===== 清除「已取消」订单（回收站模式：整单搬入 order_cancelled:<id>，可恢复）=====
+      // 安全设计：不带 {confirm:true} 时为干跑，只统计不写入，杜绝误触发
+      if(method==='POST' && pathname==='/api/admin/purge-cancelled'){
+        let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+        const cancelled = orders.filter(o=>o && o.status==='已取消');
+        if(!body.confirm){
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, dryRun:true, willMove:cancelled.length, remaining:orders.length-cancelled.length})); return;
+        }
+        let moved=0, deleted=0, lastErr=null;
+        if(USE_SUPABASE && typeof sb!=='undefined' && sb){
+          const stamp=Date.now();
+          const rows = cancelled.map(o=>({key:'order_cancelled:'+o.id, value:Object.assign({},o,{_purgedAt:stamp})}));
+          for(let i=0;i<rows.length;i+=100){
+            try{ const {error}=await sb.from('shop_data').upsert(rows.slice(i,i+100)); if(error) throw new Error(error.message); moved+=rows.slice(i,i+100).length; }
+            catch(e){ lastErr=e; break; }
+          }
+          if(!lastErr){
+            const ids=cancelled.map(o=>'order:'+o.id);
+            for(let i=0;i<ids.length;i+=100){
+              try{ const {error}=await sb.from('shop_data').delete().in('key', ids.slice(i,i+100)); if(error) throw new Error(error.message); deleted+=ids.slice(i,i+100).length; }
+              catch(e){ lastErr=e; break; }
+            }
+          }
+        } else {
+          try{
+            const f=path.join(DATA,'orders_recycle_bin.json');
+            let bin=[]; try{ bin=JSON.parse(fs.readFileSync(f,'utf8')); }catch(e){}
+            bin.push(...cancelled.map(o=>Object.assign({},o,{_purgedAt:Date.now()})));
+            writeJsonAtomic('orders_recycle_bin.json', bin);
+            moved=deleted=cancelled.length;
+          }catch(e){ lastErr=e; }
+        }
+        if(lastErr){ res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, error:lastErr.message, moved, deleted})); return; }
+        const idSet=new Set(cancelled.map(o=>o.id));
+        orders = orders.filter(o=>!idSet.has(o.id));
+        clearHtmlCache();
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, moved, deleted, remaining:orders.length})); return;
+      }
+
+      // ===== 从回收站恢复全部已清除的「已取消」订单（order_cancelled:<id> → order:<id>）=====
+      if(method==='POST' && pathname==='/api/admin/restore-cancelled'){
+        let lastErr=null, restored=0;
+        if(USE_SUPABASE && typeof sb!=='undefined' && sb){
+          const PAGE_SIZE=1000; let all=[], off=0, loop=0;
+          while(loop++ < 40){
+            const {data:pg, error:e1}=await sb.from('shop_data').select('key,value').like('key','order_cancelled:%').range(off, off+PAGE_SIZE-1);
+            if(e1){ lastErr=e1; break; }
+            if(pg && pg.length) all.push(...pg);
+            if(!pg || pg.length<PAGE_SIZE) break;
+            off+=PAGE_SIZE;
+          }
+          if(!lastErr && all.length){
+            for(const r of all){
+              const v=Object.assign({}, r.value||{}); delete v._purgedAt;
+              try{ const {error}=await sb.from('shop_data').upsert({key:'order:'+v.id, value:v}); if(error) throw new Error(error.message); restored++; }
+              catch(e){ lastErr=e; break; }
+            }
+            if(!lastErr){
+              const rk=all.map(r=>r.key);
+              for(let i=0;i<rk.length;i+=100){
+                try{ const {error}=await sb.from('shop_data').delete().in('key', rk.slice(i,i+100)); if(error) throw new Error(error.message); }
+                catch(e){ lastErr=e; break; }
+              }
+            }
+            if(!lastErr){
+              const idSet=new Set(orders.map(o=>o.id));
+              for(const r of all){ const v=Object.assign({}, r.value||{}); delete v._purgedAt; if(v.id && !idSet.has(v.id)) orders.push(v); }
+            }
+          }
+        } else {
+          try{
+            const f=path.join(DATA,'orders_recycle_bin.json');
+            const bin=JSON.parse(fs.readFileSync(f,'utf8'));
+            const idSet=new Set(orders.map(o=>o.id));
+            for(const v of bin){ if(v && v.id){ delete v._purgedAt; saveOrderRowSync(v).catch(()=>{}); if(!idSet.has(v.id)){ orders.push(v); restored++; } } }
+          }catch(e){ lastErr=e; }
+        }
+        clearHtmlCache();
+        if(lastErr){ res.writeHead(500,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:false, error:lastErr.message, restored})); return; }
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, restored, total:orders.length})); return;
       }
 
       res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not found'})); return;
