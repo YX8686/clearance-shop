@@ -546,6 +546,9 @@ let shipPhoneFilter=''; // 待发货栏搜索（fix57 起统一支持 电话/订
 let pendingPhoneFilter=''; // 待处理（待确认）栏按电话搜索
 // fix57：各订单栏目右上角统一搜索框的关键词（互相独立，切栏目互不干扰）
 let todayFilter='';   // 今日可发
+// fix9 今日可发勾选下载：记录用户在「今日可发」勾选的订单 id（按合并组整组勾选）。
+// ★只用于「挑选哪些订单进发货单」，纯前端内存态，绝不写任何订单数据、不改任何字段★
+let todaySelIds=new Set();
 let returnFilter='';  // 等待回传区
 let doneFilter='';    // 已发货
 let cancelFilter='';  // 已取消
@@ -1225,15 +1228,18 @@ function renderTodayShip(){
   topBar.className='allow-pull-top';
   topBar.innerHTML=`
     <span>📦 今日可发 <b style="color:${today.length?'#1f9d55':'#888'}">${today.length}</b> 单
-      <span style="color:#9a8f82;font-weight:400">（从「待发货」勾选「允许发货管家采集」后点「同意进入今日可发」即进入此处；点「全部导出」后订单会移入「等待回传区」，不会重复）</span></span>
-    <button onclick="exportTodayOrders()">📋 下载发货单</button>
-    <button onclick="downloadShipSheetImage()" style="border-color:#1f9d55;color:#1f9d55">🖼 下载图片版发货单（微信可直接看）</button>
+      <span style="color:#9a8f82;font-weight:400">（从「待发货」勾选「允许发货管家采集」后点「同意进入今日可发」即进入此处；下载发货单由你手动发给快递员，不经过发货管家，订单也不会移动）</span></span>
+    <label style="display:inline-flex;align-items:center;gap:5px;font-size:13px;color:#7a6f62;cursor:pointer;font-weight:400"><input type="checkbox" id="todaySelAll" onchange="todaySelectAll(this.checked)"> 全选</label>
+    <span id="todaySelCount" style="font-size:12px;color:#1f9d55;font-weight:600;display:none"></span>
+    <button onclick="downloadShipSheetSel()">📋 下载发货单</button>
+    <button onclick="downloadShipSheetImageSel()" style="border-color:#1f9d55;color:#1f9d55">🖼 下载图片版发货单（微信可直接看）</button>
     <button onclick="todayReturnOrders()" style="margin-left:8px;border-color:#a05200;color:#a05200">↩️ 退回上一步（退回待发货）</button>`
     + orderSearchBarHtml('kw-today', todayFilter, 'onTodaySearch');
   list.appendChild(topBar);
+  updateTodaySelCount(today.length);
   if(!today.length){
     const empty=document.createElement('div'); empty.className='empty';
-    empty.innerHTML='还没有「今日可发」订单。<br><br><span style="font-size:13px;color:#999">去「待发货」栏目，在每笔订单（或合并组）勾选「允许发货管家采集」，再点顶部「🚀 同意进入今日可发」，订单就会从「待发货」移到这里；再点上方「全部导出」，同步到发货管家「商城今日订单总表」。</span>';
+    empty.innerHTML='还没有「今日可发」订单。<br><br><span style="font-size:13px;color:#999">去「待发货」栏目，在每笔订单（或合并组）勾选「允许发货管家采集」，再点顶部「🚀 同意进入今日可发」，订单就会从「待发货」移到这里；下载发货单由你手动处理，不经过发货管家。</span>';
     list.appendChild(empty);
     return;
   }
@@ -1279,8 +1285,10 @@ function renderTodayShip(){
         <div class="so-total">本单合计 ${money(o.total)}</div>
       </div>`).join('');
     const div=document.createElement('div'); div.className='card merge-card';
+    // fix9：勾选框只决定「下载发货单时带哪几单」，纯前端内存态，不写任何订单数据
+    const selChecked = ids.every(id=>todaySelIds.has(id)) ? 'checked' : '';
     div.innerHTML=`
-      <div class="h"><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-ship">今日可发</span></div>
+      <div class="h"><label style="display:inline-flex;align-items:center;gap:4px;margin-right:8px;cursor:pointer;font-size:13px;font-weight:400;color:#7a6f62;white-space:nowrap"><input type="checkbox" data-today-sel ${selChecked} onchange="toggleTodaySel(['${ids.join("','")}'], this.checked)">勾选</label><span class="oid">${group.length>1?('合并 '+group.length+' 笔 · '+first.name):first.id}</span><span class="st st-ship">今日可发</span></div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(first.name||'')}</div>
       <div class="line"><span class="k">微信号</span>${wechatHtml(first,ids)}</div>
       <div class="line"><span class="k">电话</span>${escapeHtml(first.phone||'')}</div>
@@ -1292,6 +1300,61 @@ function renderTodayShip(){
     list.appendChild(div);
   });
 }
+/* ---------- fix9 今日可发「勾选下载」----------
+   需求：实际发货时并非全部今日可发订单都要发，需要勾选部分订单后，
+   只下载已勾选订单的「发货单(Word)」和「图片版发货单」。
+   ★红线★ 勾选状态只存在前端内存(Set)，下载是纯前端生成文件，
+   绝不调用任何写接口、绝不改订单字段、绝不在栏目间移动订单。 */
+// 清掉已不在「今日可发」的 id（例如订单被退回/导出后），避免勾选残留
+function syncTodaySel(){
+  const valid=new Set(ORDERS.filter(o=>o.status==='今日可发').map(o=>o.id));
+  Array.from(todaySelIds).forEach(id=>{ if(!valid.has(id)) todaySelIds.delete(id); });
+}
+function toggleTodaySel(ids, checked){
+  ids.forEach(id=>{ if(checked) todaySelIds.add(id); else todaySelIds.delete(id); });
+  updateTodaySelCount();
+}
+function todaySelectAll(checked){
+  const today=ORDERS.filter(o=>o.status==='今日可发');
+  if(checked) today.forEach(o=>todaySelIds.add(o.id)); else todaySelIds.clear();
+  updateTodaySelCount();
+  // 直接同步每张卡的勾选框，避免整页重渲染闪烁
+  document.querySelectorAll('input[data-today-sel]').forEach(cb=>cb.checked=checked);
+}
+function updateTodaySelCount(){
+  syncTodaySel();
+  const today=ORDERS.filter(o=>o.status==='今日可发');
+  const span=document.getElementById('todaySelCount');
+  const all=document.getElementById('todaySelAll');
+  const n=todaySelIds.size;
+  if(span){ span.style.display=n?'inline':'none'; span.textContent=`已勾选 ${n} 单`; }
+  if(all) all.checked = today.length>0 && n===today.length;
+}
+// 取已勾选的订单列表；一个都没勾时返回 null（由调用方决定全量兜底）
+function getTodaySelOrders(){
+  syncTodaySel();
+  if(!todaySelIds.size) return null;
+  return ORDERS.filter(o=>o.status==='今日可发'&&todaySelIds.has(o.id));
+}
+// 下载发货单（勾选优先）：勾了就只下载勾选的；没勾时确认后下载全部。
+// ★纯下载：两种情况都不会移动订单、不会写入发货管家★
+function downloadShipSheetSel(){
+  const sel=getTodaySelOrders();
+  if(sel){ downloadShipSheet(sel); return; }
+  const total=ORDERS.filter(o=>o.status==='今日可发').length;
+  if(!total){ toast('没有「今日可发」订单'); return; }
+  if(!window.confirm(`未勾选任何订单。是否下载全部 ${total} 单的发货单？\n（仅下载，不会移动订单）`)) return;
+  downloadShipSheet();
+}
+// 下载图片版发货单（勾选优先）：逻辑同上，纯下载
+function downloadShipSheetImageSel(){
+  const sel=getTodaySelOrders();
+  if(sel){ downloadShipSheetImage(sel); return; }
+  const total=ORDERS.filter(o=>o.status==='今日可发').length;
+  if(!total){ toast('没有「今日可发」订单'); return; }
+  if(!window.confirm(`未勾选任何订单。是否下载全部 ${total} 单的图片版发货单？\n（仅下载，不会移动订单）`)) return;
+  downloadShipSheetImage();
+}
 // 「等待回传区」栏目：已导出到发货管家、等待快递回传单号的订单。
 // 发货管家「一键回传单号」后会自动写入单号并把这批订单改成「已发货」，这里随即清空、流入「已发货」。
 function renderReturnZone(){
@@ -1301,12 +1364,12 @@ function renderReturnZone(){
   topBar.className='allow-pull-top';
   topBar.innerHTML=`
     <span>📮 等待回传 <b style="color:${waiting.length?'#1f9d55':'#888'}">${waiting.length}</b> 单
-      <span style="color:#9a8f82;font-weight:400">（这里就是「今日可发」导出后进入的订单；快递回传单号后，在发货管家点「一键回传单号」，这里自动清空、订单流入「已发货」）</span></span>`
+      <span style="color:#9a8f82;font-weight:400">（现改为手动填单号，不再经发货管家；此栏目暂空闲，可忽略）</span></span>`
     + orderSearchBarHtml('kw-return', returnFilter, 'onReturnSearch');
   list.appendChild(topBar);
   if(!waiting.length){
     const empty=document.createElement('div'); empty.className='empty';
-    empty.innerHTML='还没有待在回传的订单。<br><br><span style="font-size:13px;color:#999">在「今日可发」点「📋 下载发货单」下载 Word，订单会自动转入这里；之后在发货管家「待确认回传」里填上快递单号回传即可。</span>';
+    empty.innerHTML='还没有待在回传的订单。<br><br><span style="font-size:13px;color:#999">现已改为手动填写单号、不经过发货管家，此栏目暂时用不到；「今日可发」点「下载发货单」仅本地保存，订单不移动。</span>';
     list.appendChild(empty);
     return;
   }
