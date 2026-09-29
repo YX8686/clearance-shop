@@ -1,3 +1,8 @@
+// ============================================================
+// B 版商城（独立副本）：数据键全部使用 b_ 前缀（b_order:/b_product:/b_config…）
+// 与 A 版（clearance-shop-github，无前缀键）共用同一个 Supabase 项目，但互相不可见。
+// 由 WB 于 2026-09-29 从 A 版复制生成；后续 A 版代码更新需手动移植到本目录。
+// ============================================================
 // 清仓商城 · 单文件服务端（支持「本地文件 / Supabase 云端」双模式）
 // 本地双击图标零依赖即可跑；配置 SUPABASE_URL + SUPABASE_ANON_KEY 后自动切云端，数据持久化不丢。
 // Render 云端启动：先 listen 端口再异步 boot，避免健康检查超时。
@@ -13,18 +18,18 @@ const DATA = path.join(ROOT, 'data');
 const PUBLIC = path.join(ROOT, 'public');
 const VIEWS = path.join(ROOT, 'views');
 const GALLERY = path.join(PUBLIC, 'assets', 'gallery');
-const PORT = process.env.PORT || 4100;
+const PORT = process.env.PORT || 4321;
 
 // 商家后台构建版本号——每次改了 admin.html 行为/UI 就手动 +1。
 // admin.html 加载时拿这个值和"自己被服务时的嵌入版本"对比，不一致就强制刷一次，
 // 彻底根除"用户卡在旧缓存里导致功能失效"的问题（不再让用户手动清缓存/隐身）。
-const ADMIN_BUILD = 'fix9-2026-09-26-2245-today-sel-download';
+const ADMIN_BUILD = 'b1-2026-09-29-bversion-bprefix';
 
 // ===== 嵌入发货管家（2026-09-09）：把 ship-cloud 的 handler 作为子路由转发 =====
 // 共用 4100 端口、共用 Supabase 数据源；线上访问路径不变（直接访问商城域名的原 ship-cloud 路径即可）
 let shipCloudHandler = null;
 try{
-  shipCloudHandler = require('./buchu-ship-cloud/server.js').handler;
+  shipCloudHandler = null; // B版(2026-09-29)：禁用发货管家转发，B商城数据与发货云彻底隔离
   console.log('[ship-cloud] handler loaded, embedded into mall server');
 }catch(e){
   console.error('[ship-cloud] failed to load handler:', e.message);
@@ -293,7 +298,7 @@ async function boot(){
   // boot 阶段优雅降级：从云端 product:* 独立行聚合；失败时使用本地 data/*.json 种子
   try { products = await loadProductsFromRows(seedProducts); }
   catch(e){ console.error('[boot] products 加载失败，使用本地种子：', e.message); products = seedProducts; }
-  try { config = await loadKV('config', seedConfig); }
+  try { config = await loadKV('b_config', seedConfig); }
   catch(e){ console.error('[boot] config 加载失败，使用本地种子：', e.message); config = seedConfig; }
   // 合并默认值：后续新增字段（如 hiddenCategories）不会在老配置里缺失
   config = { ...DEFAULT_CONFIG, ...(typeof config==='object' && config ? config : {}) };
@@ -307,7 +312,7 @@ async function boot(){
       const SAFE_MAX_ORDER_ROWS = 20000; // 护栏：远高于 2000，防止极端异常下死循环
       let _all = []; let _perr = null; let _off = 0;
       while (_off < SAFE_MAX_ORDER_ROWS) {
-        const { data: _pg, error: _e } = await sb.from('shop_data').select('key,value').like('key','order:%').range(_off, _off + PAGE_SIZE - 1);
+        const { data: _pg, error: _e } = await sb.from('shop_data').select('key,value').like('key','b_order:%').range(_off, _off + PAGE_SIZE - 1);
         if (_e) { _perr = _e; break; }
         if (_pg && _pg.length) _all.push(..._pg);
         if (!_pg || _pg.length < PAGE_SIZE) break; // 本页没满，说明已拉到最后一批
@@ -317,10 +322,10 @@ async function boot(){
       if(!_perr && _all.length){
         orders = _all.map(r=>r.value).filter(Boolean);
       } else {
-        const arr = await loadKV('orders', seedOrders);
+        const arr = await loadKV('b_orders', seedOrders);
         orders = Array.isArray(arr)?arr:[];
         if(orders.length){
-          await Promise.all(orders.map(o=> (o&&o.id) ? sb.from('shop_data').upsert({key:'order:'+o.id, value:o}).catch(e=>console.error('[migrate]',e.message)) : Promise.resolve()));
+          await Promise.all(orders.map(o=> (o&&o.id) ? sb.from('shop_data').upsert({key:'b_order:'+o.id, value:o}).catch(e=>console.error('[migrate]',e.message)) : Promise.resolve()));
           console.log('[migrate] 已拆分旧 orders 数组为', orders.length, '条独立行');
         }
       }
@@ -379,14 +384,14 @@ async function _flushOrderQueue(){
   if(!batch.length) return;
   if(USE_SUPABASE){
     try {
-      const rows = batch.map(o => ({ key:'order:'+o.id, value:o }));
+      const rows = batch.map(o => ({ key:'b_order:'+o.id, value:o }));
       const { error } = await sb.from('shop_data').upsert(rows);
       if(error) console.error('[orderFlush] batch error:', error.message, '| falling back to individual writes');
-      else batch.forEach(o => kvCache.set('order:'+o.id, { ts:Date.now(), value:o, promise:null }));
+      else batch.forEach(o => kvCache.set('b_order:'+o.id, { ts:Date.now(), value:o, promise:null }));
       // 批量失败时降级为逐条写（保证至少能落盘）
       if(error) {
         for(const o of batch) {
-          try { await sb.from('shop_data').upsert({ key:'order:'+o.id, value:o }); } catch(e){}
+          try { await sb.from('shop_data').upsert({ key:'b_order:'+o.id, value:o }); } catch(e){}
         }
       }
     } catch(e){
@@ -416,9 +421,9 @@ function saveOrderRow(order){
 // 状态变更用（低频管理操作）：内存即时同步 + 立即单条落盘（确保状态即时持久化，重启不丢）
 async function saveOrderRowSync(order){
   if(USE_SUPABASE){
-    const { error } = await sb.from('shop_data').upsert({ key:'order:'+order.id, value: order });
+    const { error } = await sb.from('shop_data').upsert({ key:'b_order:'+order.id, value: order });
     if(error) throw new Error('Supabase saveOrderRow error: '+error.message);
-    kvCache.set('order:'+order.id, { ts:Date.now(), value:order, promise:null });
+    kvCache.set('b_order:'+order.id, { ts:Date.now(), value:order, promise:null });
   } else {
     // 文件模式：状态变更后立即原子写盘（修复前只改内存，重启即丢单）
     await withLock(()=> writeJsonAtomic('orders.json', orders)).catch(e=>console.error('[saveOrderRowSync disk]', e.message));
@@ -428,8 +433,8 @@ async function saveOrderRowSync(order){
 }
 // 进程退出前刷盘，防丢单
 process.on('beforeExit', ()=>{ _flushOrderQueue(); flushDirtyProducts().catch(()=>{}); });
-function saveOrders(){ return withLock(()=> saveKV('orders', orders)); } // 仅作整批备份残留，下单/状态变更已改用 saveOrderRow
-function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('config', config, 5)); }
+function saveOrders(){ return withLock(()=> saveKV('b_orders', orders)); } // 仅作整批备份残留，下单/状态变更已改用 saveOrderRow
+function saveConfig(){ clearHtmlCache(); return withLock(()=> saveKV('b_config', config, 5)); }
 
 // ===== 发货编号：A1-A100, B1-B100, ... 顺序分配，持久化在订单上 =====
 const SHIP_CODE_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -482,7 +487,7 @@ async function flushDirtyProducts(){
     const p = products.find(x=>x.id===id);
     if(!p) continue;
     try {
-      await sbRun(()=>sb.from('shop_data').upsert({ key:'product:'+id, value:p }), 'saveProductRow:'+id);
+      await sbRun(()=>sb.from('shop_data').upsert({ key:'b_product:'+id, value:p }), 'saveProductRow:'+id);
     } catch(e) {
       console.error('[saveProductRow] 失败:', id, e.message);
       failed.push(id);
@@ -494,7 +499,7 @@ async function flushDirtyProducts(){
     await saveProductOrder();
   } catch(e) {
     console.error('[saveProductOrder]', e.message);
-    failed.push('product_order');
+    failed.push('b_product_order');
   }
   // 关键修复：云端写入失败必须让前端知道。同时把当前内存整盘写一份本地 products.json 作为备份，
   // 避免"前端显示成功但重启后数据丢失"。
@@ -507,25 +512,25 @@ async function saveProductOrder(){
   if(!USE_SUPABASE) return;
   const order = products.map(p=>p.id);
   // 关键修复：必须检查 error 字段，否则排序写入失败会被静默吞掉（supabase-js 不抛异常）
-  await sbRun(()=>sb.from('shop_data').upsert({ key:'product_order', value:order }), 'saveProductOrder');
+  await sbRun(()=>sb.from('shop_data').upsert({ key:'b_product_order', value:order }), 'saveProductOrder');
 }
 async function loadProductsFromRows(fallback=[]){
   if(!USE_SUPABASE) return readJson('products.json', fallback);
   // 1) 读取所有 product:* 独立行
-  const { data, error } = await sb.from('shop_data').select('key,value').like('key','product:%');
+  const { data, error } = await sb.from('shop_data').select('key,value').like('key','b_product:%');
   if(error) throw error;
   let rows = [];
   if(data) rows = data.map(r=>r.value).filter(Boolean);
   // 2) 尚无独立行：迁移旧 products 大数组
   if(!rows.length){
-    const old = await loadKV('products', fallback);
+    const old = await loadKV('b_products', fallback);
     const arr = Array.isArray(old) ? old : fallback;
     if(arr.length){
       console.log('[migrate] 拆分旧 products 大数组为', arr.length, '条独立行');
       for(const p of arr){
         if(!p || !p.id) continue;
         // 关键修复：迁移旧大数组时也检查 error 字段
-        await sbRun(()=>sb.from('shop_data').upsert({ key:'product:'+p.id, value:p }), 'migrateProduct:'+p.id);
+        await sbRun(()=>sb.from('shop_data').upsert({ key:'b_product:'+p.id, value:p }), 'migrateProduct:'+p.id);
       }
       rows = arr.slice();
       await saveProductOrder();
@@ -534,7 +539,7 @@ async function loadProductsFromRows(fallback=[]){
   // 3) 读取排序
   let order = [];
   try {
-    const { data: orderData, error: orderErr } = await sb.from('shop_data').select('value').eq('key','product_order').maybeSingle();
+    const { data: orderData, error: orderErr } = await sb.from('shop_data').select('value').eq('key','b_product_order').maybeSingle();
     if(!orderErr && orderData && Array.isArray(orderData.value)) order = orderData.value;
   } catch(e){ console.error('[loadProductsFromRows] 读排序失败', e.message); }
   // 4) 按 order 排序，不在 order 中的排后面
@@ -546,7 +551,7 @@ async function loadProductsFromRows(fallback=[]){
 }
 async function deleteProductRow(id){
   if(!USE_SUPABASE){ await withLock(()=> writeJsonAtomic('products', products)); return; }
-  await withRetry(()=>sb.from('shop_data').delete().eq('key','product:'+id), 'deleteProductRow:'+id).catch(e=>console.error('[deleteProductRow]', id, e.message));
+  await withRetry(()=>sb.from('shop_data').delete().eq('key','b_product:'+id), 'deleteProductRow:'+id).catch(e=>console.error('[deleteProductRow]', id, e.message));
   await saveProductOrder().catch(e=>console.error('[saveProductOrder:delete]', e.message));
 }
 // 兼容旧 saveProducts：本地模式整盘写；云端模式 flush 所有脏行
@@ -635,7 +640,7 @@ async function refreshOrdersFromCloud(){
     const SAFE_MAX_ORDER_ROWS = 20000; // 护栏：远高于 2000，防止极端异常下死循环
     let _all = []; let _perr = null; let _off = 0;
     while (_off < SAFE_MAX_ORDER_ROWS) {
-      const { data: _pg, error: _e } = await sb.from('shop_data').select('key,value').like('key','order:%').range(_off, _off + PAGE_SIZE - 1);
+      const { data: _pg, error: _e } = await sb.from('shop_data').select('key,value').like('key','b_order:%').range(_off, _off + PAGE_SIZE - 1);
       if (_e) { _perr = _e; break; }
       if (_pg && _pg.length) _all.push(..._pg);
       if (!_pg || _pg.length < PAGE_SIZE) break; // 本页没满，说明已拉到最后一批
@@ -655,7 +660,7 @@ async function refreshOrdersFromCloud(){
 async function loadOrderRow(id){
   if(!USE_SUPABASE) return orders.find(o=>o.id===id) || null;
   try {
-    const { data, error } = await sb.from('shop_data').select('value').eq('key','order:'+id).single();
+    const { data, error } = await sb.from('shop_data').select('value').eq('key','b_order:'+id).single();
     if(!error && data && data.value){
       const o = data.value;
       const idx = orders.findIndex(x=>x.id===id);
@@ -667,7 +672,7 @@ async function loadOrderRow(id){
 }
 // 订单写入前必须先刷新内存副本：手机端在云端下的订单，本地服务内存里可能没有，
 // 直接 find 内存会 404 静默失败（症状：后台点"确认收款"提示成功但状态不变）
-// ⚠️ 严禁用 loadKV('orders', ...)：那是已废弃的「旧大数组」行，长期不更新——发货管家对
+// ⚠️ 严禁用 loadKV('b_orders', ...)：那是已废弃的「旧大数组」行，长期不更新——发货管家对
 //    order:<id> 单行的改动（已发货+tracking）从不同步回这个大数组，读到的是一份过期快照。
 //    若用它刷新再写回，会把「已发货」用旧的「待发货」整单覆盖回去，造成状态回退 bug
 //    （订单从已发货自动跳回待发货、tracking 被清空 → 重复发货风险）。必须按 order:* 单行重新聚合。
@@ -1013,7 +1018,7 @@ const server = http.createServer(async (req, res)=>{
           o.allowPull = !!body.allowPull;
           o.allowPullAt = o.allowPull ? Date.now() : null;
           await saveOrderRowSync(o);
-          if(!USE_SUPABASE) await saveKV('orders', orders).catch(e=>console.error('[allow-pull disk]',e.message));
+          if(!USE_SUPABASE) await saveKV('b_orders', orders).catch(e=>console.error('[allow-pull disk]',e.message));
           res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
         });
       }
@@ -1029,7 +1034,7 @@ const server = http.createServer(async (req, res)=>{
         targets.forEach(o => { o.allowPull = allow; o.allowPullAt = allow ? now : null; });
         // 逐行落盘（沿用既有 saveOrderRowSync）；用 Promise.all 加速
         await Promise.all(targets.map(o => saveOrderRowSync(o).catch(e=>console.error('[batch-allow]',o.id,e.message))));
-        if(!USE_SUPABASE) await saveKV('orders', orders).catch(e=>console.error('[batch-allow disk]',e.message));
+        if(!USE_SUPABASE) await saveKV('b_orders', orders).catch(e=>console.error('[batch-allow disk]',e.message));
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, count:targets.length})); return;
       }
       // 「同意进入今日可发」：把勾选了「允许发货管家采集」的待发货订单，移入独立的「今日可发」状态，
@@ -1043,7 +1048,7 @@ const server = http.createServer(async (req, res)=>{
         const targets = orders.filter(o => o.status==='待发货' && ids.includes(o.id));
         targets.forEach(o => { o.status='今日可发'; o.allowPull=true; o.allowPullAt=now; o.todayAt=now; });
         await Promise.all(targets.map(o => saveOrderRowSync(o).catch(e=>console.error('[today-accept]', o.id, e.message))));
-        if(!USE_SUPABASE) await saveKV('orders', orders).catch(e=>console.error('[today-accept disk]', e.message));
+        if(!USE_SUPABASE) await saveKV('b_orders', orders).catch(e=>console.error('[today-accept disk]', e.message));
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, count:targets.length})); return;
       }
       // 「退回上一步」：把「今日可发」订单退回「待发货」。只改状态并清 todayAt，
@@ -1060,7 +1065,7 @@ const server = http.createServer(async (req, res)=>{
         }
         targets.forEach(o => { o.status='待发货'; o.todayAt=null; });
         await Promise.all(targets.map(o => saveOrderRowSync(o).catch(e=>console.error('[today-return]', o.id, e.message))));
-        if(!USE_SUPABASE) await saveKV('orders', orders).catch(e=>console.error('[today-return disk]', e.message));
+        if(!USE_SUPABASE) await saveKV('b_orders', orders).catch(e=>console.error('[today-return disk]', e.message));
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, count:targets.length})); return;
       }
       // 商家后台「今日可发订单」→ 全部导出：把当前允许采集的待发货订单形成一个「商城本次汇总单」，
@@ -1668,13 +1673,13 @@ const server = http.createServer(async (req, res)=>{
         let moved=0, deleted=0, lastErr=null;
         if(USE_SUPABASE && typeof sb!=='undefined' && sb){
           const stamp=Date.now();
-          const rows = cancelled.map(o=>({key:'order_cancelled:'+o.id, value:Object.assign({},o,{_purgedAt:stamp})}));
+          const rows = cancelled.map(o=>({key:'b_order_cancelled:'+o.id, value:Object.assign({},o,{_purgedAt:stamp})}));
           for(let i=0;i<rows.length;i+=100){
             try{ const {error}=await sb.from('shop_data').upsert(rows.slice(i,i+100)); if(error) throw new Error(error.message); moved+=rows.slice(i,i+100).length; }
             catch(e){ lastErr=e; break; }
           }
           if(!lastErr){
-            const ids=cancelled.map(o=>'order:'+o.id);
+            const ids=cancelled.map(o=>'b_order:'+o.id);
             for(let i=0;i<ids.length;i+=100){
               try{ const {error}=await sb.from('shop_data').delete().in('key', ids.slice(i,i+100)); if(error) throw new Error(error.message); deleted+=ids.slice(i,i+100).length; }
               catch(e){ lastErr=e; break; }
@@ -1702,7 +1707,7 @@ const server = http.createServer(async (req, res)=>{
         if(USE_SUPABASE && typeof sb!=='undefined' && sb){
           const PAGE_SIZE=1000; let all=[], off=0, loop=0;
           while(loop++ < 40){
-            const {data:pg, error:e1}=await sb.from('shop_data').select('key,value').like('key','order_cancelled:%').range(off, off+PAGE_SIZE-1);
+            const {data:pg, error:e1}=await sb.from('shop_data').select('key,value').like('key','b_order_cancelled:%').range(off, off+PAGE_SIZE-1);
             if(e1){ lastErr=e1; break; }
             if(pg && pg.length) all.push(...pg);
             if(!pg || pg.length<PAGE_SIZE) break;
@@ -1711,7 +1716,7 @@ const server = http.createServer(async (req, res)=>{
           if(!lastErr && all.length){
             for(const r of all){
               const v=Object.assign({}, r.value||{}); delete v._purgedAt;
-              try{ const {error}=await sb.from('shop_data').upsert({key:'order:'+v.id, value:v}); if(error) throw new Error(error.message); restored++; }
+              try{ const {error}=await sb.from('shop_data').upsert({key:'b_order:'+v.id, value:v}); if(error) throw new Error(error.message); restored++; }
               catch(e){ lastErr=e; break; }
             }
             if(!lastErr){
@@ -1765,7 +1770,7 @@ const server = http.createServer(async (req, res)=>{
 
       const mProd = pathname.match(/^\/(?:product|p2|p3|p4)\/([\w-]+)$/);
       if((method==='GET'||method==='HEAD') && mProd){
-        const pkey = 'product:'+mProd[1];
+        const pkey = 'b_product:'+mProd[1];
         const cached = getCachedHtml(pkey);
         if(cached){ res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'}); res.end(method==='HEAD'?'':cached); return; }
         const list = await getProducts();
