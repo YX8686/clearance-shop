@@ -582,6 +582,7 @@ let selectedGalUrls=[];
 let currentGalFolder='';
 let pendingIds=new Set(); // 乐观更新尚未被云端确认的订单，15s 轮询时保留本地版本
 let editingSkus=[]; // 当前编辑产品的 SKU 列表
+let editingProdImg=''; // 当前编辑产品主图（SKU 无独立主图时预览回退用）
 let configFormFilled=false; // 店铺设置表单是否已回填过，避免轮询覆盖用户输入
 
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',1800); }
@@ -2538,6 +2539,7 @@ function openProdModal(p){
     bundleItems: Array.isArray(s.bundleItems)?s.bundleItems:[]
   }));
   document.getElementById('pMainImg').value=p.image||'';
+  editingProdImg=p.image||''; // 记录产品主图，供 SKU 预览回退
   document.getElementById('pMainImgPreview').src=imgCacheBust(p.image||'/assets/products/default.svg');
   renderDetailImgs(p.detailImages||[]);
   renderSkuList();
@@ -2623,7 +2625,7 @@ function renderSkuList(){
         <button type="button" onclick="removeSkuRow(${idx})" style="border:none;background:#e74c3c;color:#fff;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer">删除</button>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <img id="skuImgPrev${idx}" src="${escapeHtml(imgCacheBust(s.image||'/assets/products/default.svg'))}" onerror="this.src='/assets/products/default.svg'" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid #e0d6c8;background:#fff;flex:none;cursor:pointer" onclick="pickSkuImage(${idx})" title="点击从图库选择该SKU主图">
+        <img id="skuImgPrev${idx}" src="${escapeHtml(imgCacheBust(s.image||editingProdImg||'/assets/products/default.svg'))}" onerror="this.src='/assets/products/default.svg'" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid #e0d6c8;background:#fff;flex:none;cursor:pointer" onclick="pickSkuImage(${idx})" title="点击从图库选择该SKU主图">
         <button type="button" onclick="uploadSkuImage(${idx})" style="border:1px solid #e0d6c8;background:#fff;border-radius:8px;padding:7px 10px;font-size:12px;cursor:pointer;white-space:nowrap">📷 上传主图</button>
         <input type="text" placeholder="SKU 独立主图（留空则用产品主图）" value="${escapeHtml(s.image||'')}" onchange="updateSku(${idx},'image',this.value)" style="flex:1;min-width:150px;border:1px solid #e0d6c8;border-radius:8px;padding:8px;font-size:12px">
         <span id="skuImgStatus${idx}" style="font-size:12px;color:#b8743f;white-space:nowrap"></span>
