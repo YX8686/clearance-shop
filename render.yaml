@@ -1,10 +1,10 @@
 services:
   - type: web
-    name: buchu-shop
+    name: buchu-shop-b
     runtime: node
     plan: free
     region: singapore
-    branch: main
+    branch: b-mall
     buildCommand: npm install
     startCommand: node server.js
     healthCheckPath: /
@@ -12,6 +12,6 @@ services:
       - key: NODE_VERSION
         value: "18"
       - key: SUPABASE_URL
-        sync: false
+        value: "https://pzhblcoszvkbnmolkkxf.supabase.co"
       - key: SUPABASE_ANON_KEY
-        sync: false
+        value: "sb_publishable_AT0jjmkKEHk3PJThm9aG1w_q2hSfV4y"
