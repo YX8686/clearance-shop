@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 4100;
 // 商家后台构建版本号——每次改了 admin.html 行为/UI 就手动 +1。
 // admin.html 加载时拿这个值和"自己被服务时的嵌入版本"对比，不一致就强制刷一次，
 // 彻底根除"用户卡在旧缓存里导致功能失效"的问题（不再让用户手动清缓存/隐身）。
-const ADMIN_BUILD = 'fix9-2026-09-26-2245-today-sel-download';
+const ADMIN_BUILD = 'fix58-2026-09-30-0845-trade-done-tab';
 
 // ===== 嵌入发货管家（2026-09-09）：把 ship-cloud 的 handler 作为子路由转发 =====
 // 共用 4100 端口、共用 Supabase 数据源；线上访问路径不变（直接访问商城域名的原 ship-cloud 路径即可）
@@ -1000,6 +1000,27 @@ const server = http.createServer(async (req, res)=>{
             o.status='已发货'; o.tracking=String(body.tracking||'').slice(0,60); o.shippedAt=Date.now(); await saveOrderRowSync(o);
           }
           res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, status:o.status})); return;
+        });
+      }
+      // fix58 交易完成标记（2026-09-30）：只增删 tradeDone/tradeDoneAt 两个字段，
+      // status 恒为'已发货'不变（不动金额/明细/单号/备注/时间戳），不重排、不碰其他订单行。
+      const mTrade = pathname.match(/^\/api\/orders\/([\w-]+)\/trade-done$/);
+      if(method==='POST' && mTrade){
+        return withOrderLock(mTrade[1], async ()=>{
+          await loadOrderRow(mTrade[1]); // 只精确拉本单，消除竞态窗口
+          const o = orders.find(o=>o.id===mTrade[1]);
+          if(!o){ res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'no'})); return; }
+          if(o.status==='已取消'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'cancelled'})); return; }
+          if(o.status!=='已发货'){ res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({error:'not shipped'})); return; }
+          let body={}; try { body=JSON.parse(await readBody(req)); } catch(e){}
+          const done = body.done===undefined ? true : !!body.done;
+          if(!!o.tradeDone===done){ // 幂等：已是目标状态不重写、不刷新时间戳
+            res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o, idempotent:true})); return;
+          }
+          if(done){ o.tradeDone=true; o.tradeDoneAt=Date.now(); }
+          else { delete o.tradeDone; delete o.tradeDoneAt; }
+          await saveOrderRowSync(o); // 只 upsert order:<本单id> 一行
+          res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify({ok:true, order:o})); return;
         });
       }
       // 允许/禁止发货管家采集（仅待发货状态可设置）
