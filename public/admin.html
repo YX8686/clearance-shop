@@ -354,6 +354,7 @@
       <button data-s="今日可发订单" onclick="switchTab(this)">今日可发 <span id="cToday">0</span></button>
       <button data-s="回传区" onclick="switchTab(this)">等待回传区 <span id="cReturn">0</span></button>
       <button data-s="已发货" onclick="switchTab(this)">已发货 <span id="cDone">0</span></button>
+      <button data-s="交易完成" onclick="switchTab(this)">交易完成 <span id="cTrade">0</span></button>
       <button data-s="已取消" onclick="switchTab(this)">已取消 <span id="cCancel">0</span></button>
     </div>
     <div id="list"></div>
@@ -551,6 +552,7 @@ let todayFilter='';   // 今日可发
 let todaySelIds=new Set();
 let returnFilter='';  // 等待回传区
 let doneFilter='';    // 已发货
+let tradeSelIds=new Set(); // fix58：已发货栏勾选待标记「交易完成」的订单 id
 let cancelFilter='';  // 已取消
 // fix57：订单搜索统一匹配规则 —— 电话 / 订单编号 / 微信号
 // 编号与微信号都忽略大小写（微信号本身大小写不敏感，商家记成大写小写都能搜到）；电话按原样包含匹配
@@ -574,6 +576,44 @@ function orderSearchBarHtml(uid, kw, setterName){
 function onTodaySearch(v){ todayFilter=String(v||''); render(); }
 function onReturnSearch(v){ returnFilter=String(v||''); render(); }
 function onDoneSearch(v){ doneFilter=String(v||''); resetRenderPage(); render(); }
+// ===== fix58 交易完成（2026-09-30）：勾选已发货订单 → 标记进入「交易完成」栏目 =====
+// 服务端只增删 tradeDone/tradeDoneAt 标记字段，订单 status 恒为「已发货」不变；
+// 前端不乐观改数据，等服务端返回权威 order 再覆盖本地（fix56 铁律）。
+function tradeSelToggle(id,checked){ if(checked) tradeSelIds.add(id); else tradeSelIds.delete(id); updateTradeSelCount(); }
+function tradeSelectAll(checked){
+  const valid=new Set(ORDERS.filter(o=>o.status==='已发货'&&!o.tradeDone).map(o=>o.id));
+  if(checked) valid.forEach(id=>tradeSelIds.add(id)); else tradeSelIds.clear();
+  updateTradeSelCount();
+  document.querySelectorAll('#list input[type="checkbox"][onchange^="tradeSelToggle"]').forEach(cb=>{ cb.checked=checked; });
+}
+function updateTradeSelCount(){
+  const span=document.getElementById('tradeSelCount');
+  const all=document.getElementById('tradeSelAll');
+  if(!span) return;
+  const n=tradeSelIds.size;
+  span.style.display=n?'inline':'none';
+  span.textContent='已选 '+n+' 单';
+  if(all) all.checked = n>0;
+}
+function markTradeDoneSel(){
+  const ids=ORDERS.filter(o=>o.status==='已发货'&&!o.tradeDone&&tradeSelIds.has(o.id)).map(o=>o.id);
+  if(!ids.length){ toast('请先勾选要标记的订单'); return; }
+  (async()=>{ let ok=0; for(const id of ids){ if(await setTradeDone(id,true)) ok++; }
+    toast('已标记 '+ok+' 单进入交易完成'); })();
+}
+async function setTradeDone(id,done){
+  try{
+    const r=await fetch('/api/orders/'+encodeURIComponent(id)+'/trade-done',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({done:!!done})});
+    let d={}; try{ d=await r.json(); }catch(e){}
+    if(!r.ok||!d.ok){ toast('操作失败：'+(d.error||('HTTP '+r.status))); return false; }
+    const i=ORDERS.findIndex(o=>o.id===id);
+    if(i>=0&&d.order) ORDERS[i]=d.order; // 以服务端返回为准
+    tradeSelIds.delete(id);
+    resetRenderPage(); render();
+    return true;
+  }catch(e){ toast('网络异常，操作未生效，请重试'); return false; }
+}
 function onCancelSearch(v){ cancelFilter=String(v||''); resetRenderPage(); render(); }
 let editingProdId=null;
 let pickerMode='main'; // 'main' | 'detail' | 'sku'
@@ -965,29 +1005,41 @@ function _renderInner(){
   const waits=ORDERS.filter(o=>o.status==='待确认').length;
   const ships=ORDERS.filter(o=>o.status==='待发货').length;
   const returns=ORDERS.filter(o=>o.status==='待回传').length;
-  const dones=ORDERS.filter(o=>o.status==='已发货').length;
+  const dones=ORDERS.filter(o=>o.status==='已发货'&&!o.tradeDone).length; // fix58：已标记交易完成的不占已发货计数
+  const trades=ORDERS.filter(o=>o.status==='已发货'&&o.tradeDone).length; // fix58：交易完成=已发货+tradeDone标记
   const cancels=ORDERS.filter(o=>o.status==='已取消').length;
   document.getElementById('cWait').textContent=waits;
   document.getElementById('cShip').textContent=ships;
   document.getElementById('cReturn').textContent=returns;
   document.getElementById('cDone').textContent=dones;
+  document.getElementById('cTrade').textContent=trades;
   document.getElementById('cCancel').textContent=cancels;
   document.getElementById('cToday').textContent=ORDERS.filter(o=>o.status==='今日可发').length;
-  document.getElementById('stat').textContent='共 '+ORDERS.length+' 单 · 待处理'+waits+' / 待发'+ships+' / 今日可发'+ORDERS.filter(o=>o.status==='今日可发').length+' / 回传区'+returns+' / 已发'+dones+' / 已取消'+cancels;
+  document.getElementById('stat').textContent='共 '+ORDERS.length+' 单 · 待处理'+waits+' / 待发'+ships+' / 今日可发'+ORDERS.filter(o=>o.status==='今日可发').length+' / 回传区'+returns+' / 已发'+dones+' / 完成'+trades+' / 已取消'+cancels;
   const list=document.getElementById('list'); list.innerHTML='';
   if(curTab==='待确认'){ renderMergedPending(); return; }
   if(curTab==='待发货'){ renderMergedShip(); return; }
   if(curTab==='回传区'){ renderReturnZone(); return; }
   if(curTab==='今日可发订单'){ renderTodayShip(); return; }
-  const allRows=ORDERS.filter(o=>curTab==='待确认'?o.status==='待确认':o.status===curTab).sort((a,b)=>b.createdAt-a.createdAt);
-  // fix57：已发货 / 已取消 栏右上角也提供统一搜索框（电话 / 订单号 / 微信号）
-  const kwNow = curTab==='已发货' ? doneFilter : (curTab==='已取消' ? cancelFilter : '');
-  const kwSetter = curTab==='已发货' ? 'onDoneSearch' : (curTab==='已取消' ? 'onCancelSearch' : '');
+  // fix58：交易完成 = 已发货 + tradeDone 标记；已发货栏不再显示已标记的单（其余订单位置不动）
+  const allRows=ORDERS.filter(o=>{
+    if(curTab==='交易完成') return o.status==='已发货'&&!!o.tradeDone;
+    if(o.status!==curTab) return false;
+    if(curTab==='已发货'&&o.tradeDone) return false;
+    return true;
+  }).sort((a,b)=>b.createdAt-a.createdAt);
+  // fix57：已发货 / 已取消 栏右上角也提供统一搜索框（电话 / 订单号 / 微信号）；fix58：交易完成复用已发货搜索词
+  const kwNow = (curTab==='已发货'||curTab==='交易完成') ? doneFilter : (curTab==='已取消' ? cancelFilter : '');
+  const kwSetter = (curTab==='已发货'||curTab==='交易完成') ? 'onDoneSearch' : (curTab==='已取消' ? 'onCancelSearch' : '');
   if(kwSetter){
     const bar=document.createElement('div'); bar.className='allow-pull-top';
     bar.innerHTML=`<span>${curTab} <b style="color:${allRows.length?'':'#888'}">${allRows.length}</b> 单</span>`
-      + orderSearchBarHtml('kw-'+curTab, kwNow, kwSetter);
+      + orderSearchBarHtml('kw-'+curTab, kwNow, kwSetter)
+      + (curTab==='已发货'?`<label style="display:inline-flex;align-items:center;gap:5px;font-size:13px;color:#7a6f62;cursor:pointer;font-weight:400"><input type="checkbox" id="tradeSelAll" onchange="tradeSelectAll(this.checked)"> 全选</label>`
+        +`<span id="tradeSelCount" style="font-size:12px;color:#1f9d55;font-weight:600;display:none"></span>`
+        +`<button onclick="markTradeDoneSel()" style="border:none;background:#1f9d55;color:#fff;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer">✅ 标记交易完成</button>`:'');
     list.appendChild(bar);
+    if(curTab==='已发货') updateTradeSelCount();
   }
   const rows=allRows.filter(o=>matchOrderSearch(o, kwNow));
   if(!rows.length){
@@ -1000,6 +1052,7 @@ function _renderInner(){
   rows.slice(0, renderShown).forEach(o=>{
     const stMap={'待付款':['st-wait','待付款'],'待确认':['st-wait','待确认'],'待发货':['st-ship','待发货'],'今日可发':['st-ship','今日可发'],'待回传':['st-ship','等待回传'],'已发货':['st-done','已发货'],'已取消':['st-cancel','已取消']};
     const [cls,lab]=stMap[o.status]||['st-wait',o.status];
+    const labShow = curTab==='交易完成' ? '交易完成' : lab; // fix58：交易完成栏内徽标显示「交易完成」
     const editable=isEditableOrder(o);
     const items=o.items.map((i,idx)=>{
       let h=`<div class="it-line"><span>${renderItemName(i)}</span><span>${renderItemQty(i)}${editable?itemDelBtn(o.id,idx):''}</span></div>`;
@@ -1013,13 +1066,14 @@ function _renderInner(){
     if(o.status==='待确认') acts=`<button class="btn-confirm" onclick="confirmPaid('${o.id}')">客户已发截图，确认收款</button><button class="btn-cancel" onclick="markNotPaid('${o.id}')">未收到该款项</button>`;
     if(o.status==='已取消') acts=`<button class="btn-restore" onclick="restoreOrder('${o.id}')">核实重新成立，进入待发货</button>`;
     if(o.status==='已发货') acts=`<button class="btn-copy" onclick="copyShip('${o.id}')">复制发货信息</button>`;
+    if(curTab==='交易完成') acts+=`<button class="btn-note" style="border:1px solid #b8743f;background:#fff;color:#b8743f;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="setTradeDone('${o.id}',false)">↩ 撤销交易完成（退回已发货）</button>`;
     if(editable) acts+=swapBtnHtml(o.id);
     acts+=`<button class="btn-note" style="border:1px solid #7a6f62;background:#f4f1ec;color:#7a6f62;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer" onclick="editNote('${o.id}')">备注</button>`;
     const div=document.createElement('div'); div.className='card';
     const showPayTime = o.status==='待确认' || o.status==='待发货' || o.status==='待回传' || o.status==='已发货';
     const payLine=showPayTime?`<div class="line"><span class="k">付款时间</span>${fmtTime(o.paidAt)}</div>`:'';
     div.innerHTML=`
-      <div class="h"><span class="oid">${o.id}</span><span class="st ${cls}">${lab}</span></div>
+      <div class="h">${curTab==='已发货'?`<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;flex:none"><input type="checkbox" ${tradeSelIds.has(o.id)?'checked':''} onchange="tradeSelToggle('${o.id}',this.checked)" title="勾选后可标记交易完成"></label>`:''}<span class="oid">${o.id}</span><span class="st ${cls}">${labShow}</span></div>
       <div class="line"><span class="k">下单时间</span>${fmtTime(o.createdAt)}</div>
       <div class="line"><span class="k">姓名</span>${escapeHtml(o.name||'')}</div>
       <div class="line"><span class="k">微信号</span>${wechatHtml(o,[o.id])}</div>
