@@ -24,6 +24,12 @@
   .topbar h1{margin:0;font-size:17px;font-weight:700;letter-spacing:1px}
   .topbar .actions{display:flex;gap:8px;align-items:center}
   .topbar .actions a{color:#fff;font-size:12px;opacity:.9;text-decoration:none;border:1px solid rgba(255,255,255,.4);border-radius:12px;padding:4px 10px;white-space:nowrap}
+  /* 顶部右上角手机号查询（已售罄期客户查物流/订单用） */
+  .top-lookup{display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.45);border-radius:14px;padding:2px 3px 2px 9px}
+  .top-lookup input{border:none;background:transparent;color:#fff;width:80px;font-size:12px;outline:none;letter-spacing:.5px}
+  .top-lookup input::placeholder{color:rgba(255,255,255,.75)}
+  .top-lookup button{border:none;background:#fff;color:#b8743f;border-radius:11px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+  @media(max-width:380px){ .top-lookup input{width:64px} .topbar h1{font-size:15px} }
 
   /* 顶部滚动通知条 */
   .notify{background:#fff7ef;border-bottom:1px solid #f0ece4;color:#7a5230;font-size:12px;padding:7px 0;overflow:hidden;white-space:nowrap;position:relative}
@@ -208,7 +214,10 @@
   <div class="topbar">
     <h1>{{SHOP_NAME}}</h1>
     <div class="actions">
-      <a href="#" onclick="openLookupModal();return false;">查询我的订单</a>
+      <div class="top-lookup">
+        <input id="topPhone" inputmode="numeric" maxlength="11" placeholder="手机号查物流">
+        <button onclick="topLookup()">查询</button>
+      </div>
       <a href="#" onclick="savePage();return false;">收藏此商城</a>
     </div>
   </div>
@@ -882,6 +891,14 @@ function lookupOrder(){
     }).catch(e=>alert('查询失败：'+e.message));
 }
 function closeResult(){ $('#resultModal').classList.remove('show'); }
+// 顶栏右上角手机号查询：填了手机号直接查；留空则打开完整弹层（可填姓名查询）
+function topLookup(){
+  const el=document.getElementById('topPhone');
+  const v=el.value.trim();
+  if(!v){ openLookupModal(); return; }
+  document.getElementById('lookupKey').value=v;
+  lookupOrder();
+}
 
 // 活动倒计时（Style B 修改版）：剩 >1 小时显「小时」，最后 1 小时显「分钟」，归零显「活动已结束」
 function startCountdown(){
