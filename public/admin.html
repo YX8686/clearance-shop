@@ -1630,7 +1630,14 @@ async function removeOrderItem(orderId, idx){
   await applyOrderItems(o,newItems,`已删除「${it.name}」`);
 }
 
+// 「加单：」行：与「实发为」副行同款样式（11px / #9a6b3f 土黄色），整行统一
+const ADD_LINE_STYLE='font-size:11px;color:#9a6b3f;line-height:1.5';
+function isAddLineItem(i){ return /^加单[:：]/.test(String((i&&i.name)||'').trim()); }
 function renderItemName(i){
+  // 加单行：文字 + 数量，整行套用「实发为」副行样式
+  if(isAddLineItem(i)){
+    return `<span style="${ADD_LINE_STYLE}">${escapeHtml(i.name||'')} ${i.qty||1}${escapeHtml(i.unit||'件')}</span>`;
+  }
   // 手工加品：用户写什么就显示什么，不反查标准产品名、不拼接 bundle
   const base = `${escapeHtml(i.name||'')} <span style="color:#888;font-size:12px">${i.qty||1}${escapeHtml(i.unit||'件')}</span>`;
   if(i.isManualAdd){
@@ -1638,7 +1645,10 @@ function renderItemName(i){
   }
   return base;
 }
-function renderItemQty(i){ return i.isManualAdd ? `${i.qty||1}${i.unit||'件'}` : `${money(i.price)} × ${i.qty}${i.unit||''}`; }
+function renderItemQty(i){
+  if(isAddLineItem(i)) return `<span style="${ADD_LINE_STYLE}">${money(i.price)} × ${i.qty||1}</span>`;
+  return i.isManualAdd ? `${i.qty||1}${i.unit||'件'}` : `${money(i.price)} × ${i.qty}${i.unit||''}`;
+}
 function parseQtyUnit(v){
   const s=String(v||'').trim();
   if(!s) return {qty:1, unit:''};
